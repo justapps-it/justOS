@@ -109,6 +109,21 @@ static STATE: IrqLock<State> = IrqLock::new(State {
 
 static WAITERS: WaitQueue = WaitQueue::new();
 
+/// Set by every event of the pointer and the keyboard (and by windows with
+/// a new picture): the graphical interface's loop rests on it while
+/// nothing moves.
+static GUI_WAKE: crate::task::Event = crate::task::Event::new();
+
+/// Wakes the graphical interface's loop.
+pub fn wake_gui() {
+    GUI_WAKE.signal();
+}
+
+/// Waits at most `ms` for input or another [`wake_gui`]; whether it came.
+pub fn wait_gui(ms: u64) -> bool {
+    GUI_WAKE.wait(Some(ms))
+}
+
 const QUEUE_MAX: usize = 256;
 
 fn push(s: &mut State, ev: KeyEvent) {
@@ -233,8 +248,9 @@ pub fn driver_event(_device: u32, kind: u32, code: u32, value: i32) {
                 s.pointer.buttons &= !(1 << code);
             }
         }
-        _ => {}
+        _ => return,
     }
+    GUI_WAKE.signal();
 }
 
 /// Room for another byte from the serial console. Text pasted there comes

@@ -39,6 +39,16 @@ const CAP_END: i32 = 14;
 const CAP_TEXT_MIN: i32 = 48;
 const CAP_TEXT_MAX: i32 = 200;
 const CAP_GAP: i32 = 12;
+/// The same in the compact dock (see `Desktop::dock_size`), where a
+/// capsule has one line: the name (a timer: its time left).
+const CAP_GROW_S: i32 = 2;
+const CAP_TILE_S: i32 = 8;
+const CAP_RAD_S: i32 = 12;
+const CAP_END_S: i32 = 10;
+const CAP_TEXT_MAX_S: i32 = 120;
+const CAP_GAP_S: i32 = 8;
+const EQ_H_S: i32 = 12;
+const BUSY_H_S: i32 = 9;
 /// A program starting: a row of cells, three of them lit, going round.
 const BUSY: i32 = 10;
 const BUSY_W: i32 = 4;
@@ -95,37 +105,54 @@ const PILL_PAD: i32 = 14;
 const PILL_BUSY: i32 = 5;
 
 /// A change of shape: from one value (0..=1000) to another in
-/// [`MORPH_MS`], eased out.
+/// [`MORPH_MS`] (or the time given), eased out.
 #[derive(Clone, Copy)]
 pub(super) struct Morph {
     from: u32,
     to: u32,
     anim: Anim,
+    ms: u64,
 }
 
 impl Morph {
     pub(super) fn new() -> Morph {
-        Morph { from: 0, to: 0, anim: Anim::new(1) }
+        Morph::at(0)
+    }
+
+    /// Still at `v`.
+    pub(super) fn at(v: u32) -> Morph {
+        Morph { from: v, to: v, anim: Anim::new(1), ms: MORPH_MS }
     }
 
     pub(super) fn value(&self) -> u32 {
         ui::lerp(self.from as i32, self.to as i32, self.anim.out()) as u32
     }
 
+    /// Where it goes.
+    pub(super) fn target(&self) -> u32 {
+        self.to
+    }
+
     /// Towards `to` from where it is now; whether that is a change.
-    fn set(&mut self, to: u32) -> bool {
+    pub(super) fn set(&mut self, to: u32) -> bool {
+        self.set_in(to, MORPH_MS)
+    }
+
+    /// Towards `to` in `ms`.
+    pub(super) fn set_in(&mut self, to: u32, ms: u64) -> bool {
         if to == self.to {
             return false;
         }
         self.from = self.value();
         self.to = to;
-        self.anim = Anim::new(MORPH_MS);
+        self.ms = ms;
+        self.anim = Anim::new(ms);
         true
     }
 
     /// Still changing (and a little after, for a slow frame).
-    fn moving(&self) -> bool {
-        self.from != self.to && self.anim.elapsed() < MORPH_MS + 40
+    pub(super) fn moving(&self) -> bool {
+        self.from != self.to && self.anim.elapsed() < self.ms + 40
     }
 }
 
@@ -263,8 +290,13 @@ fn text_w(a: &Activity) -> i32 {
     text::width(Font::Strong, &a.title).max(text::width(Font::Small, &sub)).clamp(CAP_TEXT_MIN, CAP_TEXT_MAX)
 }
 
-/// What a capsule shows right of its tile: how wide.
-fn content_w(a: &Activity) -> i32 {
+/// The one line of a capsule in the compact dock.
+fn text_w_small(a: &Activity) -> i32 {
+    text::width(Font::Strong, &a.title).clamp(CAP_TEXT_MIN, CAP_TEXT_MAX_S)
+}
+
+/// What a capsule shows right of its tile in the full-size dock: how wide.
+fn content_full(a: &Activity) -> i32 {
     match a.kind {
         ActKind::Starting => text_w(a) + CAP_GAP + busy_w(BUSY),
         ActKind::Music => text_w(a) + CAP_GAP + EQ_TOTAL,
@@ -273,18 +305,39 @@ fn content_w(a: &Activity) -> i32 {
     }
 }
 
-/// How much wider a dock item gets with its capsule open. The content
-/// starts where the icon ended (the tile gets smaller by as much).
-fn cap_extra(a: &Activity) -> i32 {
-    content_w(a) + CAP_END - CAP_GROW
+/// The same in the compact dock.
+fn content_small(a: &Activity) -> i32 {
+    match a.kind {
+        ActKind::Starting => text_w_small(a) + CAP_GAP_S + busy_w(BUSY),
+        ActKind::Music => text_w_small(a) + CAP_GAP_S + EQ_TOTAL,
+        ActKind::Timer => digits_w(&a.title, TIMER_CELL),
+        _ => 0,
+    }
 }
 
-/// A capsule on the dock icon `r` widened by `extra`: its well, and the
-/// part that moves by itself (the equaliser, the cells).
-fn cap_parts(a: &Activity, r: Rect, extra: i32) -> (Rect, Rect) {
-    let g = ui::lerp(0, CAP_GROW, a.open.value());
+/// What a capsule shows right of its tile in a dock of size `size`.
+fn content_w(a: &Activity, size: u32) -> i32 {
+    ui::lerp(content_small(a), content_full(a), size)
+}
+
+/// How far a capsule's well reaches past its icon in a dock of size `size`.
+fn cap_grow(size: u32) -> i32 {
+    ui::lerp(CAP_GROW_S, CAP_GROW, size)
+}
+
+/// How much wider a dock item gets with its capsule open. The content
+/// starts where the icon ended (the tile gets smaller by as much).
+fn cap_extra(a: &Activity, size: u32) -> i32 {
+    content_w(a, size) + ui::lerp(CAP_END_S, CAP_END, size) - cap_grow(size)
+}
+
+/// A capsule on the dock icon `r` widened by `extra`, in a dock of size
+/// `size`: its well, and the part that moves by itself (the equaliser, the
+/// cells).
+fn cap_parts(a: &Activity, r: Rect, extra: i32, size: u32) -> (Rect, Rect) {
+    let g = ui::lerp(0, cap_grow(size), a.open.value());
     let well = Rect::new(r.x - g, r.y - g, r.w + extra + 2 * g, r.h + 2 * g);
-    let x = r.x + r.w + text_w(a) + CAP_GAP;
+    let x = r.x + r.w + ui::lerp(text_w_small(a) + CAP_GAP_S, text_w(a) + CAP_GAP, size);
     let tail = match a.kind {
         ActKind::Music => Rect::new(x, well.y, EQ_TOTAL, well.h),
         ActKind::Starting => Rect::new(x, well.y, busy_w(BUSY), well.h),
@@ -344,6 +397,11 @@ impl Desktop {
         self.acts.iter().find(|a| a.kind == ActKind::Note)
     }
 
+    /// A short notification is in the bar (or coming, or going).
+    pub(super) fn note_act_shown(&self) -> bool {
+        self.note_act().is_some()
+    }
+
     /// How far the bar has become the level (0: not at all).
     pub(super) fn level_t(&self) -> u32 {
         self.level_act().map_or(0, |a| a.open.value())
@@ -378,25 +436,26 @@ impl Desktop {
         self.cap_index(kind).map(|i| &self.acts[i])
     }
 
-    /// How much wider each dock item is now for its capsule.
-    pub(super) fn cap_extras(&self, items: &[DockItem]) -> Vec<i32> {
-        items.iter().map(|it| self.cap_of(&it.kind).map_or(0, |a| ui::lerp(0, cap_extra(a), a.open.value()))).collect()
+    /// How much wider each dock item is now for its capsule, in a dock of
+    /// size `size`.
+    pub(super) fn cap_extras(&self, items: &[DockItem], size: u32) -> Vec<i32> {
+        items.iter().map(|it| self.cap_of(&it.kind).map_or(0, |a| ui::lerp(0, cap_extra(a, size), a.open.value()))).collect()
     }
 
-    /// The dock icons `rects` with their capsules: what a press or the
-    /// pointer may be on.
+    /// The dock icons `rects` (as they are now) with their capsules: what a
+    /// press or the pointer may be on.
     pub(super) fn wide_rects(&self, items: &[DockItem], rects: &[Rect]) -> Vec<Rect> {
-        let extras = self.cap_extras(items);
+        let extras = self.cap_extras(items, self.dock_size());
         rects.iter().zip(&extras).map(|(r, &e)| Rect::new(r.x, r.y, r.w + e, r.h)).collect()
     }
 
-    /// The room the bubble takes beside a dock of icons `icon` wide.
-    pub(super) fn bubble_room(&self, icon: i32) -> i32 {
-        ui::lerp(0, BUBBLE_GAP + icon + 2 * DOCK_PAD + 4, self.bubble.value())
+    /// The room the bubble takes beside a dock `dock_h` high.
+    pub(super) fn bubble_room(&self, dock_h: i32) -> i32 {
+        ui::lerp(0, BUBBLE_GAP + dock_h, self.bubble.value())
     }
 
     /// The bubble, all the way out, beside the dock `bg`.
-    fn bubble_rect(&self, bg: Rect) -> Rect {
+    pub(super) fn bubble_rect(&self, bg: Rect) -> Rect {
         Rect::new(bg.right() + BUBBLE_GAP, bg.y, bg.h, bg.h)
     }
 
@@ -503,10 +562,11 @@ impl Desktop {
         }
         let items = self.dock_items();
         let (_, rects, _) = self.dock_geometry(&items);
-        let extras = self.cap_extras(&items);
+        let size = self.dock_size();
+        let extras = self.cap_extras(&items, size);
         for (k, it) in items.iter().enumerate() {
             if let Some(i) = self.cap_index(&it.kind) {
-                let (well, tail) = cap_parts(&self.acts[i], rects[k], extras[k]);
+                let (well, tail) = cap_parts(&self.acts[i], rects[k], extras[k], size);
                 out.push((i, well, tail));
             }
         }
@@ -578,11 +638,11 @@ impl Desktop {
                         shape = true;
                     }
                     if a.title != *title || a.sub != *sub || a.ringing != *ringing {
-                        let before = content_w(a);
+                        let before = (content_small(a), content_full(a));
                         a.title.clone_from(title);
                         a.sub.clone_from(sub);
                         a.ringing = *ringing;
-                        if content_w(a) == before {
+                        if (content_small(a), content_full(a)) == before {
                             content = true;
                         } else {
                             shape = true;
@@ -869,10 +929,10 @@ impl Desktop {
     /// becoming the level) with its shadow, the bubble and the
     /// notification. None when the bar is the level now: then nothing of
     /// the dock is drawn.
-    pub(super) fn bar_frame(&self, c: &mut Canvas, bg: Rect) -> Option<Rect> {
+    pub(super) fn bar_frame(&self, c: &mut Canvas, bg: Rect, dock_rad: i32) -> Option<Rect> {
         let level = self.level_t();
         let panel = self.bar_panel(bg);
-        let rad = ui::lerp(DOCK_RAD, LEVEL_RAD, level);
+        let rad = ui::lerp(dock_rad, LEVEL_RAD, level);
         ui::drop_shadow(c, panel, rad, 16, 55);
         ui::panel(c, panel, rad);
         if level >= LEVEL_SWAP {
@@ -967,11 +1027,14 @@ impl Desktop {
     }
 
     /// The capsule of `a` on the dock icon `r` (its icon `icon`, lifted
-    /// by `lift` when it bounces), widened by `extra`. Returns its tile.
-    pub(super) fn draw_capsule(&self, c: &mut Canvas, icon: &str, a: &Activity, r: Rect, extra: i32, lift: i32) -> Rect {
+    /// by `lift` when it bounces), widened by `extra`, in a dock of size
+    /// `size`: two lines in the full-size dock, one in the compact one,
+    /// fading from one to the other half way. Returns its tile and its well.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_capsule(&self, c: &mut Canvas, icon: &str, a: &Activity, r: Rect, extra: i32, lift: i32, size: u32) -> (Rect, Rect) {
         let t = a.open.value();
-        let (well, tail) = cap_parts(a, r, extra);
-        let rad = ui::lerp(r.w / 4, CAP_RAD, t);
+        let (well, tail) = cap_parts(a, r, extra, size);
+        let rad = ui::lerp(r.w / 4, ui::lerp(CAP_RAD_S, CAP_RAD, size), t);
         c.fill_round(well, rad, fade(ui::well(), t));
         c.stroke_round(well, rad, 1, fade(ui::line(), t));
         if a.ringing {
@@ -980,32 +1043,47 @@ impl Desktop {
             let tri = if ph < 500 { ph * 2 } else { (1000 - ph) * 2 };
             c.fill_round(well, rad, fade(((40 + tri * 120 / 1000) << 24) | (ui::ORANGE & 0xFF_FFFF), t));
         }
-        let ts = ui::lerp(r.w, r.w - CAP_TILE, t) & !1;
+        let ts = ui::lerp(r.w, r.w - ui::lerp(CAP_TILE_S, CAP_TILE, size), t) & !1;
         let tile = Rect::new(r.x + ui::lerp(0, 3, t), r.y + (r.h - ts) / 2 - lift, ts, ts);
         res::draw_icon(c, icon, ts, tile.x, tile.y);
         let saved = c.clip();
         c.set_clip(saved.intersect(&well));
         let x = r.x + r.w;
-        let (fg, dim) = (fade(ui::text(), t), fade(ui::text_dim(), t));
-        if a.kind == ActKind::Timer {
-            draw_digits(c, &a.title, x, well, TIMER_CELL, fg);
-            let (sh, _) = text::metrics(Font::Small);
-            text::draw(c, Font::Small, x + digits_w(&a.title, TIMER_CELL) + 8, well.y + (well.h - sh) / 2, &a.sub, dim);
-        } else {
-            let w = text_w(a);
-            let (th, _) = text::metrics(Font::Strong);
-            let (sh, _) = text::metrics(Font::Small);
-            let y = well.y + (well.h - th - sh) / 2;
-            text::draw(c, Font::Strong, x, y, &text::fit(Font::Strong, &a.title, w), fg);
-            text::draw(c, Font::Small, x, y + th, &text::fit(Font::Small, &a.sub, w), dim);
-            if a.kind == ActKind::Music {
-                draw_eq(c, tail, EQ_H, t);
+        // How much of each form shows.
+        let full = if size >= 1000 { 1000 } else { size.saturating_sub(500) * 2 };
+        let small = if size == 0 { 1000 } else { 500u32.saturating_sub(size) * 2 };
+        if full > 0 {
+            let k = t * full / 1000;
+            let (fg, dim) = (fade(ui::text(), k), fade(ui::text_dim(), k));
+            if a.kind == ActKind::Timer {
+                draw_digits(c, &a.title, x, well, TIMER_CELL, fg);
+                let (sh, _) = text::metrics(Font::Small);
+                text::draw(c, Font::Small, x + digits_w(&a.title, TIMER_CELL) + 8, well.y + (well.h - sh) / 2, &a.sub, dim);
             } else {
-                draw_busy(c, tail, BUSY, BUSY_H, t);
+                let w = text_w(a);
+                let (th, _) = text::metrics(Font::Strong);
+                let (sh, _) = text::metrics(Font::Small);
+                let y = well.y + (well.h - th - sh) / 2;
+                text::draw(c, Font::Strong, x, y, &text::fit(Font::Strong, &a.title, w), fg);
+                text::draw(c, Font::Small, x, y + th, &text::fit(Font::Small, &a.sub, w), dim);
             }
         }
+        if small > 0 {
+            let fg = fade(ui::text(), t * small / 1000);
+            if a.kind == ActKind::Timer {
+                draw_digits(c, &a.title, x, well, TIMER_CELL, fg);
+            } else {
+                let (th, _) = text::metrics(Font::Strong);
+                text::draw(c, Font::Strong, x, well.y + (well.h - th) / 2, &text::fit(Font::Strong, &a.title, text_w_small(a)), fg);
+            }
+        }
+        match a.kind {
+            ActKind::Music => draw_eq(c, tail, ui::lerp(EQ_H_S, EQ_H, size), t),
+            ActKind::Starting => draw_busy(c, tail, BUSY, ui::lerp(BUSY_H_S, BUSY_H, size), t),
+            _ => {}
+        }
         c.set_clip(saved);
-        tile
+        (tile, well)
     }
 
     /// The pill `r` over a full-screen window: the time, a thin line, and

@@ -7,6 +7,7 @@ use crate::fs;
 use crate::sync::IrqLock;
 use alloc::format;
 use alloc::string::String;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const FILE: &str = "sys:/system/settings";
 
@@ -34,6 +35,15 @@ pub struct Settings {
     pub widgets: bool,
     /// Dark or light windows, menus and panels.
     pub theme: Theme,
+    /// The dock small at rest, full size under the pointer.
+    pub dock_compact: bool,
+    /// The dock's icons grow under the pointer.
+    pub dock_magnify: bool,
+    /// The apps kept in the dock, in order (None: the usual ones): app ids,
+    /// "launcher", or "spawn:" and a program's file.
+    pub dock: Option<alloc::vec::Vec<String>>,
+    /// The most frames a second ("Fluidità"; 0: automatic).
+    pub fluidity: u32,
 }
 
 impl Default for Settings {
@@ -51,11 +61,45 @@ impl Default for Settings {
             scale: 0,
             widgets: false,
             theme: Theme::Dark,
+            dock_compact: true,
+            dock_magnify: true,
+            dock: None,
+            fluidity: 0,
         }
     }
 }
 
 static CURRENT: IrqLock<Option<Settings>> = IrqLock::new(None);
+
+// What the desktop reads on every frame, without a copy of the settings:
+// the dock's two switches, and a count of the changes (it looks again at
+// the rest when it moves).
+static DOCK_COMPACT: AtomicBool = AtomicBool::new(true);
+static DOCK_MAGNIFY: AtomicBool = AtomicBool::new(true);
+static CHANGES: AtomicU32 = AtomicU32::new(0);
+
+/// The dock is small at rest.
+pub fn dock_compact() -> bool {
+    DOCK_COMPACT.load(Ordering::Relaxed)
+}
+
+/// The dock's icons grow under the pointer.
+pub fn dock_magnify() -> bool {
+    DOCK_MAGNIFY.load(Ordering::Relaxed)
+}
+
+/// How many times the settings changed since the start.
+pub fn changes() -> u32 {
+    CHANGES.load(Ordering::Relaxed)
+}
+
+/// What takes effect at once outside the settings.
+fn apply(s: &Settings) {
+    DOCK_COMPACT.store(s.dock_compact, Ordering::Relaxed);
+    DOCK_MAGNIFY.store(s.dock_magnify, Ordering::Relaxed);
+    super::pace::set_choice(s.fluidity);
+    CHANGES.fetch_add(1, Ordering::Relaxed);
+}
 
 fn load() -> Settings {
     let mut s = Settings::default();
@@ -78,6 +122,10 @@ fn load() -> Settings {
             "scale" => s.scale = v.parse::<u32>().unwrap_or(0).min(2),
             "widgets" => s.widgets = v == "on",
             "theme" => s.theme = Theme::from_name(v),
+            "dock-compact" => s.dock_compact = v != "off",
+            "dock-magnify" => s.dock_magnify = v != "off",
+            "dock" => s.dock = Some(v.split(';').filter(|e| !e.is_empty()).map(String::from).collect()),
+            "fluidity" => s.fluidity = v.parse().unwrap_or(0),
             _ => {}
         }
     }
@@ -94,6 +142,7 @@ pub fn get() -> Settings {
         }
         crate::dev::audio::set_volume(s.volume);
         set_theme(s.theme);
+        apply(&s);
         *cur = Some(s);
     }
     cur.clone().unwrap()
@@ -129,12 +178,26 @@ pub fn update(f: impl FnOnce(&mut Settings)) {
     if s.widgets {
         text.push_str("widgets=on\n");
     }
+    if !s.dock_compact {
+        text.push_str("dock-compact=off\n");
+    }
+    if !s.dock_magnify {
+        text.push_str("dock-magnify=off\n");
+    }
+    if let Some(dock) = &s.dock {
+        text.push_str(&format!("dock={}\n", dock.join(";")));
+    }
+    if s.fluidity != 0 {
+        text.push_str(&format!("fluidity={}\n", s.fluidity));
+    }
     if let Ok(p) = fs::abs(FILE) {
         if let Err(e) = fs::write_file(&p, text.as_bytes()) {
             crate::warn!("gui", "cannot save the settings: {e}");
         }
     }
-    *CURRENT.lock() = Some(s);
+    // Kept before the count of changes moves: whoever sees it sees these.
+    *CURRENT.lock() = Some(s.clone());
+    apply(&s);
 }
 
 /// Rounds of SHA-256 over the password: slow enough to make guessing

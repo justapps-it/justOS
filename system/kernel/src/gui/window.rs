@@ -119,6 +119,9 @@ pub fn present(pid: u32, handle: u64, pixels: &[u8], w: i32, h: i32, scale: i32)
         *dst = u32::from_le_bytes(*src);
     }
     s.generation += 1;
+    drop(s);
+    // The desktop shows it at its next frame, not at its next look.
+    crate::dev::input::wake_gui();
     Ok(())
 }
 

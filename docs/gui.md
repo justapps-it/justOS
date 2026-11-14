@@ -37,12 +37,39 @@ Presa a modello da macOS:
   *Sospendi* quando il computer può, *Riavvia*, *Spegni*). Poi File,
   Applicazioni, Editor di testo, Note, Calendario, Foto, Musica,
   Calcolatrice, Negozio, Impostazioni e, dopo un separatore, le app aperte
-  che non ci sono già e il Cestino. Le icone **si ingrandiscono** sotto il
-  puntatore, quella di un'app che parte **rimbalza**, un quadratino arancione
-  segna le app aperte; un clic su un'app aperta la porta davanti (o la riapre se è
-  ridotta). Con molte app aperte le icone si rimpiccioliscono perché il
-  dock stia nello schermo. Il dock cambia forma per mostrare quello che
-  succede (vedi [La barra dinamica](#la-barra-dinamica)).
+  che non ci sono già e il Cestino. Quella di un'app che parte **rimbalza**,
+  un quadratino arancione segna le app aperte; un clic su un'app aperta la
+  porta davanti (o la riapre se è ridotta). Con molte app aperte le icone si
+  rimpiccioliscono perché il dock stia nello schermo. Il dock cambia forma
+  per mostrare quello che succede (vedi [La barra dinamica](#la-barra-dinamica)).
+- **Dock compatto**: a riposo il dock è piccolo (icone di 34 unità invece
+  di 52, pannello più basso e più stretto, stessi angoli e quadratini).
+  Quando il puntatore ci arriva sopra o vicino **cresce** fino alla misura
+  piena in 220 ms (con un'accelerazione morbida, a tempo); quando se ne va
+  aspetta 400 ms e torna piccolo, così non sfarfalla passandoci accanto.
+  Resta grande finché è aperto un menu o il centro di controllo che vengono
+  dal dock (anche da tastiera), mentre c'è una notifica breve con i suoi
+  pulsanti e mentre ci si trascinano sopra dei file. Una volta grande,
+  l'icona sotto il puntatore **si ingrandisce** di un poco (circa 1,2×, le
+  vicine meno); le icone sono sempre disegnate dalla loro immagine alla
+  misura giusta e i clic seguono quello che si vede. *Impostazioni →
+  Aspetto* ha due interruttori, accesi all'inizio: **Dock compatto** (spento,
+  il dock resta sempre grande; a riposo è identico a prima, pixel per pixel)
+  e **Ingrandimento icone**.
+- **Tasto destro su un'icona del dock**: un menu sopra l'icona (lo stesso
+  dei menu della scrivania, si chiude con Esc o con un clic fuori). Per
+  un'app: *Apri*, oppure *Mostra* se è aperta e *Nuova finestra* se ne può
+  avere più d'una; con due finestre o più, i loro nomi (un clic porta quella
+  davanti); *Rimuovi dal dock* / *Mantieni nel dock*; *Chiudi* (chiude le
+  sue finestre come il loro pulsante); *Impostazioni del dock…*, che apre le
+  Impostazioni ad *Aspetto*. Per il Cestino: *Apri* e *Svuota cestino*
+  (elimina per sempre quello che c'è in `sys:/home/Cestino`, senza chiedere
+  conferma come in File, e lo dice con una notifica). Il marchio J▮ e lo
+  stato hanno i loro pannelli, non questo menu. Le app tenute nel dock
+  stanno nelle impostazioni (`dock`: gli id delle app di sistema,
+  `launcher`, `spawn:<percorso>` per i programmi); finché non si cambia
+  niente sono le solite. Un'app aperta non tenuta resta nel dock finché è
+  aperta.
 - **Stato e centro di controllo**: a destra nel dock, in un incavo, i
   simboli in pixel morbidi della rete (spento se non è collegata), del
   suono e, sui portatili, della batteria (colorata secondo la carica). Un
@@ -233,11 +260,11 @@ celle arancioni), non copia quello di altri sistemi. Il codice è in
 
 | Cosa succede | Come cambia il dock |
 |---|---|
-| a riposo | come sempre: nessun pixel diverso |
+| a riposo | il dock compatto (vedi [La scrivania](#la-scrivania)); con *Dock compatto* spento, come sempre: nessun pixel diverso |
 | un programma si avvia | la sua icona diventa una **capsula** con il nome, *Si sta avviando…* (o una nota: *Si avvia con Wine…*, *Prima apertura: preparo Windows…*, *Si estrae, ci vuole un po'…*) e una fila di celle che scorre; sparisce quando arriva la finestra, quando il programma finisce senza finestra o dopo 120 secondi. Aprirlo di nuovo mentre parte non ne avvia un secondo: la capsula torna davanti e l'icona rimbalza |
 | volume o luminosità | il dock diventa una **barra di livello** in basso al centro: il simbolo, 16 celle e il valore; resta 1,5 secondi dopo l'ultimo cambio. Un clic sulle celle sceglie il livello. Viene dai tasti del volume (su, giù, muto), dalle Impostazioni o da un'app; non compare con il centro di controllo aperto, che ha già i suoi cursori |
 | una notifica breve (titolo fino a 40 caratteri, testo fino a 60) | il dock **cresce verso l'alto** con una riga: icona, titolo, testo, *Chiudi* e, se viene da un'app, *Apri* arancione; resta 4,5 secondi, di più finché il puntatore ci sta sopra. Quelle lunghe, o con il dock nascosto, vanno in alto a destra come prima |
-| musica | l'icona di Musica diventa una capsula con il titolo, *Musica · 0:42* e un equalizzatore di 5 barre a 8 passi al secondo; un clic apre Musica |
+| musica | l'icona di Musica diventa una capsula con il titolo, *Musica · 0:42* e un equalizzatore di 5 barre a 8 passi al secondo; un clic apre Musica. Nel dock compatto la capsula ha una riga sola (icona, titolo accorciato, equalizzatore più basso) e diventa quella piena mentre il dock cresce; lo stesso per le capsule di avvio e del timer |
 | timer dell'Orologio | capsula con il tempo che manca; quando suona pulsa in arancione per 30 secondi ed esce davanti alle altre |
 | a schermo intero | il dock è nascosto; se c'è un'attività resta una **pillola** sottile in basso al centro con l'ora e l'equalizzatore, le celle o il tempo del timer. Un clic apre l'app; portando il puntatore sul bordo in basso torna il dock |
 | due attività o più | nel dock ce n'è una (la più recente), le altre aspettano in una **bolla** a destra del dock, con il numero quando sono due o più; un clic sulla bolla le scambia |
@@ -276,7 +303,7 @@ si vedono meno fotogrammi ma l'animazione dura uguale.
 | riduci / riapri | la finestra vola nella sua icona del dock e ne esce |
 | ingrandisci / ripristina | la finestra si allarga fino allo schermo e torna |
 | Applicazioni | lo sfondo si sfoca e scurisce, le icone arrivano con uno zoom |
-| dock | ingrandimento morbido delle icone, rimbalzo all'avvio di un'app |
+| dock | da compatto a pieno in 220 ms e ritorno, ingrandimento morbido delle icone, rimbalzo all'avvio di un'app |
 | barra dinamica | il dock cambia forma in 250 ms: capsule, barra di livello, riga della notifica, pillola, bolla |
 | menu e centro di controllo | si aprono in un attimo, dal dock verso l'alto |
 | notifiche | scivolano dentro da destra e poi via |
@@ -287,6 +314,45 @@ si vedono meno fotogrammi ma l'animazione dura uguale.
 Una finestra in movimento viene disegnata una volta in un'immagine a parte
 (con la sua trasparenza) e poi solo spostata, scalata e sfumata: l'app non
 si ridisegna a ogni fotogramma.
+
+### Fluidità e fotogrammi
+
+Il ciclo dell'interfaccia (`Looper::run` in `system/kernel/src/gui/ui.rs`,
+con il passo in `system/kernel/src/gui/pace.rs`) disegna solo la parte dello
+schermo che è cambiata, e **al massimo un fotogramma per periodo**: mentre
+qualcosa si muove (un'animazione, il puntatore) disegna al ritmo scelto,
+puntatore compreso; quando niente si muove non disegna niente. Il tick del
+sistema resta a 1 kHz: il ciclo dorme fino al millisecondo giusto, ma le
+scadenze sono tenute in nanosecondi (`time::uptime_ns`), così in media i
+fotogrammi arrivano al ritmo scelto (a 240 Hz uno ogni 4 o 5 ms).
+
+A riposo il ciclo aspetta: lo svegliano subito il mouse e la tastiera
+(`input::wake_gui`) e la finestra di un programma che manda un'immagine
+nuova (`window::present`); in più guarda ogni 8 ms quello che non lo può
+svegliare (lo stato delle app, il Terminale, le richieste di altri thread)
+e ogni 100 ms manda alle app il loro `Tick`, come prima.
+
+*Impostazioni → Schermo → Fluidità* sceglie il ritmo massimo: *Automatica*,
+*60 Hz*, *120 Hz*, *144 Hz*, *240 Hz*. *Automatica* sarebbe la frequenza
+dello schermo, ma oggi nessun driver la conosce (l'interfaccia video non la
+porta e nessuno legge l'EDID), quindi vale 60 Hz. La scelta resta nelle
+impostazioni (`fluidity`).
+
+Dal Terminale (o dalla console seriale) `fps` dice come è andato l'ultimo
+secondo; `fps 240` (o `60`, `120`, `144`, `auto`) cambia anche il ritmo:
+
+```
+cap 240 Hz (chosen)
+last second: 239 frames, 0.0 ms each on average, 0.1 ms at most; longest gap 5.0 ms
+loop: 253 wake-ups in the last whole second
+```
+
+*frames* sono i fotogrammi mostrati (anche quelli in cui si è mosso solo il
+puntatore), *each* quanto ci è voluto a disegnarli, *longest gap* la pausa
+più lunga tra due, *wake-ups* quante volte il ciclo si è svegliato. In QEMU
+senza KVM il numero di fotogrammi è limitato dal processore emulato:
+spostare una finestra costa decine di millisecondi a fotogramma, il solo
+puntatore quasi niente.
 
 ## Le app di sistema
 

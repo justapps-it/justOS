@@ -819,8 +819,19 @@ impl Looper {
     /// Waits for the next events and passes each to `handle`; redraws the
     /// damaged area with `draw` after each batch. Returns when `handle`
     /// returns true.
+    ///
+    /// Frames are paced (see [`super::pace`]): one at most every period of
+    /// the cap, the pointer included; while nothing moves the loop draws
+    /// nothing and waits for input (or a window's new picture), looking
+    /// every [`IDLE_LOOK_MS`] at what cannot wake it.
     pub fn run(&mut self, d: &mut Display, view: &mut dyn View) {
+        use super::pace;
+        // When the next frame may start (uptime, ns).
+        let mut due = 0u64;
         loop {
+            pace::sleep_until(due);
+            pace::woke();
+            let start = crate::time::uptime_ns();
             if super::take_redraw() {
                 d.follow_framebuffer();
                 self.damage_all(d);
@@ -892,19 +903,31 @@ impl Looper {
             if moved {
                 self.cursor.hide(d);
             }
-            self.flush(d, view);
+            let drew = self.flush(d, view);
             if moved {
                 self.cursor.show(d);
             }
-            crate::task::sleep_ms(if animating { 2 } else { 8 });
+            if drew || moved || animating {
+                // A frame: the next one a period later.
+                if drew || moved {
+                    pace::frame(start, crate::time::uptime_ns());
+                }
+                due = pace::next_due(due, start);
+            } else {
+                // Nothing moves: rest until input, a window's new picture,
+                // the next look or the next tick.
+                let to_tick = (self.last_tick + 100).saturating_sub(crate::time::uptime_ms());
+                input::wait_gui(IDLE_LOOK_MS.min(to_tick).max(1));
+            }
         }
     }
 
-    fn flush(&mut self, d: &mut Display, view: &mut dyn View) {
+    /// Draws and shows the damaged area; whether there was one.
+    fn flush(&mut self, d: &mut Display, view: &mut dyn View) -> bool {
         let r = self.dirty.intersect(&d.scene.bounds());
         self.dirty = Rect::EMPTY;
         if r.is_empty() {
-            return;
+            return false;
         }
         d.scene.set_clip(r);
         view.draw(&mut d.scene, r);
@@ -913,5 +936,10 @@ impl Looper {
         if r.overlaps(&self.cursor.rect()) {
             self.cursor.show(d);
         }
+        true
     }
 }
+
+/// While nothing moves, how often the loop looks at what cannot wake it
+/// (Linux programs' windows, the terminal, requests from other threads).
+const IDLE_LOOK_MS: u64 = 8;

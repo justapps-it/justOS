@@ -38,22 +38,15 @@ pub const MONTHS: [&str; 12] =
     ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
 const MONTHS_SHORT: [&str; 12] = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
 
-/// The apps kept in the dock, in order (app id, icon, name).
-const PINNED: [(&str, &str, &str); 10] = [
-    ("files", "files", "File"),
-    ("launcher", "apps", "Applicazioni"),
-    ("textedit", "text-editor", "Editor di testo"),
-    ("notes", "notes", "Note"),
-    ("calendar", "calendar", "Calendario"),
-    ("photos", "photos", "Foto"),
-    ("music", "music", "Musica"),
-    ("calculator", "calculator", "Calcolatrice"),
-    ("store", "store", "Negozio"),
-    ("settings", "settings", "Impostazioni"),
-];
+/// The apps kept in the dock, in order, until the user changes them (the
+/// settings' `dock`): app ids, and the launcher.
+const PINNED: [&str; 10] = ["files", "launcher", "textedit", "notes", "calendar", "photos", "music", "calculator", "store", "settings"];
 const ICON: i32 = 52;
-/// How much bigger the icon under the pointer gets.
-const MAGNIFY: i32 = 30;
+/// The icons of the compact dock at rest (see [`Dims`]).
+const ICON_SMALL: i32 = 34;
+/// How much bigger the icon under the pointer gets (its neighbours a
+/// little less).
+const MAGNIFY: i32 = 10;
 const DOCK_GAP: i32 = 12;
 const DOCK_PAD: i32 = 11;
 const DOCK_RAD: i32 = 28;
@@ -65,6 +58,49 @@ const SEP_W: i32 = 14;
 const STATUS_PAD: i32 = 16;
 const STATUS_GAP: i32 = 12;
 const STATUS_CELL: i32 = 4000;
+/// How long the compact dock takes to grow to full size (and back), and
+/// how long it stays grown after the pointer left it.
+const DOCK_GROW_MS: u64 = 220;
+const DOCK_STAY_MS: u64 = 400;
+
+/// The dock's measures at a size between compact (0) and full (1000): the
+/// full ones are the constants above, so the full-size dock is the dock as
+/// it always was.
+#[derive(Clone, Copy)]
+struct Dims {
+    icon: i32,
+    gap: i32,
+    pad: i32,
+    sep: i32,
+    rad: i32,
+    /// The status well's ends, the room between its symbols and their cells.
+    spad: i32,
+    sgap: i32,
+    cell: i32,
+}
+
+impl Dims {
+    /// With icons `full` square at full size (less than [`ICON`] when the
+    /// dock is crowded), at `size`.
+    fn at(full: i32, size: u32) -> Dims {
+        let l = |small: i32, big: i32| ui::lerp(small, big, size.min(1000));
+        Dims {
+            icon: l(full.min(ICON_SMALL), full),
+            gap: l(8, DOCK_GAP),
+            pad: l(7, DOCK_PAD),
+            sep: l(10, SEP_W),
+            rad: l(19, DOCK_RAD),
+            spad: l(10, STATUS_PAD),
+            sgap: l(8, STATUS_GAP),
+            cell: l(3000, STATUS_CELL),
+        }
+    }
+
+    /// The dock's height.
+    fn h(&self) -> i32 {
+        self.icon + 2 * self.pad + 4
+    }
+}
 /// The control centre is drawn from the justOS design for a screen of
 /// 1024 x 768: its measures are the design's pixels, scaled to the screen
 /// by `Desktop::cc`. The panel's width, padding, corner and the room
@@ -163,6 +199,49 @@ struct DockItem {
     launch: Option<Launch>,
     /// A separator comes before it.
     split: bool,
+    /// What keeps it in the dock (an entry of the settings' `dock`: an app
+    /// id, "launcher", or "spawn:" and a program's file); empty when that
+    /// is not known yet.
+    pin: String,
+    /// It is kept in the dock (else it is there while it runs).
+    kept: bool,
+}
+
+/// The dock item that the entry `e` of the settings' `dock` stands for
+/// (None for a program that is no more).
+fn pin_item(e: &str) -> Option<DockItem> {
+    let item = |id: &str, icon: String, label: String, kind: String, launch: Option<Launch>| DockItem {
+        id: id.into(),
+        icon,
+        label,
+        kind,
+        launch,
+        split: false,
+        pin: e.into(),
+        kept: true,
+    };
+    if e == "launcher" {
+        return Some(item("launcher", "apps".into(), "Applicazioni".into(), "launcher".into(), None));
+    }
+    if let Some(path) = e.strip_prefix("spawn:") {
+        if !fs::abs(path).is_ok_and(|p| fs::exists(&p)) {
+            return None;
+        }
+        // Its windows' icon is their kind.
+        let s = apps::start_for(path);
+        let kind = s.icon?;
+        return Some(item("", kind.clone(), s.name, kind, Some(Launch::Spawn(path.into()))));
+    }
+    let &(id, name, icon) = apps::BUILT_IN.iter().find(|(id, _, _)| *id == e && !matches!(*id, "trash" | "viewer"))?;
+    Some(item(id, icon.into(), name.into(), apps::kind_of(id).into(), Some(Launch::App(id))))
+}
+
+/// The apps kept in the dock: those the user chose, or the usual ones.
+fn load_pinned(chosen: Option<&[String]>) -> Vec<DockItem> {
+    match chosen {
+        Some(list) => list.iter().filter_map(|e| pin_item(e)).collect(),
+        None => PINNED.iter().filter_map(|e| pin_item(e)).collect(),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -180,6 +259,18 @@ enum MenuAct {
     Activity,
     Overview,
     Widgets,
+    // The menu of a dock icon (`Desktop::dock_menu`): open it, a new
+    // window, show it, one of its windows, keep it in the dock or not,
+    // close it, the dock's settings; the bin's "Svuota cestino".
+    DockOpen,
+    DockNew,
+    DockShow,
+    DockWindow(u32),
+    DockPin,
+    DockUnpin,
+    DockClose,
+    DockSettings,
+    TrashEmpty,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -216,7 +307,7 @@ enum ControlHit {
 struct Popup {
     kind: PopupKind,
     rect: Rect,
-    items: Vec<(&'static str, Option<MenuAct>)>,
+    items: Vec<(String, Option<MenuAct>)>,
     anim: Anim,
     /// It unfolds upwards (it opens from the dock).
     up: bool,
@@ -226,7 +317,8 @@ struct Popup {
 }
 
 impl Popup {
-    fn menu(x: i32, y: i32, items: Vec<(&'static str, Option<MenuAct>)>, screen_w: i32) -> Popup {
+    fn menu<S: Into<String>>(x: i32, y: i32, items: Vec<(S, Option<MenuAct>)>, screen_w: i32) -> Popup {
+        let items: Vec<(String, Option<MenuAct>)> = items.into_iter().map(|(s, a)| (s.into(), a)).collect();
         let w = 230;
         let h = items.iter().map(|(_, a)| if a.is_some() { 34 } else { 11 }).sum::<i32>() + 12;
         let rect = Rect::new(x.min(screen_w - w - 10).max(10), y, w, h);
@@ -576,6 +668,20 @@ struct Desktop {
     bar_hover: Option<bar::BarHit>,
     /// The step of the bar's moving cells (equaliser, progress) drawn last.
     bar_phase: u64,
+    /// How far the dock is grown: 0 compact, 1000 full size (see
+    /// [`Desktop::update_dock_size`]).
+    grow: Morph,
+    /// When the pointer left the grown dock (uptime, ms; 0: it has not).
+    left_at: u64,
+    /// The pointer is on the dock or near it.
+    near_dock: bool,
+    /// The apps kept in the dock, and the settings' list they come from.
+    pinned: Vec<DockItem>,
+    pins_from: Option<Vec<String>>,
+    /// How many times the settings had changed when they were last looked at.
+    settings_seen: u32,
+    /// The dock icon whose menu is open.
+    dock_menu: Option<DockItem>,
 }
 
 fn now() -> DateTime {
@@ -652,31 +758,25 @@ impl Desktop {
     // The dock
 
     fn dock_items(&self) -> Vec<DockItem> {
-        let mut v: Vec<DockItem> = PINNED
-            .iter()
-            .map(|&(id, icon, label)| DockItem {
-                id: id.into(),
-                icon: icon.into(),
-                label: label.into(),
-                kind: apps::kind_of(id).into(),
-                launch: if id == "launcher" { None } else { Some(Launch::App(id)) },
-                split: false,
-            })
-            .collect();
-        // Running apps that are not pinned, after a separator.
+        let mut v: Vec<DockItem> = self.pinned.clone();
+        // Running apps that are not pinned, after a separator (a built-in
+        // one can be kept in the dock from its menu).
         let mut first = true;
         for w in &self.windows {
             let kind = w.app.kind();
             if kind == "trash" || v.iter().any(|d| d.kind == kind) {
                 continue;
             }
+            let built_in = apps::BUILT_IN.iter().find(|(id, _, _)| *id == kind && !matches!(*id, "viewer")).map(|(id, _, _)| *id);
             v.push(DockItem {
-                id: String::new(),
+                id: built_in.unwrap_or("").into(),
                 icon: w.app.icon().into(),
                 label: apps::app_name(w.app.kind(), &w.app.title()),
                 kind: kind.into(),
-                launch: None,
+                launch: built_in.map(Launch::App),
                 split: first,
+                pin: built_in.unwrap_or("").into(),
+                kept: false,
             });
             first = false;
         }
@@ -693,6 +793,8 @@ impl Desktop {
                 // Pressed again: it hops (no second copy).
                 launch: Some(Launch::Spawn(s.path.clone())),
                 split: first,
+                pin: String::new(),
+                kept: false,
             });
             first = false;
         }
@@ -703,34 +805,37 @@ impl Desktop {
             kind: "trash".into(),
             launch: Some(Launch::App("trash")),
             split: true,
+            pin: String::new(),
+            kept: false,
         });
         v
     }
 
-    /// The dock's base layout, before magnification, with icons `icon`
-    /// units square, each item `extras` wider for its capsule (see
-    /// [`bar`]): (x of each icon, total width). The mark comes first and the
-    /// status last, `status_w` wide.
-    fn dock_base(items: &[DockItem], status_w: i32, icon: i32, extras: &[i32]) -> (Vec<i32>, i32) {
+    /// The dock's base layout, before magnification, with the measures
+    /// `d`, each item `extras` wider for its capsule (see [`bar`]): (x of
+    /// each icon, total width). The mark comes first and the status last,
+    /// `status_w` wide.
+    fn dock_base(items: &[DockItem], status_w: i32, d: &Dims, extras: &[i32]) -> (Vec<i32>, i32) {
         let mut xs = Vec::new();
         // The mark, as wide as an icon, and a separator after it.
-        let mut x = DOCK_PAD + icon + DOCK_GAP + SEP_W;
+        let mut x = d.pad + d.icon + d.gap + d.sep;
         for (i, it) in items.iter().enumerate() {
             if it.split && i > 0 {
-                x += SEP_W;
+                x += d.sep;
             }
             xs.push(x);
-            x += icon + DOCK_GAP + extras.get(i).copied().unwrap_or(0);
+            x += d.icon + d.gap + extras.get(i).copied().unwrap_or(0);
         }
-        (xs, x + status_w + DOCK_PAD)
+        (xs, x + status_w + d.pad)
     }
 
-    /// The size of the dock's icons: [`ICON`], or less when so many windows
-    /// are open (or a capsule is so wide) that the dock would not fit on
-    /// the screen.
+    /// The size of the dock's icons at full size: [`ICON`], or less when so
+    /// many windows are open (or a capsule is so wide) that the dock would
+    /// not fit on the screen.
     fn dock_icon(&self, items: &[DockItem]) -> i32 {
-        let (_, total) = Self::dock_base(items, self.status_w(), ICON, &self.cap_extras(items));
-        let room = self.w - 24 - self.bubble_room(ICON);
+        let d = Dims::at(ICON, 1000);
+        let (_, total) = Self::dock_base(items, self.status_w(&d), &d, &self.cap_extras(items, 1000));
+        let room = self.w - 24 - self.bubble_room(d.h());
         if total <= room || items.is_empty() {
             return ICON;
         }
@@ -738,24 +843,31 @@ impl Desktop {
         (ICON - (total - room + n - 1) / n).max(32)
     }
 
-    /// The width of the status well: network, sound and, on a laptop, the
-    /// battery (room for the widest symbol of each).
-    fn status_w(&self) -> i32 {
-        let w = |g: &[&str]| ui::soft_size(g, STATUS_CELL).0 / 1000;
-        let mut total = 2 * STATUS_PAD + w(&G_WIFI) + STATUS_GAP + w(&G_MUTE);
+    /// How far the dock is grown: 0 compact, 1000 full size.
+    fn dock_size(&self) -> u32 {
+        self.grow.value()
+    }
+
+    /// The dock's measures for `items` at size `size`.
+    fn dims_at(&self, items: &[DockItem], size: u32) -> Dims {
+        Dims::at(self.dock_icon(items), size)
+    }
+
+    /// The width of the status well with the measures `d`: network, sound
+    /// and, on a laptop, the battery (room for the widest symbol of each).
+    fn status_w(&self, d: &Dims) -> i32 {
+        let w = |g: &[&str]| ui::soft_size(g, d.cell).0 / 1000;
+        let mut total = 2 * d.spad + w(&G_WIFI) + d.sgap + w(&G_MUTE);
         if self.battery.is_some() {
-            total += STATUS_GAP + battery_rows(100)[0].len() as i32 * STATUS_CELL / 1000;
+            total += d.sgap + battery_rows(100)[0].len() as i32 * d.cell / 1000;
         }
         total
     }
 
-    /// The dock's background at rest (no icon magnified).
+    /// The dock's background at rest, at full size (no icon magnified):
+    /// what opens from the dock opens above it.
     fn dock_rest(&self) -> Rect {
-        let items = self.dock_items();
-        let icon = self.dock_icon(&items);
-        let (_, total) = Self::dock_base(&items, self.status_w(), icon, &self.cap_extras(&items));
-        let dock_h = icon + 2 * DOCK_PAD + 4;
-        Rect::new((self.w - total - self.bubble_room(icon)) / 2, self.h - dock_h - 12, total, dock_h)
+        self.dock_geometry_at(&self.dock_items(), 1000, false).2
     }
 
     /// The justOS mark at the left end of the dock at rest (where the
@@ -766,10 +878,10 @@ impl Desktop {
         Rect::new(rest.x + DOCK_PAD, rest.y + DOCK_PAD, icon, icon)
     }
 
-    /// The status at the right end of the dock `bg`.
-    fn status_pill(&self, bg: Rect) -> Rect {
-        let w = self.status_w();
-        Rect::new(bg.right() - DOCK_PAD - w, bg.y + DOCK_PAD, w, bg.h - 2 * DOCK_PAD - 4)
+    /// The status at the right end of the dock `bg`, with the measures `d`.
+    fn status_pill(&self, bg: Rect, d: &Dims) -> Rect {
+        let w = self.status_w(d);
+        Rect::new(bg.right() - d.pad - w, bg.y + d.pad, w, bg.h - 2 * d.pad - 4)
     }
 
     /// The icons' rectangles on the screen, magnified around the pointer,
@@ -779,21 +891,30 @@ impl Desktop {
         (rects, bg)
     }
 
-    /// The justOS mark (it opens the system menu) and the icons, magnified
-    /// around the pointer, and the dock's background.
+    /// The justOS mark (it opens the system menu) and the icons, as they
+    /// are now (grown or compact, magnified around the pointer), and the
+    /// dock's background.
     fn dock_geometry(&self, items: &[DockItem]) -> (Rect, Vec<Rect>, Rect) {
-        let icon = self.dock_icon(items);
-        let extras = self.cap_extras(items);
-        let (apps, total) = Self::dock_base(items, self.status_w(), icon, &extras);
+        self.dock_geometry_at(items, self.dock_size(), true)
+    }
+
+    /// The same at size `size`, magnified if `magnify` (and the settings
+    /// want it).
+    fn dock_geometry_at(&self, items: &[DockItem], size: u32, magnify: bool) -> (Rect, Vec<Rect>, Rect) {
+        let d = self.dims_at(items, size);
+        let icon = d.icon;
+        let extras = self.cap_extras(items, size);
+        let (apps, total) = Self::dock_base(items, self.status_w(&d), &d, &extras);
         // The mark grows like an icon.
-        let xs: Vec<i32> = core::iter::once(DOCK_PAD).chain(apps).collect();
-        let dock_h = icon + 2 * DOCK_PAD + 4;
+        let xs: Vec<i32> = core::iter::once(d.pad).chain(apps).collect();
+        let dock_h = d.h();
         // The bubble beside the dock takes room at its right.
-        let bubble = self.bubble_room(icon);
+        let bubble = self.bubble_room(dock_h);
         let base_x = (self.w - total - bubble) / 2;
-        let bottom = self.h - 12 - DOCK_PAD - 4;
-        let mag = self.mag.value.clamp(0, 1000) as i64;
-        let range = (icon + DOCK_GAP) as i64 * 5 / 2;
+        let bottom = self.h - 12 - d.pad - 4;
+        // Icons grow under the pointer as the dock reaches full size.
+        let mag = if magnify && settings::dock_magnify() { self.mag.value.clamp(0, 1000) as i64 * size as i64 / 1000 } else { 0 };
+        let range = (icon + d.gap) as i64 * 3 / 2;
         let mx = self.mouse.0 as i64;
         let mut sizes: Vec<i32> = xs
             .iter()
@@ -830,7 +951,7 @@ impl Desktop {
         // Keep the point under the pointer where it was, so the icon being
         // aimed at does not slide away as the others grow.
         if mag > 0 && !xs.is_empty() {
-            let k = xs.iter().rposition(|&x| base_x + x - DOCK_GAP / 2 <= self.mouse.0).unwrap_or(0);
+            let k = xs.iter().rposition(|&x| base_x + x - d.gap / 2 <= self.mouse.0).unwrap_or(0);
             let f = ((self.mouse.0 - (base_x + xs[k])) as i64 * 1000 / icon as i64).clamp(0, 1000);
             let now_at = rects[k].x as i64 + rects[k].w as i64 * f / 1000;
             let shift = ((mx - now_at) * mag / 1000) as i32;
@@ -851,12 +972,75 @@ impl Desktop {
         self.dock_layout(&self.dock_items()).1
     }
 
-    /// The area the dock may paint (icons grow above it), with the rest of
-    /// the bar (see [`bar`]).
+    /// The area the dock may paint (icons grow above it, the compact dock
+    /// grows to full size), with the rest of the bar (see [`bar`]).
     fn dock_zone(&self) -> Rect {
-        let d = self.dock();
-        let zone = Rect::new(d.x - MAGNIFY * 4 - 30, d.y - MAGNIFY - 60, d.w + MAGNIFY * 8 + 60, d.h + MAGNIFY + 80);
-        zone.union(&self.bar_extent(d))
+        let items = self.dock_items();
+        let d = self.dock_geometry(&items).2;
+        let full = self.dock_geometry_at(&items, 1000, false).2;
+        let r = d.union(&full);
+        let zone = Rect::new(r.x - MAGNIFY * 4 - 30, r.y - MAGNIFY - 60, r.w + MAGNIFY * 8 + 60, r.h + MAGNIFY + 80);
+        zone.union(&self.bar_extent(d)).union(&self.bar_extent(full))
+    }
+
+    /// The dock stays at full size: a menu or the control centre opened
+    /// from it, a short notification in the bar, files carried onto it.
+    fn dock_held(&self) -> bool {
+        let popup = self.popup.as_ref().is_some_and(|p| p.up && matches!(p.kind, PopupKind::Menu | PopupKind::Control));
+        popup || self.note_act_shown() || self.carry.as_ref().is_some_and(|c| c.dock.is_some())
+    }
+
+    /// The compact dock grows to full size while the pointer is near it
+    /// (or something holds it, see [`Desktop::dock_held`]), and goes back
+    /// [`DOCK_STAY_MS`] after it left. Called after every event.
+    fn update_dock_size(&mut self, l: &mut Looper) {
+        let full = !settings::dock_compact() || self.dock_held() || (self.near_dock && self.dock_shown());
+        let want = if full {
+            self.left_at = 0;
+            1000
+        } else if self.grow.target() == 0 {
+            0
+        } else {
+            let now = time::uptime_ms();
+            if self.left_at == 0 {
+                self.left_at = now;
+            }
+            if now >= self.left_at + DOCK_STAY_MS {
+                0
+            } else {
+                1000
+            }
+        };
+        if self.grow.set_in(want, DOCK_GROW_MS) {
+            if want == 0 {
+                self.left_at = 0;
+            }
+            self.damage_bar(l);
+        }
+    }
+
+    /// The pointer moved to (`x`, `y`): whether it is near the dock (it
+    /// then grows), and on it where the icons magnify (it then returns the
+    /// icon under it, if any).
+    fn dock_near(&mut self, x: i32, y: i32, live: bool) -> (bool, Option<usize>) {
+        let items = self.dock_items();
+        let (_, rects, bg) = self.dock_geometry(&items);
+        let d = self.dims_at(&items, self.dock_size());
+        // Above the full-size dock, the room its icons grow into.
+        let lift = if self.dock_size() >= 1000 && settings::dock_magnify() { MAGNIFY + 10 } else { 10 };
+        let mut near = Rect::new(bg.x - 20, bg.y - lift, bg.w + 40, self.h - (bg.y - lift));
+        if self.bubble.value() > 0 {
+            near = near.union(&self.bubble_rect(bg).grow(10));
+        }
+        let on = near.contains(x, y);
+        self.near_dock = on && self.dock_shown() && self.level_t() == 0;
+        let inside = on && live;
+        if !inside {
+            return (false, None);
+        }
+        let wide = self.wide_rects(&items, &rects);
+        let g = d.gap / 2;
+        (true, wide.iter().position(|r| r.grow(g).contains(x, y) || (x >= r.x - g && x < r.right() + g && y > r.y - 4)))
     }
 
     /// The dock icon of a window kind (where it minimises to).
@@ -1661,7 +1845,44 @@ impl Desktop {
             MenuAct::Lock => self.lock_screen(l),
             MenuAct::Screenshot => self.screenshot(l),
             MenuAct::Settings => self.open_id(l, "settings"),
-            MenuAct::Display => self.open_id(l, "settings"),
+            MenuAct::Display => {
+                apps::settings_at_screen();
+                self.open_id(l, "settings");
+            }
+            MenuAct::DockOpen | MenuAct::DockShow => {
+                if let Some(item) = self.dock_menu.take() {
+                    self.dock_press(l, &item);
+                }
+            }
+            MenuAct::DockNew => {
+                if let Some(app) = self.dock_menu.take().and_then(|item| apps::open(&item.id)) {
+                    self.open(l, app, false);
+                }
+            }
+            MenuAct::DockWindow(id) => self.raise(l, id),
+            MenuAct::DockPin => {
+                if let Some(key) = self.dock_menu.take().and_then(|item| self.pin_key(&item)) {
+                    self.set_kept(l, &key, true);
+                }
+            }
+            MenuAct::DockUnpin => {
+                if let Some(item) = self.dock_menu.take() {
+                    self.set_kept(l, &item.pin, false);
+                }
+            }
+            MenuAct::DockClose => {
+                if let Some(item) = self.dock_menu.take() {
+                    let ids: Vec<u32> = self.windows.iter().filter(|w| w.app.kind() == item.kind).map(|w| w.id).collect();
+                    for id in ids {
+                        self.close_window(l, id);
+                    }
+                }
+            }
+            MenuAct::DockSettings => {
+                apps::settings_at_look();
+                self.open_id(l, "settings");
+            }
+            MenuAct::TrashEmpty => self.empty_trash(l),
             MenuAct::Store => self.open_id(l, "store"),
             MenuAct::Activity => self.open_id(l, "monitor"),
             MenuAct::Overview => self.open_overview(l),
@@ -1730,7 +1951,124 @@ impl Desktop {
         l.damage(self.popup_area(&p));
         // The dock settles: the popup may open from it.
         self.mag.target = 0;
+        if self.hover.take().is_some() {
+            l.damage(self.dock_zone());
+        }
+        self.dock_menu = None;
         self.popup = Some(p);
+    }
+
+    /// The menu of dock icon `i` (a right click on it), above it in the
+    /// dock at rest: open it or show it, a new window, its windows, keep it
+    /// in the dock or not, close it, the dock's settings. The bin's empties
+    /// it.
+    fn dock_menu(&mut self, l: &mut Looper, items: &[DockItem], i: usize) {
+        let item = items[i].clone();
+        let mut menu: Vec<(String, Option<MenuAct>)> = Vec::new();
+        let line = |menu: &mut Vec<(String, Option<MenuAct>)>| {
+            if menu.last().is_some_and(|(_, a)| a.is_some()) {
+                menu.push((String::new(), None));
+            }
+        };
+        if item.id == "trash" {
+            menu.push((String::from("Apri"), Some(MenuAct::DockShow)));
+            line(&mut menu);
+            menu.push((String::from("Svuota cestino"), Some(MenuAct::TrashEmpty)));
+        } else {
+            let wins: Vec<(u32, String)> = self.windows.iter().filter(|w| w.app.kind() == item.kind).map(|w| (w.id, w.app.title())).collect();
+            if wins.is_empty() {
+                menu.push((String::from("Apri"), Some(MenuAct::DockOpen)));
+            } else {
+                menu.push((String::from("Mostra"), Some(MenuAct::DockShow)));
+                if !item.id.is_empty() && !apps::single(&item.id) {
+                    menu.push((String::from("Nuova finestra"), Some(MenuAct::DockNew)));
+                }
+            }
+            if wins.len() > 1 {
+                line(&mut menu);
+                for (id, title) in &wins {
+                    let title = if title.is_empty() { item.label.clone() } else { title.clone() };
+                    menu.push((title, Some(MenuAct::DockWindow(*id))));
+                }
+            }
+            line(&mut menu);
+            if item.kept {
+                menu.push((String::from("Rimuovi dal dock"), Some(MenuAct::DockUnpin)));
+            } else if self.pin_key(&item).is_some() {
+                menu.push((String::from("Mantieni nel dock"), Some(MenuAct::DockPin)));
+            }
+            if !wins.is_empty() {
+                menu.push((String::from("Chiudi"), Some(MenuAct::DockClose)));
+            }
+            line(&mut menu);
+            menu.push((String::from("Impostazioni del dock…"), Some(MenuAct::DockSettings)));
+        }
+        let (_, rest, bg) = self.dock_geometry_at(items, 1000, false);
+        let r = rest[i];
+        let p = Popup::menu(r.x + r.w / 2 - 115, 0, menu, self.w).above(bg.y, 12);
+        self.show_popup(l, p);
+        self.dock_menu = Some(item);
+    }
+
+    /// The entry of the settings' `dock` that keeps `item` there, when it
+    /// can be kept: a built-in app, the launcher, a program with a window.
+    fn pin_key(&self, item: &DockItem) -> Option<String> {
+        if !item.pin.is_empty() {
+            return Some(item.pin.clone());
+        }
+        let path = match &item.launch {
+            Some(Launch::Spawn(p)) => p.clone(),
+            _ => apps::catalog().into_iter().find_map(|e| match e.launch {
+                Launch::Spawn(p) if e.icon == item.kind => Some(p),
+                _ => None,
+            })?,
+        };
+        let key = format!("spawn:{path}");
+        pin_item(&key).filter(|it| it.kind == item.kind).map(|_| key)
+    }
+
+    /// Keeps the app of entry `key` in the dock (at the end of the apps
+    /// kept there), or no more.
+    fn set_kept(&mut self, l: &mut Looper, key: &str, keep: bool) {
+        let mut list: Vec<String> = self.pinned.iter().map(|it| it.pin.clone()).collect();
+        if keep && !list.iter().any(|k| k == key) {
+            list.push(String::from(key));
+        } else if !keep {
+            list.retain(|k| k != key);
+        }
+        self.damage_bar(l);
+        settings::update(|s| s.dock = Some(list));
+        self.reload_pinned(l);
+    }
+
+    /// The apps kept in the dock again from the settings, if they changed
+    /// there.
+    fn reload_pinned(&mut self, l: &mut Looper) {
+        self.settings_seen = settings::changes();
+        let chosen = settings::get().dock;
+        if chosen != self.pins_from {
+            self.damage_bar(l);
+            self.pinned = load_pinned(chosen.as_deref());
+            self.pins_from = chosen;
+            self.damage_bar(l);
+        }
+    }
+
+    /// "Svuota cestino" in the bin's menu in the dock.
+    fn empty_trash(&mut self, l: &mut Looper) {
+        let icon = String::from("trash");
+        match dnd::empty_bin() {
+            Ok(0) => self.notify(l, String::from("Cestino"), String::from("Il Cestino è già vuoto."), icon),
+            Ok(n) => {
+                self.refresh_all(l);
+                let what = if n == 1 { String::from("1 elemento eliminato.") } else { format!("{n} elementi eliminati.") };
+                self.notify(l, String::from("Cestino svuotato"), what, icon);
+            }
+            Err(e) => {
+                self.refresh_all(l);
+                self.notify(l, String::from("Cestino non svuotato"), e, icon);
+            }
+        }
     }
 
     fn close_popup(&mut self, l: &mut Looper) {
@@ -1765,7 +2103,7 @@ impl Desktop {
         let w = self.cc(CC_W);
         let h = 2 * self.cc(CC_PAD) + CC_ROWS.iter().map(|&r| self.cc(r)).sum::<i32>() + (CC_ROWS.len() as i32 - 1) * self.cc(CC_GAP);
         let rest = self.dock_rest();
-        let status = self.status_pill(rest);
+        let status = self.status_pill(rest, &Dims::at(ICON, 1000));
         let x = (status.x + status.w / 2 - w / 2).min(self.w - 16 - w).max(16);
         Rect::new(x, rest.y - self.cc(CC_ABOVE) - h, w, h)
     }
@@ -2037,7 +2375,8 @@ impl Desktop {
             self.show_popup(l, p);
             return;
         }
-        if live && self.status_pill(bg).contains(x, y) {
+        let d = self.dims_at(&items, self.dock_size());
+        if live && self.status_pill(bg, &d).contains(x, y) {
             let p = Popup { kind: PopupKind::Control, rect: self.control_rect(), items: Vec::new(), anim: Anim::new(180), up: true, settled: false };
             self.show_popup(l, p);
             return;
@@ -2055,7 +2394,7 @@ impl Desktop {
         if live && (bg.contains(x, y) || rects.iter().any(|r| r.contains(x, y))) {
             // A capsule is pressed like its icon.
             let wide = self.wide_rects(&items, &rects);
-            if let Some(i) = wide.iter().position(|r| r.grow(DOCK_GAP / 2).contains(x, y)) {
+            if let Some(i) = wide.iter().position(|r| r.grow(d.gap / 2).contains(x, y)) {
                 self.dock_press(l, &items[i]);
             }
             return;
@@ -2378,20 +2717,11 @@ impl Desktop {
         } else if self.dock_reveal {
             self.dock_reveal = false;
         }
-        // The dock magnifies around the pointer.
-        let zone = self.dock();
-        let near = Rect::new(zone.x - 20, zone.y - MAGNIFY - 10, zone.w + 40, zone.h + MAGNIFY + 20);
-        // Not while the bar shows the level or a notification over it.
-        let inside = near.contains(x, y) && self.popup.is_none() && self.dock_live() && self.note_t() == 0;
-        self.mag.target = if inside { 1000 } else { 0 };
-        let items = self.dock_items();
-        let hover = if inside {
-            let (rects, _) = self.dock_layout(&items);
-            let wide = self.wide_rects(&items, &rects);
-            wide.iter().position(|r| r.grow(DOCK_GAP / 2).contains(x, y) || (x >= r.x - DOCK_GAP / 2 && x < r.right() + DOCK_GAP / 2 && y > r.y - 4))
-        } else {
-            None
-        };
+        // The dock grows near the pointer and magnifies around it; not
+        // while the bar shows the level or a notification over it.
+        let live = self.popup.is_none() && self.dock_live() && self.note_t() == 0;
+        let (inside, hover) = self.dock_near(x, y, live);
+        self.mag.target = if inside && settings::dock_magnify() { 1000 } else { 0 };
         if inside || self.mag.moving() || hover != self.hover {
             l.damage(self.dock_zone());
         }
@@ -2439,18 +2769,11 @@ impl Desktop {
         let Some(mut carry) = self.carry.take() else { return };
         let (ctrl, alt, _) = input::mods();
         carry.copy = ctrl || alt;
-        // The dock magnifies as usual; some of its icons take files.
-        let zone = self.dock();
-        let near = Rect::new(zone.x - 20, zone.y - MAGNIFY - 10, zone.w + 40, zone.h + MAGNIFY + 20);
-        let inside = near.contains(x, y) && self.popup.is_none() && self.dock_shown();
-        self.mag.target = if inside { 1000 } else { 0 };
+        // The dock grows and magnifies as usual; some of its icons take files.
+        let live = self.popup.is_none() && self.dock_shown();
+        let (inside, hover) = self.dock_near(x, y, live);
+        self.mag.target = if inside && settings::dock_magnify() { 1000 } else { 0 };
         let items = self.dock_items();
-        let hover = if inside {
-            let (rects, _) = self.dock_layout(&items);
-            rects.iter().position(|r| r.grow(DOCK_GAP / 2).contains(x, y) || (x >= r.x - DOCK_GAP / 2 && x < r.right() + DOCK_GAP / 2 && y > r.y - 4))
-        } else {
-            None
-        };
         if inside || self.mag.moving() || hover != self.hover {
             l.damage(self.dock_zone());
         }
@@ -2718,10 +3041,12 @@ impl Desktop {
     fn draw_dock(&self, c: &mut Canvas) {
         let items = self.dock_items();
         let (mark, rects, bg) = self.dock_geometry(&items);
-        let extras = self.cap_extras(&items);
+        let size = self.dock_size();
+        let d = self.dims_at(&items, size);
+        let extras = self.cap_extras(&items, size);
         // The bar's panel, with a notification above the dock or on its way
         // to being the level (then the dock's content is cut to it).
-        let Some(panel) = self.bar_frame(c, bg) else { return };
+        let Some(panel) = self.bar_frame(c, bg, d.rad) else { return };
         let level = self.level_t();
         let saved = c.clip();
         if level > 0 {
@@ -2734,7 +3059,7 @@ impl Desktop {
         draw_mark_tile(c, mark, on_mark);
         // The status in a well: network, sound and the battery; it opens
         // the control centre.
-        let sp = self.status_pill(bg);
+        let sp = self.status_pill(bg, &d);
         let open = self.popup.as_ref().is_some_and(|p| p.kind == PopupKind::Control);
         let on_status = open || sp.contains(self.mouse.0, self.mouse.1);
         let rad = 18.min(sp.h / 2);
@@ -2751,21 +3076,24 @@ impl Desktop {
         if let Some(rows) = &battery {
             symbols.push((rows.as_slice(), ui::text()));
         }
-        let widths: Vec<i32> = symbols.iter().map(|(g, _)| ui::soft_size(g, STATUS_CELL).0).collect();
-        let total = widths.iter().sum::<i32>() + (symbols.len() as i32 - 1) * STATUS_GAP * 1000;
+        let widths: Vec<i32> = symbols.iter().map(|(g, _)| ui::soft_size(g, d.cell).0).collect();
+        let total = widths.iter().sum::<i32>() + (symbols.len() as i32 - 1) * d.sgap * 1000;
         let mut x = sp.x * 1000 + (sp.w * 1000 - total) / 2;
         let charge = self.battery.map_or(ui::text(), |(pct, charging)| battery_color(pct, charging));
         for ((g, col), w) in symbols.iter().zip(&widths) {
-            let (_, h) = ui::soft_size(g, STATUS_CELL);
+            let (_, h) = ui::soft_size(g, d.cell);
             let col = *col;
-            ui::soft_pixels_at(c, g, x, sp.y * 1000 + (sp.h * 1000 - h) / 2, STATUS_CELL, &|k| if k == b'f' { charge } else { col });
-            x += w + STATUS_GAP * 1000;
+            ui::soft_pixels_at(c, g, x, sp.y * 1000 + (sp.h * 1000 - h) / 2, d.cell, &|k| if k == b'f' { charge } else { col });
+            x += w + d.sgap * 1000;
         }
         let sep = (ui::text() & 0xFF_FFFF) | 0x2900_0000;
+        let sep_h = ui::lerp(20, 30, size);
         let sep_at = |c: &mut Canvas, r: Rect| {
-            let x = r.x - (SEP_W + DOCK_GAP) / 2 - 1;
-            c.fill_round(Rect::new(x, bg.y + (bg.h - 4 - 30) / 2, 2, 30), 1, sep);
+            let x = r.x - (d.sep + d.gap) / 2 - 1;
+            c.fill_round(Rect::new(x, bg.y + (bg.h - 4 - sep_h) / 2, 2, sep_h), 1, sep);
         };
+        // The dot under the icon of an app that is open.
+        let dot = ui::lerp(4, 5, size);
         if let Some(first) = rects.first() {
             sep_at(c, *first);
         }
@@ -2793,9 +3121,9 @@ impl Desktop {
                 // Widened into a capsule: its dot under its smaller tile,
                 // clear of the well.
                 Some(a) => {
-                    let tile = self.draw_capsule(c, &it.icon, a, r, extras[i], lift);
+                    let (tile, well) = self.draw_capsule(c, &it.icon, a, r, extras[i], lift, size);
                     if open {
-                        c.fill_round(Rect::new(tile.x + tile.w / 2 - 2, bg.bottom() - 9, 5, 5), 1, ui::ORANGE);
+                        c.fill_round(Rect::new(tile.x + tile.w / 2 - 2, well.bottom() + 2, dot, dot), 1, ui::ORANGE);
                     }
                 }
                 None => {
@@ -2807,7 +3135,7 @@ impl Desktop {
                         res::draw_icon(c, &it.icon, r.w, r.x, r.y - lift);
                     }
                     if open {
-                        c.fill_round(Rect::new(r.x + r.w / 2 - 2, bg.bottom() - 12, 5, 5), 1, ui::ORANGE);
+                        c.fill_round(Rect::new(r.x + r.w / 2 - 2, r.bottom() + 3, dot, dot), 1, ui::ORANGE);
                     }
                 }
             }
@@ -2921,7 +3249,8 @@ impl Desktop {
                     if r.contains(self.mouse.0, self.mouse.1) {
                         c.fill_round(r, 12, ui::sel());
                     }
-                    text::draw(c, Font::Body, r.x + 12, r.y + (r.h - lh) / 2, label, ui::text());
+                    // A window's title may be long (a dock icon's menu).
+                    text::draw(c, Font::Body, r.x + 12, r.y + (r.h - lh) / 2, &text::fit(Font::Body, label, r.w - 24), ui::text());
                     y += 34;
                 }
             }
@@ -3417,6 +3746,7 @@ impl View for Desktop {
             || self.launcher.as_ref().is_some_and(|l| !l.settled || l.closing)
             || self.popup.as_ref().is_some_and(|p| !p.settled)
             || self.mag.moving()
+            || self.grow.moving()
             || self.bounce.is_some()
             || self.bar_moving()
             || self.notes.iter().any(|n| n.moving())
@@ -3428,6 +3758,7 @@ impl View for Desktop {
 
     fn event(&mut self, l: &mut Looper, ev: Event) -> bool {
         let quit = self.handle(l, ev);
+        self.update_dock_size(l);
         // Into or out of full screen: the bar and the dock come and go.
         let full = self.full_screen();
         if full != self.was_full {
@@ -3507,6 +3838,21 @@ impl Desktop {
             Event::Menu { x, y } => {
                 if self.launcher.is_some() || self.overview.is_some() || self.ending.is_some() {
                     return false;
+                }
+                // The dock is over the windows: an app's icon (or the bin's)
+                // has a menu; the mark and the status have none.
+                if self.dock_live() {
+                    let items = self.dock_items();
+                    let (mark, rects, bg) = self.dock_geometry(&items);
+                    if bg.contains(x, y) || rects.iter().any(|r| r.contains(x, y)) {
+                        let d = self.dims_at(&items, self.dock_size());
+                        let wide = self.wide_rects(&items, &rects);
+                        let on_own = mark.contains(x, y) || self.status_pill(bg, &d).contains(x, y);
+                        if let Some(i) = wide.iter().position(|r| r.grow(d.gap / 2).contains(x, y)).filter(|_| !on_own) {
+                            self.dock_menu(l, &items, i);
+                        }
+                        return false;
+                    }
                 }
                 let on_window = self
                     .windows
@@ -3619,6 +3965,10 @@ impl Desktop {
                     self.open(l, app, false);
                 }
                 self.check_starting(l);
+                // The apps kept in the dock, changed in the settings.
+                if settings::changes() != self.settings_seen {
+                    self.reload_pinned(l);
+                }
                 while let Some((title, body, icon)) = super::take_notification() {
                     self.notify(l, title, body, icon);
                 }
@@ -3672,7 +4022,8 @@ impl Desktop {
                         p.settled = p.anim.done();
                     }
                 }
-                if self.mag.step() {
+                let magnified = self.mag.step();
+                if magnified {
                     l.damage(self.dock_zone());
                 }
                 if let Some((_, a)) = &self.bounce {
@@ -3681,9 +4032,23 @@ impl Desktop {
                         self.bounce = None;
                     }
                 }
-                // The bar changing shape: where it is now and where it was.
-                if self.bar_moving() {
+                // The bar changing shape (the dock growing or shrinking too):
+                // where it is now and where it was.
+                let growing = self.grow.moving();
+                if self.bar_moving() || growing {
                     self.damage_bar(l);
+                }
+                // The icons move under a pointer that stays still while the
+                // dock grows or magnifies: the one under it (its name, its
+                // click) is found again.
+                if (magnified || growing) && self.carry.is_none() && (self.near_dock || self.hover.is_some()) {
+                    let (x, y) = self.mouse;
+                    let live = self.popup.is_none() && self.dock_live() && self.note_t() == 0;
+                    let (_, hover) = self.dock_near(x, y, live);
+                    if hover != self.hover {
+                        self.hover = hover;
+                        l.damage(self.dock_zone());
+                    }
                 }
                 if self.notes.iter().any(|n| n.moving()) {
                     l.damage(self.notes_zone());
@@ -3826,6 +4191,7 @@ impl Desktop {
 pub fn run(d: &mut Display) {
     let (w, h) = (d.width(), d.height());
     let (sharp, blur) = res::wallpaper(&settings::get().wallpaper, w, h);
+    let pins = settings::get().dock;
     let mut desk = Desktop {
         w,
         h,
@@ -3869,6 +4235,13 @@ pub fn run(d: &mut Display) {
         bar_painted: Cell::new(Rect::EMPTY),
         bar_hover: None,
         bar_phase: 0,
+        grow: Morph::at(if settings::dock_compact() { 0 } else { 1000 }),
+        left_at: 0,
+        near_dock: false,
+        pinned: load_pinned(pins.as_deref()),
+        pins_from: pins,
+        settings_seen: settings::changes(),
+        dock_menu: None,
     };
     let mut l = Looper::new(d);
     l.damage_all(d);

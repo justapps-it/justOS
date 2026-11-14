@@ -97,6 +97,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("tone", "[hz] [ms]", "play a tone (default 440 Hz, 500 ms)"),
     ("volume", "[0-100]", "show or set the sound volume"),
     ("display", "[WxH | scale auto|1|2]", "screen resolutions, switch to one, or the interface size"),
+    ("fps", "[auto|60|120|144|240]", "frames the interface drew in the last second; or set the most a second"),
 ];
 
 /// The BusyBox applets justOS exposes as commands once `busybox` is installed.
@@ -1097,6 +1098,7 @@ impl Shell {
                 },
             },
             "display" => self.display(rest.first().copied(), rest.get(1).copied()),
+            "fps" => self.fps(rest.first().copied()),
             _ => {
                 let prog_args = line.trim_start()[args[0].len()..].trim();
                 if crate::user::find_program(&args[0], &self.cwd).is_some() {
@@ -1367,6 +1369,46 @@ impl Shell {
             Ok(()) => println!("screen {}x{}", mode.width, mode.height),
             Err(e) => println!("{ERR}{e}{RESET}"),
         }
+    }
+
+    /// How the interface's frames went in the last second, after setting
+    /// the most a second when asked.
+    fn fps(&self, arg: Option<&str>) {
+        use crate::gui::pace;
+        if let Some(a) = arg {
+            let hz = match a {
+                "auto" => Some(0),
+                n => n.parse::<u32>().ok().filter(|&n| n != 0 && pace::CHOICES.contains(&n)),
+            };
+            let Some(hz) = hz else {
+                println!("{ERR}usage: fps [auto|60|120|144|240]{RESET}");
+                return;
+            };
+            if let Err(e) = crate::gui::set_fluidity(hz) {
+                println!("{ERR}{e}{RESET}");
+                return;
+            }
+        }
+        let how = match (pace::choice(), pace::display_hz()) {
+            (0, Some(_)) => "automatic: the display's rate",
+            (0, None) => "automatic: the display does not say its rate",
+            _ => "chosen",
+        };
+        println!("cap {} Hz ({how})", pace::cap());
+        if !crate::gui::active() {
+            println!("no graphical interface");
+            return;
+        }
+        let s = pace::stats();
+        let ms = |us: u32| alloc::format!("{}.{} ms", us / 1000, us % 1000 / 100);
+        println!(
+            "last second: {} frames, {} each on average, {} at most; longest gap {}",
+            s.frames,
+            ms(s.avg_us),
+            ms(s.max_us),
+            ms(s.max_gap_us)
+        );
+        println!("loop: {} wake-ups in the last whole second", s.wakes);
     }
 
     fn help(&self, topic: Option<&str>) {

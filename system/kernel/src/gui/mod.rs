@@ -28,6 +28,7 @@ mod cursor;
 mod desktop;
 pub mod dnd;
 mod lock;
+pub mod pace;
 pub(crate) mod res;
 mod settings;
 mod setup;
@@ -433,6 +434,20 @@ pub fn change_scale(choice: u32) -> Result<(), &'static str> {
 /// The interface size the user chose (0: automatic).
 pub fn scale_choice() -> u32 {
     settings::get().scale
+}
+
+/// Sets the most frames a second ("Fluidità": 60, 120, 144, 240 Hz, or 0
+/// for automatic) and remembers it.
+pub fn set_fluidity(hz: u32) -> Result<(), &'static str> {
+    if !pace::CHOICES.contains(&hz) {
+        return Err("the rate is 60, 120, 144 or 240 Hz, or automatic");
+    }
+    if active() {
+        settings::update(|s| s.fluidity = hz);
+    } else {
+        pace::set_choice(hz);
+    }
+    Ok(())
 }
 
 /// Whether the screen is big enough for the double size (800 x 600 units

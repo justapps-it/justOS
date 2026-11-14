@@ -100,6 +100,24 @@ pub fn to_bin(paths: &[String]) -> Result<usize, String> {
     transfer(paths, &bin, false)
 }
 
+/// Deletes everything in the bin for good: how many items went (0 for an
+/// empty bin, or none there).
+pub fn empty_bin() -> Result<usize, String> {
+    let bin = fs::abs(BIN).map_err(|e| format!("{e}"))?;
+    if !fs::exists(&bin) {
+        return Ok(0);
+    }
+    let list = fs::list_dir(&bin).map_err(|e| format!("{e}"))?;
+    let mut done = 0;
+    for (e, st) in list {
+        let p = bin.join(&e.name);
+        let gone = if st.kind == justfs::Kind::Dir { fs::remove_all(&p) } else { fs::remove(&p) };
+        gone.map_err(|e| format!("{e}"))?;
+        done += 1;
+    }
+    Ok(done)
+}
+
 /// "foto.qoi" or "3 elementi": what is being carried, in words.
 pub fn describe(paths: &[String]) -> String {
     match paths {

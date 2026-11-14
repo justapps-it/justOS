@@ -27,6 +27,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 pub use files::{icon_for, Files};
+pub use prefs::{request_look as settings_at_look, request_screen as settings_at_screen};
 pub use viewer::Viewer;
 
 /// Opens a file or folder dropped on an app's dock icon with that app (the
@@ -453,6 +454,17 @@ fn wine_ready() -> bool {
     is_file(&alloc::format!("sys:{prefix}/system.reg"))
 }
 
+/// Wine's debugging messages off (`WINEDEBUG=-all`: they slow a program
+/// down and fill the terminal), unless the user chose them with `export
+/// WINEDEBUG=...` in the terminal. The variable then stays among the ones
+/// `export` lists, for every Linux program started from now on (only Wine
+/// reads it).
+fn quiet_wine() {
+    if !crate::linux::extra_env().iter().any(|v| v.starts_with("WINEDEBUG=")) {
+        crate::linux::set_env("WINEDEBUG", "-all");
+    }
+}
+
 /// A Windows file (`ext`: exe, msi, bat, cmd, lnk) run by Wine: the
 /// program as Wine's loader takes it (its Linux path), installers through
 /// `msiexec /i` and scripts through `cmd /c` (with its Windows path: Wine's
@@ -479,6 +491,7 @@ fn wine(path: &str, ext: &str) -> Option<Opener> {
         "lnk" => (alloc::format!("start /wait /unix {}", quote(&unix)), false),
         _ => (quote(&unix), !windowed_exe(path)),
     };
+    quiet_wine();
     let first = !wine_ready();
     let note = if first {
         Some("Prima apertura: preparo Windows…")

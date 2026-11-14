@@ -23,6 +23,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU8, Ordering};
 use justdk::DisplayMode;
 
 /// Resolutions offered when the display has them, in this order.
@@ -67,6 +68,31 @@ const LOCK_AFTER: [(u32, &str); 4] = [(0, "Mai"), (2, "2 min"), (5, "5 min"), (1
 
 /// The sizes of the interface (pixels per unit; 0: by the screen).
 const SIZES: [(u32, &str); 3] = [(0, "Auto"), (1, "100%"), (2, "200%")];
+
+/// The choices of "Fluidità", as `pace::CHOICES` (0: automatic).
+const FLUIDITY: [&str; 5] = ["Automatica", "60 Hz", "120 Hz", "144 Hz", "240 Hz"];
+
+/// A section another part of the system asked to show (0: none; 1 + the
+/// section's place in [`SECTIONS`]): the next window opened, or the one
+/// open at its next tick, shows it.
+static REQUESTED: AtomicU8 = AtomicU8::new(0);
+
+/// The settings open at Aspetto (the dock's menu).
+pub fn request_look() {
+    REQUESTED.store(2, Ordering::Relaxed);
+}
+
+/// The settings open at Schermo (the desktop's menu).
+pub fn request_screen() {
+    REQUESTED.store(3, Ordering::Relaxed);
+}
+
+fn take_requested() -> Option<Section> {
+    match REQUESTED.swap(0, Ordering::Relaxed) {
+        0 => None,
+        n => SECTIONS.get(n as usize - 1).copied(),
+    }
+}
 
 /// The themes of windows and panels.
 const THEMES: [(ui::Theme, &str); 2] = [(ui::Theme::Dark, "Scuro"), (ui::Theme::Light, "Chiaro")];
@@ -181,6 +207,11 @@ enum Ctl {
     Test,
     /// The sound when the desktop appears.
     Chime,
+    /// The dock small at rest, and its icons growing under the pointer.
+    DockCompact,
+    DockMagnify,
+    /// The most frames a second.
+    Fluidity,
     /// The keyboard layout.
     Layout,
     /// The password field and its button.
@@ -428,7 +459,7 @@ impl Prefs {
         let modes =
             COMMON_MODES.iter().map(|&(width, height)| DisplayMode { width, height }).filter(|m| offered.contains(m)).take(12).collect();
         Prefs {
-            section: Section::General,
+            section: take_requested().unwrap_or(Section::General),
             query: String::new(),
             searching: false,
             pick: 0,
@@ -465,7 +496,14 @@ impl Prefs {
                 ]),
             ],
             Section::Look => {
-                vec![card(vec![row("Tema", "Finestre, menu e pannelli", Ctl::Themes)]), card(vec![row("Sfondo", "", Ctl::Wallpapers)])]
+                vec![
+                    card(vec![row("Tema", "Finestre, menu e pannelli", Ctl::Themes)]),
+                    card(vec![
+                        row("Dock compatto", "Piccolo a riposo, grande sotto il puntatore", Ctl::DockCompact),
+                        row("Ingrandimento icone", "L'icona sotto il puntatore cresce", Ctl::DockMagnify),
+                    ]),
+                    card(vec![row("Sfondo", "", Ctl::Wallpapers)]),
+                ]
             }
             Section::Screen => {
                 let modes = if self.modes.is_empty() {
@@ -479,7 +517,10 @@ impl Prefs {
                 } else {
                     row(L_SCALE, "Il 200% vuole uno schermo di almeno 1600 × 1200", Ctl::Info(String::from("100%")))
                 };
-                vec![card(vec![modes]), card(vec![scale])]
+                // The display does not say its refresh rate: automatic is 60.
+                let auto = crate::gui::pace::display_hz().unwrap_or(60);
+                let fluid = row("Fluidità", &format!("Fotogrammi al secondo al massimo (Automatica: {auto} Hz)"), Ctl::Fluidity);
+                vec![card(vec![modes]), card(vec![scale]), card(vec![fluid])]
             }
             Section::Sound => {
                 if crate::dev::audio::available() {
@@ -573,6 +614,10 @@ impl Prefs {
             Ctl::LockAfter => {
                 (LOCK_AFTER.iter().map(|(_, l)| *l).collect(), LOCK_AFTER.iter().position(|(m, _)| *m == s.lock_after).unwrap_or(2))
             }
+            Ctl::Fluidity => {
+                let now = crate::gui::pace::choice();
+                (FLUIDITY.to_vec(), crate::gui::pace::CHOICES.iter().position(|&hz| hz == now).unwrap_or(0))
+            }
             _ => (Vec::new(), 0),
         }
     }
@@ -588,9 +633,9 @@ impl Prefs {
             Ctl::Setup => (button_w("Ripeti"), 34),
             Ctl::Test => (button_w("Prova"), 34),
             Ctl::Forget(_) => (button_w("Chiedi di nuovo"), 34),
-            Ctl::Chime | Ctl::Perm(..) => (52, 30),
+            Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify => (52, 30),
             Ctl::Volume => (inner.min(290), 26),
-            Ctl::Scale | Ctl::Layout | Ctl::LockAfter => (segmented_w(&Self::choices(ctl).0).min(inner), 32),
+            Ctl::Scale | Ctl::Layout | Ctl::LockAfter | Ctl::Fluidity => (segmented_w(&Self::choices(ctl).0).min(inner), 32),
             Ctl::Go(..) => (text::width(Font::Heading, "›"), bh),
             Ctl::Themes => {
                 let (tw, th) = theme_size(inner);
@@ -693,9 +738,9 @@ impl Prefs {
                 let (f, b) = field_and_button(r, "Imposta");
                 vec![f, b]
             }
-            Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) => vec![r],
+            Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify => vec![r],
             Ctl::Volume => vec![volume_bar(r).grow(8)],
-            Ctl::Scale | Ctl::Layout | Ctl::LockAfter => ui::segments(r, Self::choices(&p.row.ctl).0.len()),
+            Ctl::Scale | Ctl::Layout | Ctl::LockAfter | Ctl::Fluidity => ui::segments(r, Self::choices(&p.row.ctl).0.len()),
             Ctl::Themes => {
                 let (tw, _) = theme_size(r.w);
                 (0..THEMES.len() as i32).map(|i| Rect::new(r.x + i * (tw + 16), r.y, tw, r.h)).collect()
@@ -807,6 +852,8 @@ impl Prefs {
             Ctl::Test => ui::button(c, r, "Prova", false, hot(0)),
             Ctl::Forget(_) => ui::button(c, r, "Chiedi di nuovo", false, hot(0)),
             Ctl::Chime => ui::toggle(c, r, settings::get().startup_sound),
+            Ctl::DockCompact => ui::toggle(c, r, settings::dock_compact()),
+            Ctl::DockMagnify => ui::toggle(c, r, settings::dock_magnify()),
             Ctl::Perm(a, j) => {
                 let on = self.grants.get(*a).and_then(|g| g.perms.get(*j)).is_some_and(|(_, allow)| *allow);
                 ui::toggle(c, r, on);
@@ -817,7 +864,7 @@ impl Prefs {
                 ui::soft_pixels_in(c, glyph, Rect::new(r.x, r.y, 18, r.h), 3200, ui::text_dim());
                 ui::slider(c, volume_bar(r), v * 10);
             }
-            Ctl::Scale | Ctl::Layout | Ctl::LockAfter => {
+            Ctl::Scale | Ctl::Layout | Ctl::LockAfter | Ctl::Fluidity => {
                 let (labels, sel) = Self::choices(&p.row.ctl);
                 ui::segmented(c, r, &labels, sel);
             }
@@ -986,6 +1033,12 @@ impl Prefs {
                 return Action::None;
             }
             Ctl::Chime => settings::update(|s| s.startup_sound = !s.startup_sound),
+            // The desktop sees the change at its next tick.
+            Ctl::DockCompact => settings::update(|s| s.dock_compact = !s.dock_compact),
+            Ctl::DockMagnify => settings::update(|s| s.dock_magnify = !s.dock_magnify),
+            Ctl::Fluidity => {
+                let _ = crate::gui::set_fluidity(crate::gui::pace::CHOICES[k.min(crate::gui::pace::CHOICES.len() - 1)]);
+            }
             Ctl::Layout => {
                 settings::update(|s| s.layout = LAYOUTS[k].0);
                 self.note = (L_LAYOUT, "Tastiera cambiata");
@@ -1177,6 +1230,11 @@ impl App for Prefs {
     }
 
     fn tick(&mut self) -> bool {
+        // Opened again from somewhere that wants a section shown.
+        if let Some(s) = take_requested() {
+            self.open(s);
+            return true;
+        }
         if self.flash.as_ref().is_some_and(|(_, until)| crate::time::uptime_ms() >= *until) {
             self.flash = None;
             return true;
