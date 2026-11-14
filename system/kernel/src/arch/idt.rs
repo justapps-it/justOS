@@ -223,7 +223,7 @@ extern "C" fn trap_dispatch(frame: &mut TrapFrame) {
             crate::dev::irq::dispatch(irq);
             pic::eoi(irq);
             if irq == 0 {
-                crate::task::timer_tick();
+                crate::task::timer_tick(frame.is_user());
                 crate::user::check_kill(frame);
             }
         }
@@ -235,7 +235,7 @@ extern "C" fn trap_dispatch(frame: &mut TrapFrame) {
         }
         super::smp::VEC_TIMER => {
             super::apic::eoi();
-            crate::task::ap_tick();
+            crate::task::ap_tick(frame.is_user());
             crate::user::check_kill(frame);
         }
         super::smp::VEC_TLB => {

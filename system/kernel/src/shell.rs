@@ -5,6 +5,7 @@ use crate::fs::{self, Path};
 use crate::util::Size;
 use crate::{dev, driver, mem, task, time};
 use crate::{print, println};
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -65,6 +66,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("cpus", "", "what each processor runs, and the TLB flushes programs cost"),
     ("locks", "[reset]", "where the kernel waited for locks, and held its mutexes longest"),
     ("where", "<tid>|busy [samples]", "where a thread of a Linux program is (library+offset), sampled; busy: the four busiest"),
+    ("top", "[seconds]", "over a few seconds (2): how idle each processor was, the busiest threads, the system calls of Linux programs"),
     ("ports", "", "named message ports and who owns them"),
     ("perms", "[allow|deny|ask <app> <perm>]", "what apps may use outside their sandbox"),
     ("updates", "[check|install <app>|all|auto on|off]", "updates of the installed apps"),
@@ -83,7 +85,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("uptime", "", "time since start"),
     ("log", "[lines]", "the system journal"),
     ("verbose", "[on|off]", "show debug messages on screen"),
-    ("strace", "[on|off] [failed] [n,n…]", "log the system calls of Linux programs (in the journal): only failed ones, only some calls"),
+    ("strace", "[on|off] [failed] [n,n…] [t<tid>]", "log the system calls of Linux programs (in the journal): only failed ones, only some calls, only one thread's"),
     ("export", "[NAME=value | NAME=]", "environment of the Linux programs started from now on"),
     ("echo", "<text>", "print text"),
     ("notify", "<title> <text> [icon]", "show a notification on the desktop"),
@@ -608,6 +610,7 @@ impl Shell {
                     }
                 }
             }
+            "top" => self.top(rest.first().and_then(|n| n.parse().ok()).unwrap_or(2)),
             "where" => {
                 if need(1, "<tid> [samples]") {
                     self.where_thread(rest[0], rest.get(1).and_then(|n| n.parse().ok()).unwrap_or(1));
@@ -994,7 +997,8 @@ impl Shell {
                 let on = !rest.contains(&"off");
                 let failed = rest.contains(&"failed");
                 let only: Vec<u16> = rest.iter().flat_map(|w| w.split(',')).filter_map(|n| n.parse().ok()).collect();
-                crate::linux::set_trace(on, &only, failed);
+                let tid = rest.iter().find_map(|w| w.strip_prefix('t')?.parse().ok()).unwrap_or(0);
+                crate::linux::set_trace(on, &only, failed, tid);
                 println!("system call tracing {}", if on { "on" } else { "off" });
             }
             "export" => {
@@ -1163,6 +1167,72 @@ impl Shell {
         seen.sort_by(|a, b| b.1.cmp(&a.1));
         for (place, n) in seen.iter().take(20) {
             println!("  {n:>5}  {place}");
+        }
+    }
+
+    /// `top`: what the processors did over `secs` seconds. Time is counted
+    /// in timer ticks (1 ms): a thread's share is the ticks that found it
+    /// running, "user" those that found it in its program rather than in
+    /// the kernel; a processor's idle share is its idle thread's.
+    fn top(&self, secs: u64) {
+        use crate::linux::calls;
+        let ms = secs.clamp(1, 60) * 1000;
+        let before: BTreeMap<task::Tid, (u64, u64, u64)> = task::list().iter().map(|t| (t.tid, (t.ticks, t.user_ticks, t.runs))).collect();
+        let cpus0 = task::cpu_stats();
+        calls::start();
+        task::sleep_ms(ms);
+        let (calls, lost) = calls::stop();
+        let cpus1 = task::cpu_stats();
+        let after = task::list();
+        let span = cpus1.first().zip(cpus0.first()).map_or(1, |(b, a)| b.ticks.saturating_sub(a.ticks)).max(1);
+        let per_s = |n: u64| n * crate::arch::pit::HZ / span;
+        let pct = |n: u64| n * 100 / span;
+        println!("{DIM}over {} ms, {} processors{RESET}", span * 1000 / crate::arch::pit::HZ, cpus1.len());
+        for (i, (a, b)) in cpus0.iter().zip(&cpus1).enumerate() {
+            let ticks = b.ticks.saturating_sub(a.ticks).max(1);
+            let idle = b.idle_ticks.saturating_sub(a.idle_ticks);
+            println!("cpu {i}: {:>3}% idle, {} switches/s", idle * 100 / ticks, per_s(b.switches.saturating_sub(a.switches)));
+        }
+        let idle: Vec<task::Tid> = cpus1.iter().map(|c| c.idle).collect();
+        let mut by_thread: BTreeMap<task::Tid, u64> = BTreeMap::new();
+        let mut by_call: BTreeMap<u16, (u64, Vec<(u32, task::Tid)>)> = BTreeMap::new();
+        for &(tid, n, c) in &calls {
+            *by_thread.entry(tid).or_default() += c as u64;
+            let e = by_call.entry(n).or_default();
+            e.0 += c as u64;
+            e.1.push((c, tid));
+        }
+        let mut rows: Vec<(u64, u64, u64, &task::ThreadInfo)> = after
+            .iter()
+            .filter(|t| !idle.contains(&t.tid))
+            .map(|t| {
+                let (b, bu, br) = before.get(&t.tid).copied().unwrap_or((0, 0, 0));
+                (t.ticks.saturating_sub(b), t.user_ticks.saturating_sub(bu), t.runs.saturating_sub(br), t)
+            })
+            .filter(|&(d, _, r, t)| d > 0 || r > 0 || by_thread.contains_key(&t.tid))
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then(b.2.cmp(&a.2)));
+        println!("{DIM}  tid  pid  cpu%  user%  runs/s  calls/s  state     name{RESET}");
+        for (d, u, r, t) in rows.iter().take(16) {
+            let pid = if t.pid == 0 { String::from("-") } else { t.pid.to_string() };
+            let n = by_thread.get(&t.tid).copied().unwrap_or(0);
+            println!("{:>5} {:>4}  {:>4}  {:>5}  {:>6}  {:>7}  {:<8}  {}", t.tid, pid, pct(*d), pct(*u), per_s(*r), per_s(n), t.state.name(), t.name);
+        }
+        let total: u64 = by_call.values().map(|c| c.0).sum();
+        println!("{DIM}system calls: {}/s{}; kernel%: the share of one processor the kernel spent in them{RESET}", per_s(total), if lost > 0 { alloc::format!(" ({lost} not counted)") } else { String::new() });
+        let mut costly: Vec<(u64, u16)> = (0..512).map(|n| (calls::ticks(n), n)).filter(|c| c.0 > 0).collect();
+        let mut list: Vec<(u16, (u64, Vec<(u32, task::Tid)>))> = by_call.into_iter().collect();
+        list.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        for (n, (c, mut threads)) in list.into_iter().take(14) {
+            threads.sort_by(|a, b| b.0.cmp(&a.0));
+            let who: Vec<String> = threads.iter().take(3).map(|&(c, t)| alloc::format!("{t}:{}", per_s(c as u64))).collect();
+            println!("{:>8}/s  {:<16} {:>3}%  {}", per_s(c), alloc::format!("{} {n}", calls::name(n)), pct(calls::ticks(n)), who.join(" "));
+        }
+        // The calls the kernel spent most time in, often or not.
+        costly.sort_by(|a, b| b.cmp(a));
+        let most: Vec<String> = costly.iter().take(8).map(|&(t, n)| alloc::format!("{} {n} {}%", calls::name(n), pct(t))).collect();
+        if !most.is_empty() {
+            println!("{DIM}kernel time:{RESET} {}", most.join(", "));
         }
     }
 

@@ -31,6 +31,8 @@ struct Timer {
     interval: u64,
     /// How many times it went off and nobody read.
     ticks: u64,
+    /// How many times it went off in all (edge-triggered epoll's edges).
+    fired: u64,
 }
 
 impl Timer {
@@ -40,11 +42,13 @@ impl Timer {
         match (now - next).checked_div(self.interval) {
             Some(late) => {
                 self.ticks += late + 1;
+                self.fired += late + 1;
                 self.next = Some(next + (late + 1) * self.interval);
             }
             // Once.
             None => {
                 self.ticks += 1;
+                self.fired += 1;
                 self.next = None;
             }
         }
@@ -136,7 +140,7 @@ pub fn sys_timerfd_settime(fd: i32, flags: u32, new: u64, old: u64) -> i64 {
                 return r;
             }
         }
-        *s = Timer { next, interval, ticks: 0 };
+        *s = Timer { next, interval, ticks: 0, fired: s.fired };
     }
     t.wq.notify_all();
     0
@@ -158,6 +162,14 @@ impl TimerFd {
         let mut s = self.state.lock();
         s.update(now());
         s.ticks > 0
+    }
+
+    /// The count of [`fd::edges`]: it moves when the timer is set and each
+    /// time it goes off.
+    pub fn edges(&self) -> u64 {
+        let mut s = self.state.lock();
+        s.update(now());
+        self.wq.notified().wrapping_add(s.fired)
     }
 
     /// When a wait should wake to look again (uptime, ms).

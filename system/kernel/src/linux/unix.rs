@@ -880,6 +880,25 @@ impl Unix {
         write_name(addr, lenp, peer.as_ref())
     }
 
+    /// The count of [`super::fd::edges`]: the queue of the direction
+    /// `want` looks at (EPOLLIN, or a hang-up only: what comes in; EPOLLOUT:
+    /// room to send), with the state in the top bits (connecting is an edge
+    /// too).
+    pub fn edges(&self, want: u32) -> u64 {
+        const IN: u32 = 0x001;
+        const OUT: u32 = 0x004;
+        const LOW: u64 = (1 << 60) - 1;
+        let n = |q: &Queue, on: bool| if on { q.wq.notified() } else { 0 };
+        let (state, count) = match &*self.state.lock() {
+            St::Connected(e) => (0, n(&e.rx, want & IN != 0 || want & OUT == 0).wrapping_add(n(&e.tx, want & OUT != 0))),
+            St::Listening(l) => (1, l.wq.notified()),
+            St::Dgram { rx, .. } => (2, rx.wq.notified()),
+            St::Fresh => (3, 0),
+            St::Closed => (4, 0),
+        };
+        (state << 60) | (count & LOW)
+    }
+
     /// (readable, writable, hang-up).
     pub fn readiness(&self) -> (bool, bool, bool) {
         match &*self.state.lock() {

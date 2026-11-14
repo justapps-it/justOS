@@ -1,14 +1,18 @@
 /* timerfd and signalfd, as Android's init and systemd use them in their
  * epoll loops: a timer that goes off once and then periodically, with an
  * absolute wall-clock time too; SIGCHLD and other blocked signals read as
- * records, waking epoll and a blocking read.
- * Prints "tf:" and "sf:" lines for scripts/test-linux.sh. */
+ * records, waking epoll and a blocking read. Then edge-triggered epoll, as
+ * Firefox's event loop uses it (an eventfd it does not read must not wake
+ * it again), and sleeps shorter than a millisecond, which must still wait.
+ * Prints "tf:", "sf:", "et:" and "ns:" lines for scripts/test-linux.sh. */
 #include <errno.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <sys/select.h>
 #include <sys/signalfd.h>
 #include <sys/timerfd.h>
 #include <sys/wait.h>
@@ -132,6 +136,63 @@ static int signals(void) {
     return 0;
 }
 
+/* Edge triggered: a descriptor that stays ready is reported once, and
+ * again only when something new happens to it. */
+static int edges(void) {
+    int e = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    int et = epoll_create1(EPOLL_CLOEXEC), lt = epoll_create1(EPOLL_CLOEXEC);
+    struct epoll_event ev = {.events = EPOLLIN | EPOLLRDHUP | EPOLLET, .data.u32 = 1}, out;
+    epoll_ctl(et, EPOLL_CTL_ADD, e, &ev);
+    ev.events = EPOLLIN;
+    epoll_ctl(lt, EPOLL_CTL_ADD, e, &ev);
+    uint64_t one = 1;
+    write(e, &one, 8);
+    int first = epoll_wait(et, &out, 1, 1000);
+    /* Left unread: nothing new, so nothing (level triggered: still ready). */
+    int again = epoll_wait(et, &out, 1, 50);
+    int level = epoll_wait(lt, &out, 1, 0) + epoll_wait(lt, &out, 1, 0);
+    write(e, &one, 8);
+    int more = epoll_wait(et, &out, 1, 1000);
+    /* Changing the watch looks again. */
+    ev.events = EPOLLIN | EPOLLET;
+    epoll_ctl(et, EPOLL_CTL_MOD, e, &ev);
+    int modded = epoll_wait(et, &out, 1, 0);
+
+    int p[2];
+    pipe(p);
+    int pe = epoll_create1(EPOLL_CLOEXEC);
+    ev.events = EPOLLIN | EPOLLET;
+    epoll_ctl(pe, EPOLL_CTL_ADD, p[0], &ev);
+    write(p[1], "a", 1);
+    int pfirst = epoll_wait(pe, &out, 1, 1000);
+    int pagain = epoll_wait(pe, &out, 1, 50);
+    write(p[1], "b", 1);
+    int pmore = epoll_wait(pe, &out, 1, 1000);
+    printf("et: eventfd first=%d again=%d level=%d more=%d mod=%d pipe=%d,%d,%d\n", first, again, level, more, modded, pfirst,
+           pagain, pmore);
+    return 0;
+}
+
+/* Sleeps shorter than a millisecond still sleep (programs that wait for
+ * something with usleep in a loop must not spin). */
+static int short_sleeps(void) {
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int i = 0; i < 20; i++) {
+        struct timespec ns = {0, 500 * 1000};
+        nanosleep(&ns, NULL);
+    }
+    long slept = ms_since(&start);
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int i = 0; i < 20; i++) {
+        struct timeval tv = {0, 500};
+        select(0, NULL, NULL, NULL, &tv);
+    }
+    long selected = ms_since(&start);
+    printf("ns: short sleeps wait=%d select=%d\n", slept >= 9, selected >= 9);
+    return 0;
+}
+
 int main(void) {
-    return timers() | signals();
+    return timers() | signals() | edges() | short_sleeps();
 }

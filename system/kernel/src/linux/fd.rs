@@ -1456,8 +1456,48 @@ pub fn readiness(d: &Desc) -> (bool, bool, bool) {
     }
 }
 
-/// Descriptors whose readiness never changes (files, generated files,
-/// devices that never block): an edge-triggered watch sees one edge.
-pub fn always_ready(d: &Desc) -> bool {
-    matches!(d.kind, Kind::File { .. } | Kind::Dir { .. } | Kind::Virtual { .. } | Kind::Null | Kind::Zero | Kind::Random | Kind::Memfd { .. } | Kind::Ashmem(_))
+/// A count that moves whenever what `d` reports for `want` (epoll's
+/// EPOLLIN, EPOLLOUT) may have changed: the queues its sources tell, and a
+/// timer's expirations. An edge-triggered epoll watch reports `d` again
+/// only once it moved (as Linux reports an edge on each wake-up of the
+/// descriptor, not while it stays ready). None: no such count (the
+/// console, epoll sets), and such watches are served level-triggered.
+pub fn edges(d: &Desc, want: u32) -> Option<u64> {
+    match &d.kind {
+        Kind::PipeRead(p) | Kind::PipeWrite(p) => Some(p.wq.notified()),
+        Kind::Event(e) => Some(e.wq.notified()),
+        Kind::Inotify(i) => Some(i.wq.notified()),
+        Kind::Binder(b) => Some(b.wq.notified()),
+        Kind::Timer(t) => Some(t.edges()),
+        Kind::Signal(_) => Some(super::signal::SIGNALS.notified()),
+        Kind::Unix(u) => Some(u.edges(want)),
+        Kind::Socket(_) => Some(EVENTS.notified()),
+        Kind::Console | Kind::Epoll(_) => None,
+        // Always ready (files, generated files, devices that never block,
+        // shared memory): the one edge is when the watch is set.
+        _ => Some(0),
+    }
+}
+
+/// What kind of descriptor `d` is, in a word (for `strace`).
+pub fn kind_name(d: &Desc) -> &'static str {
+    match &d.kind {
+        Kind::File { .. } => "file",
+        Kind::Dir { .. } => "dir",
+        Kind::Virtual { .. } => "virtual",
+        Kind::Null | Kind::Zero | Kind::Random => "device",
+        Kind::Console => "console",
+        Kind::PipeRead(_) => "pipe-r",
+        Kind::PipeWrite(_) => "pipe-w",
+        Kind::Event(_) => "eventfd",
+        Kind::Memfd { .. } => "memfd",
+        Kind::Socket(_) => "socket",
+        Kind::Unix(_) => "unix",
+        Kind::Epoll(_) => "epoll",
+        Kind::Inotify(_) => "inotify",
+        Kind::Binder(_) => "binder",
+        Kind::Ashmem(_) => "ashmem",
+        Kind::Timer(_) => "timerfd",
+        Kind::Signal(_) => "signalfd",
+    }
 }

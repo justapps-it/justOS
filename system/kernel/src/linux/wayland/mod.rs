@@ -759,7 +759,11 @@ impl Client {
             }
             (Iface::KdeDeco, 0) => self.destroyed(obj),
             (Iface::KdeDeco, _) => {
-                self.out.event(obj, 0).uint(2);
+                // request_mode: the mode stays the server's, as the
+                // decoration was told when it was made. Nothing changed, so
+                // nothing is confirmed: told it again, Firefox asks again,
+                // thousands of times a second for as long as it runs.
+                let _mode = a.uint();
             }
             _ => crate::debug!("wayland", "client {}: {:?} request {op} ignored", self.pid, iface),
         }

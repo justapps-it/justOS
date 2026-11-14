@@ -26,9 +26,19 @@ gtk3-demo &              con & la shell non aspetta il programma
 
 Per capire dove si ferma un programma Linux ci sono due comandi:
 `strace on` (e `strace off`) scrive nel registro ogni sua chiamata di
-sistema con il risultato, e i percorsi che passa; `where <tid> [campioni]`
-guarda più volte dove si trova un thread (la libreria e lo scostamento, e la
-chiamata di sistema in cui aspetta) e dice i punti più frequenti.
+sistema con il risultato, e i percorsi che passa (`strace on 232 t116`: solo
+la chiamata 232, `epoll_wait`, e solo quelle del thread 116); `where <tid>
+[campioni]` guarda più volte dove si trova un thread (la libreria e lo
+scostamento, e la chiamata di sistema in cui aspetta) e dice i punti più
+frequenti.
+
+Per capire chi occupa i processori c'è `top [secondi]`: per qualche secondo
+(2 se non si dice) conta quanto è rimasto libero ogni processore e quante
+volte è passato da un thread all'altro, poi elenca i thread più impegnati
+(la parte di tempo che hanno avuto, quella passata nel loro programma e non
+nel kernel, quante volte al secondo sono partiti e quante chiamate di
+sistema hanno fatto) e le chiamate di sistema più frequenti dei programmi
+Linux, con i thread che le fanno di più.
 
 Oltre ai programmi nativi, justOS avvia anche **programmi Linux e Windows**
 per x86-64: un eseguibile ELF collegato staticamente è un programma Linux, un

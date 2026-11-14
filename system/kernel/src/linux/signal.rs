@@ -750,7 +750,8 @@ pub fn sys_rt_sigtimedwait(set: u64, info_ptr: u64, ts: u64) -> i64 {
         let Ok(b) = user_bytes(ts, 16) else { return -err::EFAULT };
         let s = i64::from_le_bytes(b[0..8].try_into().unwrap()).max(0) as u64;
         let ns = i64::from_le_bytes(b[8..16].try_into().unwrap()).max(0) as u64;
-        Some(crate::time::uptime_ms().saturating_add(s.saturating_mul(1000)).saturating_add(ns / 1_000_000))
+        // Rounded up: a wait shorter than a millisecond still waits.
+        Some(crate::time::uptime_ms().saturating_add(s.saturating_mul(1000)).saturating_add(ns.div_ceil(1_000_000)))
     };
     let me = task::current_tid();
     loop {

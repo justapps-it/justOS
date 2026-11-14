@@ -60,7 +60,7 @@ busybox ls -la             un programma installato (vedi "Installare programmi")
 | casualità | `getrandom` |
 | librerie condivise | il caricatore dinamico della glibc, `mmap` dei file (i byte di un file mappato più volte sono condivisi), `dlopen` |
 | thread | `clone` per i thread, `futex`, `set_tid_address` |
-| rete | socket TCP e UDP, `poll`, `select`, `epoll` |
+| rete | socket TCP e UDP, `poll`, `select`, `epoll` (anche edge-triggered: un descrittore pronto torna solo quando gli succede qualcosa di nuovo, come su Linux, non a ogni attesa) |
 | socket locali | `AF_UNIX` di tipo stream, datagram e seqpacket: `socketpair`, `bind`, `listen`, `connect`, `accept`, nomi su un percorso o astratti, descrittori passati con `SCM_RIGHTS`, `SO_PEERCRED`; il nome su un percorso non è un file del volume, ma `stat`, `access` e `unlink` lo vedono |
 | collegamenti simbolici | `symlink`, `readlink`, `lstat` |
 | finestre | Wayland: `WAYLAND_DISPLAY=wayland-0` in `XDG_RUNTIME_DIR=/home/tmp`, servito dal kernel (vedi sotto) |

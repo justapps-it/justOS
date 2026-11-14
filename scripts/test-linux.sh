@@ -6,7 +6,8 @@
 # scripts/linux/. Two more check what Android's own system needs: the
 # binder driver (its IPC) with two processes, /dev/ashmem (its shared
 # memory) and shared mappings of files (its property areas); one more
-# timerfd and signalfd (init's main loop). Each is skipped (and noted) when its compiler is missing. A web server on this machine answers their
+# timerfd and signalfd (init's main loop), edge-triggered epoll and short
+# sleeps (Firefox's event loop). Each is skipped (and noted) when its compiler is missing. A web server on this machine answers their
 # requests at 10.0.2.2.
 #
 # EXTRA=<folder> also copies the programs in it (for example ripgrep, fd,
@@ -121,7 +122,8 @@ fi
         'ms: pread=second mapped=by pwrite msync=0' 'ms: done zero=1 back=kept'
     [ $T = 1 ] && printf '%s\n' 'tf: armed ready=1 ticks=1 waited=1 interval=20 eagain=1' \
         'tf: periodic more=1 quiet=1 abs=1 late=1' 'sf: chld epoll=1 size=128 signo=17 status=7 pidok=1' \
-        'sf: usr1 signo=10 code=0 pidok=1' 'sf: done usr2=1 left=1 back=1'
+        'sf: usr1 signo=10 code=0 pidok=1' 'sf: done usr2=1 left=1 back=1' \
+        'et: eventfd first=1 again=0 level=2 more=1 mod=1 pipe=1,0,1' 'ns: short sleeps wait=1 select=1'
 } > expect.txt
 
 STEP_WAIT=${STEP_WAIT:-2} "$HERE/test.sh" justos.img session.txt > out.txt 2>&1

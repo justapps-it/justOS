@@ -399,10 +399,31 @@ impl Disk {
     fn flush_locked(&self, ch: &Channel) -> Status {
         ch.select(self.slave, 0);
         port::outb(ch.base + COMMAND, if self.lba48 { CMD_FLUSH_EXT } else { CMD_FLUSH });
-        match ch.wait_not_busy(30_000) {
-            Ok(s) if s & ERR == 0 => OK,
-            Ok(_) => E_IO,
-            Err(e) => e,
+        ch.delay();
+        // Emptying the cache takes milliseconds (a disk writes it out, an
+        // emulator has its host sync the image file), and programs fsync
+        // many times a second: after a short look the drive is asked once
+        // a millisecond, rather than in a loop that keeps the processor
+        // (and an emulator's global lock, which finishing the flush needs).
+        let start = justdrv::time_ms();
+        let mut status = 0;
+        let idle = poll(1, || {
+            status = ch.status();
+            status & BSY == 0
+        }) || loop {
+            justdrv::sleep_ms(1);
+            status = ch.status();
+            if status & BSY == 0 {
+                break true;
+            }
+            if justdrv::time_ms().saturating_sub(start) >= 30_000 {
+                break false;
+            }
+        };
+        match idle {
+            true if status & ERR == 0 => OK,
+            true => E_IO,
+            false => E_TIMEOUT,
         }
     }
 }

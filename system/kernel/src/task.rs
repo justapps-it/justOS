@@ -89,6 +89,10 @@ struct Thread {
     stack_pages: u64,
     wake_at: u64,
     cpu_ticks: u64,
+    /// Of those, the ticks that found it in its program (not in the kernel).
+    user_ticks: u64,
+    /// Times a processor switched to it.
+    runs: u64,
     /// Address space (0 = kernel only).
     cr3: u64,
     /// The process this thread belongs to (0 = kernel).
@@ -112,6 +116,8 @@ struct Thread {
     holding: u32,
     /// What [`current_flags`] says while it runs.
     flags: u32,
+    /// The system call it is in, while it is not running (see [`IN_CALL`]).
+    in_call: u32,
 }
 
 impl Thread {
@@ -125,6 +131,8 @@ impl Thread {
             stack_pages: 0,
             wake_at: 0,
             cpu_ticks: 0,
+            user_ticks: 0,
+            runs: 0,
             cr3: 0,
             pid: 0,
             fs_base: 0,
@@ -136,6 +144,7 @@ impl Thread {
             unstarted: false,
             holding: 0,
             flags: 0,
+            in_call: 0,
         }
     }
 
@@ -161,6 +170,10 @@ struct Cpu {
     /// The thread just switched away from, and whether it goes back in the
     /// ready queue (see [`after_switch`]).
     prev: Option<(Tid, bool)>,
+    /// Ticks of its timer, and switches from one thread to another, since
+    /// it started (for the shell's `top`).
+    ticks: u64,
+    switches: u64,
 }
 
 struct Sched {
@@ -205,7 +218,7 @@ static SCHED: IrqLock<Sched> = IrqLock::new(Sched {
     threads: BTreeMap::new(),
     ready: VecDeque::new(),
     sleepers: Vec::new(),
-    cpus: [Cpu { current: 0, idle: 0, slice: SLICE_TICKS, overtime: 0, prev: None }; MAX_CPUS],
+    cpus: [Cpu { current: 0, idle: 0, slice: SLICE_TICKS, overtime: 0, prev: None, ticks: 0, switches: 0 }; MAX_CPUS],
     next_tid: 1,
     started: false,
 });
@@ -268,6 +281,19 @@ static HOLDING: [core::sync::atomic::AtomicU32; MAX_CPUS] = [const { core::sync:
 
 /// The flags of the thread running on each processor (see [`current_flags`]).
 static FLAGS: [core::sync::atomic::AtomicU32; MAX_CPUS] = [const { core::sync::atomic::AtomicU32::new(0) }; MAX_CPUS];
+
+/// The Linux system call the thread running on each processor is in (its
+/// number + 1; 0: none), saved and put back like [`HOLDING`]: a timer tick
+/// that finds the kernel running charges it to that call (the shell's
+/// `top`).
+static IN_CALL: [core::sync::atomic::AtomicU32; MAX_CPUS] = [const { core::sync::atomic::AtomicU32::new(0) }; MAX_CPUS];
+
+/// The running thread enters system call `n` (None: leaves it).
+pub fn set_in_call(n: Option<u64>) {
+    let irq = cpu::irq_save();
+    IN_CALL[smp::this_cpu()].store(n.map_or(0, |n| (n as u32).wrapping_add(1)), Ordering::Relaxed);
+    cpu::irq_restore(irq);
+}
 
 /// Flags other parts of the kernel keep on a thread, to be read on every
 /// system call without a lock (the Linux layer's: whether a seccomp filter
@@ -360,7 +386,7 @@ pub fn start_cpu(cpu: usize, stack: u64, pages: u64) {
     let mut idle = Thread::new(tid, "idle", State::Running);
     (idle.stack, idle.stack_pages, idle.on_cpu) = (stack, pages, true);
     s.threads.insert(tid, Box::new(idle));
-    s.cpus[cpu] = Cpu { current: tid, idle: tid, slice: SLICE_TICKS, overtime: 0, prev: None };
+    s.cpus[cpu] = Cpu { current: tid, idle: tid, slice: SLICE_TICKS, overtime: 0, prev: None, ticks: 0, switches: 0 };
     set_running(cpu, tid, 0);
 }
 
@@ -492,14 +518,16 @@ fn schedule() {
             if next == cur {
                 None
             } else {
+                n.runs += 1;
                 let (new_rsp, top, cr3, fs, gs, has_stack, pid, holding) = (n.rsp, n.stack_top(), n.cr3, n.fs_base, n.gs_base, n.stack != 0, n.pid, n.holding);
-                let segs = n.segs;
+                let (segs, in_call) = (n.segs, n.in_call);
                 FLAGS[me].store(n.flags, Ordering::Relaxed);
                 let new_fpu: *const FpuArea = &*n.fpu;
                 let c = s.threads.get_mut(&cur).unwrap();
                 (c.fs_base, c.gs_base) = syscall::user_bases();
                 c.segs = gdt::segments();
                 c.holding = HOLDING[me].swap(holding, Ordering::Relaxed);
+                c.in_call = IN_CALL[me].swap(in_call, Ordering::Relaxed);
                 // SAFETY: the area is this thread's own aligned buffer.
                 unsafe { fxsave(&mut *c.fpu) };
                 // SAFETY: new_fpu is the next thread's aligned buffer; the
@@ -518,6 +546,7 @@ fn schedule() {
                     unsafe { smp::load_cr3(target) };
                 }
                 s.cpus[me].current = next;
+                s.cpus[me].switches += 1;
                 set_running(me, next, pid);
                 s.cpus[me].prev = Some((cur, requeue));
                 let old_ptr: *mut u64 = &mut s.threads.get_mut(&cur).unwrap().rsp;
@@ -584,20 +613,21 @@ pub fn sleep_ms(ms: u64) {
     cpu::irq_restore(irq);
 }
 
-/// Called by the system timer interrupt (on the first processor).
-pub fn timer_tick() {
+/// Called by the system timer interrupt (on the first processor); `user`:
+/// it came while a program ran (not the kernel).
+pub fn timer_tick(user: bool) {
     crate::time::tick();
-    tick(true);
+    tick(true, user);
 }
 
 /// Called by the timer interrupt of the other processors.
-pub fn ap_tick() {
-    tick(false);
+pub fn ap_tick(user: bool) {
+    tick(false, user);
 }
 
 /// Charges the tick to the running thread, wakes sleepers that are due
 /// (once, on the first processor) and preempts at the end of the slice.
-fn tick(wake_sleepers: bool) {
+fn tick(wake_sleepers: bool, user: bool) {
     let preempt = {
         let mut s = SCHED.lock();
         if !s.started {
@@ -606,8 +636,16 @@ fn tick(wake_sleepers: bool) {
         let now = crate::time::uptime_ms();
         let me = smp::this_cpu();
         let cur = s.cpus[me].current;
+        s.cpus[me].ticks += 1;
         if let Some(t) = s.threads.get_mut(&cur) {
             t.cpu_ticks += 1;
+            t.user_ticks += user as u64;
+        }
+        if !user {
+            let call = IN_CALL[me].load(Ordering::Relaxed);
+            if call != 0 {
+                crate::linux::calls::kernel_tick(call - 1);
+            }
         }
         let mut i = 0;
         while wake_sleepers && i < s.sleepers.len() {
@@ -825,6 +863,9 @@ pub fn wait_any<T>(queues: &[&WaitQueue], until: Option<u64>, check: impl FnOnce
 /// A set of threads waiting for something to happen.
 pub struct WaitQueue {
     waiters: IrqLock<VecDeque<Tid>>,
+    /// How many times it was notified: what it stands for may have changed
+    /// since a count seen before (edge-triggered epoll looks at it).
+    notified: core::sync::atomic::AtomicU64,
 }
 
 impl Default for WaitQueue {
@@ -835,7 +876,12 @@ impl Default for WaitQueue {
 
 impl WaitQueue {
     pub const fn new() -> WaitQueue {
-        WaitQueue { waiters: IrqLock::new(VecDeque::new()) }
+        WaitQueue { waiters: IrqLock::new(VecDeque::new()), notified: core::sync::atomic::AtomicU64::new(0) }
+    }
+
+    /// How many times the queue was notified so far.
+    pub fn notified(&self) -> u64 {
+        self.notified.load(Ordering::Acquire)
     }
 
     /// Blocks until `ready()` returns `Some`. `ready` runs with interrupts
@@ -907,6 +953,9 @@ impl WaitQueue {
     }
 
     pub fn notify_all(&self) {
+        // Counted before the waiters wake: one that then finds the old
+        // count looked before the change it is told about.
+        self.notified.fetch_add(1, Ordering::AcqRel);
         let waiters = core::mem::take(&mut *self.waiters.lock());
         for t in waiters {
             wake(t);
@@ -958,6 +1007,11 @@ pub struct ThreadInfo {
     pub state: State,
     pub cpu_ms: u64,
     pub pid: u32,
+    /// Timer ticks it ran (in all, and in its program), see [`cpu_stats`].
+    pub ticks: u64,
+    pub user_ticks: u64,
+    /// Times it was switched to.
+    pub runs: u64,
 }
 
 pub fn list() -> Vec<ThreadInfo> {
@@ -970,8 +1024,46 @@ pub fn list() -> Vec<ThreadInfo> {
             state: t.state,
             cpu_ms: t.cpu_ticks * 1000 / crate::arch::pit::HZ,
             pid: t.pid,
+            ticks: t.cpu_ticks,
+            user_ticks: t.user_ticks,
+            runs: t.runs,
         })
         .collect()
+}
+
+/// What a processor did since it started, for the shell's `top`.
+#[derive(Clone, Copy, Debug)]
+pub struct CpuStat {
+    pub idle: Tid,
+    /// Its timer's ticks, and of those, the ones its idle thread had.
+    pub ticks: u64,
+    pub idle_ticks: u64,
+    /// Switches from one thread to another.
+    pub switches: u64,
+}
+
+pub fn cpu_stats() -> Vec<CpuStat> {
+    let s = SCHED.lock();
+    let n = smp::count().max(1);
+    s.cpus[..n]
+        .iter()
+        .map(|c| CpuStat { idle: c.idle, ticks: c.ticks, idle_ticks: s.threads.get(&c.idle).map_or(0, |t| t.cpu_ticks), switches: c.switches })
+        .collect()
+}
+
+/// Renames a thread (a Linux program names its threads with `prctl`
+/// PR_SET_NAME).
+pub fn set_name(tid: Tid, name: &str) {
+    // Made before the lock is taken, and the old name dropped after.
+    let mut name = String::from(name);
+    if let Some(t) = SCHED.lock().threads.get_mut(&tid) {
+        core::mem::swap(&mut t.name, &mut name);
+    }
+}
+
+/// A thread's name.
+pub fn name_of(tid: Tid) -> Option<String> {
+    SCHED.lock().threads.get(&tid).map(|t| t.name.clone())
 }
 
 /// The thread each running processor has on it, with the ready queue's

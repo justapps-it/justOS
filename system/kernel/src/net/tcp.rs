@@ -702,12 +702,17 @@ fn segment(tab: &mut Table, id: u32, src: Ip, s: &Seg<'_>, out: &mut Vec<Out>) -
 /// Runs the timers (from the network thread, every few milliseconds).
 pub fn timers() {
     let mut out = Vec::new();
+    // A connection that gives up sends nothing, but whoever waits for it
+    // (in poll, epoll or connect) must hear of it.
+    let mut gave_up = false;
     {
         let mut t = TABLE.lock();
         let now = time::uptime_ms();
         for c in t.conns.values_mut() {
             if c.rtx_at.is_some_and(|at| now >= at) {
+                let open = !matches!(c.state, State::Closed);
                 c.retransmit(&mut out);
+                gave_up |= open && matches!(c.state, State::Closed);
             }
             // The application read: tell the peer the window opened again.
             if matches!(c.state, State::Established | State::FinWait1 | State::FinWait2)
@@ -724,7 +729,7 @@ pub fn timers() {
             State::Closed => !c.detached,
             _ => true,
         });
-        if !out.is_empty() {
+        if !out.is_empty() || gave_up {
             EVENTS.notify_all();
         }
     }

@@ -24,6 +24,7 @@
 
 mod ashmem;
 mod binder;
+pub mod calls;
 pub mod fd;
 mod inotify;
 pub mod mm;
@@ -804,8 +805,12 @@ static TRACE_ONLY: [core::sync::atomic::AtomicU64; 8] = [const { core::sync::ato
 /// Only calls that failed are traced (`strace failed`).
 static TRACE_FAILED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// Sets what `strace` logs: the calls (none: all) and whether only failures.
-pub fn set_trace(on: bool, only: &[u16], failed: bool) {
+/// Only the calls of this thread are traced (`strace t116`; 0: all).
+static TRACE_TID: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Sets what `strace` logs: the calls (none: all), whether only failures,
+/// and of which thread (0: all).
+pub fn set_trace(on: bool, only: &[u16], failed: bool, tid: task::Tid) {
     use core::sync::atomic::Ordering::Relaxed;
     for word in &TRACE_ONLY {
         word.store(0, Relaxed);
@@ -816,12 +821,18 @@ pub fn set_trace(on: bool, only: &[u16], failed: bool) {
         }
     }
     TRACE_FAILED.store(failed, Relaxed);
+    TRACE_TID.store(tid, Relaxed);
     TRACE.store(on, Relaxed);
 }
 
-fn traced(n: u64) -> bool {
+/// Whether `strace` logs call `n` of the running thread.
+pub fn traced(n: u64) -> bool {
     use core::sync::atomic::Ordering::Relaxed;
     if !TRACE.load(Relaxed) {
+        return false;
+    }
+    let tid = TRACE_TID.load(Relaxed);
+    if tid != 0 && tid != task::current_tid() {
         return false;
     }
     if TRACE_ONLY.iter().all(|w| w.load(Relaxed) == 0) {
@@ -884,6 +895,8 @@ pub fn syscall(frame: &mut TrapFrame) {
         crate::arch::cpu::disable_irq();
         return;
     }
+    calls::count(n);
+    task::set_in_call(Some(n));
     let a = [frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8, frame.r9];
     let trace = traced(n);
     let failed_only = TRACE_FAILED.load(core::sync::atomic::Ordering::Relaxed);
@@ -905,6 +918,7 @@ pub fn syscall(frame: &mut TrapFrame) {
     if trace && (!failed_only || (-4095..0).contains(&ret)) {
         crate::debug!("strace", "{}[{}] {n}({:#x}, {:#x}, {:#x}, {:#x}){named} = {ret:#x}", user::current_name(), task::current_tid(), a[0], a[1], a[2], a[3]);
     }
+    task::set_in_call(None);
     frame.rax = ret as u64;
     if user::kill_requested() {
         user::terminate(-130);
@@ -1108,11 +1122,31 @@ fn dispatch(n: u64, a: [u64; 6]) -> i64 {
     }
 }
 
-/// prctl: seccomp and no_new_privs (see [`seccomp`]); the other options are
-/// accepted and change nothing.
+/// prctl: seccomp and no_new_privs (see [`seccomp`]), and the thread's name
+/// (`ps` and `top` show it); the other options are accepted and change
+/// nothing.
 fn sys_prctl(option: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
+    const PR_SET_NAME: u64 = 15;
+    const PR_GET_NAME: u64 = 16;
     match option {
         21 | 22 | 38 | 39 => seccomp::prctl(option, a2, a3, a4, a5),
+        PR_SET_NAME => match user::user_cstr(a2, 15) {
+            Ok(name) => {
+                task::set_name(task::current_tid(), &name);
+                0
+            }
+            Err(_) => -err::EFAULT,
+        },
+        PR_GET_NAME => match user_bytes(a2, 16) {
+            Ok(b) => {
+                let name = task::name_of(task::current_tid()).unwrap_or_default();
+                let n = name.len().min(15);
+                b.fill(0);
+                b[..n].copy_from_slice(&name.as_bytes()[..n]);
+                0
+            }
+            Err(e) => e,
+        },
         _ => 0,
     }
 }
@@ -1599,14 +1633,17 @@ fn sys_clock_nanosleep(id: u64, flags: u64, req: u64) -> i64 {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let want = s.saturating_mul(1000).saturating_add(ns / 1_000_000);
-    let ms = if flags & TIMER_ABSTIME != 0 {
-        let (ns_, nns) = clock_now(id);
-        want.saturating_sub(ns_ * 1000 + nns / 1_000_000)
+    let want = s.saturating_mul(1_000_000_000).saturating_add(ns);
+    let left = if flags & TIMER_ABSTIME != 0 {
+        let (now_s, now_ns) = clock_now(id);
+        want.saturating_sub(now_s * 1_000_000_000 + now_ns)
     } else {
         want
     };
-    if sleep_interruptible(ms.min(86_400_000)) {
+    // Rounded up to the tick, as nanosleep does: a sleep shorter than a
+    // millisecond (glibc's nanosleep and usleep come here) still sleeps,
+    // rather than returning at once to a caller that sleeps in a loop.
+    if sleep_interruptible(left.div_ceil(1_000_000).min(86_400_000)) {
         0
     } else {
         -err::EINTR

@@ -1,8 +1,11 @@
-//! Waiting on many descriptors: `poll`, `select` and `epoll` (level
-//! triggered; edge-triggered sets are served the same way, which programs
-//! written for edge triggering handle since they read until EAGAIN, except
-//! on descriptors that are always ready, like files: there the one edge is
-//! when the watch is set, as on Linux, and they are reported once).
+//! Waiting on many descriptors: `poll`, `select` and `epoll`, level and
+//! edge triggered. An edge-triggered watch reports a descriptor when it is
+//! ready and something happened to it since the last report (its queues
+//! were told, [`fd::edges`]), as Linux reports one on each wake-up: not
+//! while it merely stays ready. A program may leave an eventfd it watches
+//! that way unread, and must not be woken again and again for it.
+//! Descriptors that are always ready, like files, have their one edge when
+//! the watch is set.
 //!
 //! A waiting thread sleeps on the queues of the descriptors it waits for
 //! (pipes, eventfds and local sockets each tell their own, see
@@ -195,7 +198,9 @@ pub fn sys_select_tv(n: u64, rd: u64, wr: u64, ex: u64, tv: u64) -> i64 {
             Ok(b) => {
                 let s = i64::from_le_bytes(b[0..8].try_into().unwrap());
                 let us = i64::from_le_bytes(b[8..16].try_into().unwrap());
-                s * 1000 + us / 1000
+                // Rounded up, as for ppoll: a timeout under a millisecond
+                // still waits.
+                s.saturating_mul(1000).saturating_add((us.max(0) + 999) / 1000)
             }
             Err(e) => return e,
         }
@@ -217,9 +222,11 @@ struct Watch {
     desc: Weak<Desc>,
     events: u32,
     data: u64,
-    /// One-shot entries go quiet after reporting once, and so do
-    /// edge-triggered ones on descriptors that are always ready.
+    /// One-shot entries go quiet after reporting once.
     armed: bool,
+    /// Edge-triggered: the descriptor's [`fd::edges`] when it was last
+    /// reported (None: not since the watch was set).
+    seen: Option<u64>,
 }
 
 pub struct Epoll {
@@ -248,17 +255,25 @@ impl Epoll {
     /// The events to report (at most `max`); `report` disarms the entries
     /// that go quiet once reported.
     fn collect(&self, max: usize, report: bool) -> Vec<(u32, u64)> {
-        let list: Vec<(i32, Arc<Desc>, u32, u64)> = self
+        let trace = report && super::traced(232);
+        let list: Vec<(i32, Arc<Desc>, u32, u64, Option<u64>)> = self
             .watches
             .lock()
             .iter()
             .filter(|(_, w)| w.armed)
-            .filter_map(|(&fd, w)| Some((fd, w.desc.upgrade()?, w.events, w.data)))
+            .filter_map(|(&fd, w)| Some((fd, w.desc.upgrade()?, w.events, w.data, w.seen)))
             .collect();
         let mut out = Vec::new();
-        for (fd, d, want, data) in list {
+        for (fd, d, want, data, seen) in list {
             if out.len() >= max {
                 break;
+            }
+            // Edge triggered: nothing new since the last report, nothing
+            // to report. Counted before looking: a change that comes in
+            // between is reported now and once more, not lost.
+            let edges = if want & EPOLLET != 0 { fd::edges(&d, want) } else { None };
+            if edges.is_some() && edges == seen {
+                continue;
             }
             let (r, w, h) = fd::readiness(&d);
             let mut ev = 0;
@@ -272,10 +287,14 @@ impl Epoll {
                 ev |= EPOLLHUP | if want & EPOLLRDHUP != 0 { EPOLLRDHUP } else { 0 };
             }
             if ev != 0 {
-                if report && (want & EPOLLONESHOT != 0 || (want & EPOLLET != 0 && fd::always_ready(&d))) {
+                if report && (want & EPOLLONESHOT != 0 || edges.is_some()) {
                     if let Some(w) = self.watches.lock().get_mut(&fd) {
-                        w.armed = false;
+                        w.armed = want & EPOLLONESHOT == 0;
+                        w.seen = edges;
                     }
+                }
+                if trace {
+                    crate::debug!("strace", "  epoll: fd {fd} ({}) watched for {want:#x}, reports {ev:#x}", fd::kind_name(&d));
                 }
                 out.push((ev, data));
             }
@@ -310,13 +329,14 @@ pub fn sys_epoll_ctl(epfd: i32, op: u32, fd_: i32, ev: u64) -> i64 {
             if w.contains_key(&fd_) {
                 return -err::EEXIST;
             }
-            w.insert(fd_, Watch { desc: Arc::downgrade(&target), events, data, armed: true });
+            w.insert(fd_, Watch { desc: Arc::downgrade(&target), events, data, armed: true, seen: None });
         }
         MOD => match w.get_mut(&fd_) {
             Some(x) => {
                 x.events = events;
                 x.data = data;
                 x.armed = true;
+                x.seen = None;
             }
             None => return -err::ENOENT,
         },
