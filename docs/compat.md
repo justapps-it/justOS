@@ -383,7 +383,7 @@ parte, la sua icona salta nel dock finché non arriva la finestra.
 | AppImage | si estrae e parte da lì (`--appimage-extract-and-run`: FUSE non c'è); ci vuole un po' | verificato con una AppImage |
 | `.deb` con `data.tar.xz` o `.zst` (quelli di Debian e Ubuntu) | una notifica dice che non si installa ancora (manca il decompressore) | non funziona |
 | `.deb` con gzip | va all'installatore, come prima | come prima |
-| `.html`, `.htm` e link | si aprono in Firefox, se c'è; sennò i file nell'editor, e per i link una notifica dice che serve Firefox | verificato con un file .html; se Firefox è già aperto una seconda pagina non gli si può passare (manca D-Bus) (la notifica prevista non è comparsa nelle prove) |
+| `.html`, `.htm` e link | si aprono in Firefox, se c'è; sennò i file nell'editor, e per i link una notifica dice che serve Firefox | verificato con un file .html; se Firefox è già aperto una seconda pagina non gli si può passare (manca D-Bus): una notifica dice di aprirla da Firefox (Ctrl+O) (verificato) |
 | `.dmg`, programmi Mach-O, cartelle `.app` di macOS | "Le app per macOS non funzionano su justOS." | non funziona |
 | `.pkg` | l'installatore lo scompatta, come prima | come prima |
 | `.apk`, `.dex`, `.jar` | invariato (vedi sopra) | come prima |

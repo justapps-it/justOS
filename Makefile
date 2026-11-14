@@ -42,6 +42,8 @@ PROFILE  ?= release
 CARGO    ?= cargo
 QEMU     ?= qemu-system-x86_64
 MEMORY   ?= 1G
+# Processors of the virtual machine of `make run`.
+CPUS     ?= 1
 # Wine 10 runs Windows programs (a double click on a .exe): it is in the
 # disk image unless WINE=0.
 WINE     ?= 1
@@ -205,7 +207,7 @@ iso: $(BUILD)/stage1.bin $(BUILD)/stage2.bin uefi system tools $(PACKAGES) live-
 		--stage1 $(BUILD)/stage1.bin --stage2 $(BUILD)/stage2.bin --efi $(EFI_APP) \
 		--kernel $(TARGET)/just-kernel --drivers $(BUILD)/drivers --files $(LIVE_ROOT)
 
-QEMU_COMMON := -m $(MEMORY) -serial stdio -no-reboot -rtc base=localtime
+QEMU_COMMON := -m $(MEMORY) -smp $(CPUS) -serial stdio -no-reboot -rtc base=localtime
 
 run: image
 	$(QEMU) $(QEMU_COMMON) -drive file=$(IMAGE),format=raw,if=ide
