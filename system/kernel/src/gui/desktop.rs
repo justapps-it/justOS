@@ -63,6 +63,68 @@ const STATUS_CELL: i32 = 4000;
 const DOCK_GROW_MS: u64 = 220;
 const DOCK_STAY_MS: u64 = 400;
 
+// The dock over a full-screen window comes up like macOS's: at the bottom
+// edge (`REVEAL_EDGE` rows), or when the pointer is thrown down in the
+// bottom `REVEAL_BAND` rows faster than `REVEAL_SPEED` (units per second,
+// measured over the last `SPEED_WINDOW_MS`; a shorter gap counts as
+// `SPEED_MIN_DT_MS`, so a one-unit jitter is never a throw). A slow drift
+// into the band does not reveal it. It slides in and out in
+// `SLIDE_IN_MS` / `SLIDE_OUT_MS`, and stays `REVEAL_HIDE_MS` after the
+// pointer left its zone.
+const REVEAL_EDGE: i32 = 2;
+const REVEAL_BAND: i32 = 48;
+const REVEAL_SPEED: i32 = 600;
+const SPEED_WINDOW_MS: u64 = 80;
+const SPEED_MIN_DT_MS: u64 = 16;
+const REVEAL_HIDE_MS: u64 = 350;
+const SLIDE_IN_MS: u64 = 220;
+const SLIDE_OUT_MS: u64 = 180;
+/// Beyond the dock's own height, how far down it goes to be out of sight
+/// (its shadow).
+const SLIDE_MARGIN: i32 = 40;
+
+/// How far the dock is up over a full-screen window (0 hidden, 1000 in
+/// place): eased out coming in, eased in going away.
+struct Slide {
+    from: u32,
+    to: u32,
+    anim: Anim,
+    ms: u64,
+}
+
+impl Slide {
+    fn at(v: u32) -> Slide {
+        Slide { from: v, to: v, anim: Anim::new(1), ms: 1 }
+    }
+
+    fn value(&self) -> u32 {
+        let t = self.anim.t() as u64;
+        let p = if self.to >= self.from { ui::ease_out(t as u32) } else { (t * t * t / 1_000_000) as u32 };
+        ui::lerp(self.from as i32, self.to as i32, p) as u32
+    }
+
+    fn target(&self) -> u32 {
+        self.to
+    }
+
+    /// Towards `to` from where it is now; whether that is a change.
+    fn set(&mut self, to: u32) -> bool {
+        if to == self.to {
+            return false;
+        }
+        self.from = self.value();
+        self.to = to;
+        self.ms = if to > self.from { SLIDE_IN_MS } else { SLIDE_OUT_MS };
+        self.anim = Anim::new(self.ms);
+        true
+    }
+
+    /// Still sliding (and a little after, for a slow frame).
+    fn moving(&self) -> bool {
+        self.from != self.to && self.anim.elapsed() < self.ms + 40
+    }
+}
+
 /// The dock's measures at a size between compact (0) and full (1000): the
 /// full ones are the constants above, so the full-size dock is the dock as
 /// it always was.
@@ -630,6 +692,14 @@ struct Desktop {
     was_full: bool,
     /// Full screen, pointer at the bottom edge: the dock is shown.
     dock_reveal: bool,
+    /// The dock's slide up over a full-screen window.
+    slide: Slide,
+    /// When the pointer left the dock's zone (0: it is there, or the dock
+    /// is away).
+    reveal_left: u64,
+    /// Two recent pointer samples (y, ms) for its downward speed.
+    ptr_a: (i32, u64),
+    ptr_b: (i32, u64),
     /// The notifications shown so far (newest last), for the notification
     /// centre: title, text, icon, "hh:mm".
     history: Vec<(String, String, String, String)>,
@@ -845,6 +915,10 @@ impl Desktop {
 
     /// How far the dock is grown: 0 compact, 1000 full size.
     fn dock_size(&self) -> u32 {
+        // The dock that comes up over a full-screen window is the full one.
+        if self.full_screen() {
+            return 1000;
+        }
         self.grow.value()
     }
 
@@ -895,7 +969,19 @@ impl Desktop {
     /// are now (grown or compact, magnified around the pointer), and the
     /// dock's background.
     fn dock_geometry(&self, items: &[DockItem]) -> (Rect, Vec<Rect>, Rect) {
-        self.dock_geometry_at(items, self.dock_size(), true)
+        let (mut mark, mut rects, mut bg) = self.dock_geometry_at(items, self.dock_size(), true);
+        // Over a full-screen window the dock slides in from below the edge.
+        if self.full_screen() {
+            let dy = (1000 - self.slide.value().min(1000)) as i32 * (bg.h + 12 + SLIDE_MARGIN) / 1000;
+            if dy > 0 {
+                mark.y += dy;
+                bg.y += dy;
+                for r in rects.iter_mut() {
+                    r.y += dy;
+                }
+            }
+        }
+        (mark, rects, bg)
     }
 
     /// The same at size `size`, magnified if `magnify` (and the settings
@@ -1073,7 +1159,52 @@ impl Desktop {
 
     /// Is the dock on the screen?
     fn dock_shown(&self) -> bool {
-        !self.full_screen() || self.dock_reveal
+        !self.full_screen() || self.dock_reveal || self.slide.value() > 0
+    }
+
+    /// The pointer at height `y`, `now` ms: how fast it goes down (units
+    /// per second), the greater of the speeds from the last two samples
+    /// that are at most [`SPEED_WINDOW_MS`] old.
+    fn throw_speed(&mut self, y: i32, now: u64) -> i32 {
+        let mut best = 0;
+        for (sy, st) in [self.ptr_a, self.ptr_b] {
+            let dt = now.saturating_sub(st);
+            if st != 0 && dt <= SPEED_WINDOW_MS {
+                best = best.max((y - sy) * 1000 / dt.max(SPEED_MIN_DT_MS) as i32);
+            }
+        }
+        if now.saturating_sub(self.ptr_b.1) >= 20 {
+            self.ptr_a = self.ptr_b;
+        }
+        self.ptr_b = (y, now);
+        best
+    }
+
+    /// Over a full-screen window: lets the dock go [`REVEAL_HIDE_MS`] after
+    /// the pointer left it (never while a menu or the control centre from
+    /// it is open, or files are over it), and starts its slide. Called
+    /// after every event.
+    fn update_reveal(&mut self, l: &mut Looper) {
+        if !self.full_screen() {
+            return;
+        }
+        if self.dock_reveal {
+            let (x, y) = self.mouse;
+            if self.dock_zone().contains(x, y) || self.dock_held() {
+                self.reveal_left = 0;
+            } else {
+                let now = time::uptime_ms();
+                if self.reveal_left == 0 {
+                    self.reveal_left = now;
+                } else if now - self.reveal_left >= REVEAL_HIDE_MS {
+                    self.dock_reveal = false;
+                    self.reveal_left = 0;
+                }
+            }
+        }
+        if self.slide.set(if self.dock_reveal { 1000 } else { 0 }) {
+            self.damage_bar(l);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -2706,16 +2837,15 @@ impl Desktop {
             self.bar_hover = bar_hover;
             l.damage(self.dock_zone());
         }
-        // Full screen: the dock comes up at the bottom edge.
+        // Full screen: the dock comes up at the bottom edge, or when the
+        // pointer is thrown down towards it (see [`Desktop::update_reveal`]).
+        let speed = self.throw_speed(y, time::uptime_ms());
         if self.full_screen() {
-            let dock_zone = self.dock_zone();
-            let dock_reveal = y >= self.h - 3 || (self.dock_reveal && dock_zone.contains(x, y));
-            if dock_reveal != self.dock_reveal {
-                self.dock_reveal = dock_reveal;
-                l.damage(dock_zone);
+            let fast = speed >= REVEAL_SPEED;
+            if y >= self.h - REVEAL_EDGE || (y >= self.h - REVEAL_BAND && fast) {
+                self.dock_reveal = true;
+                self.reveal_left = 0;
             }
-        } else if self.dock_reveal {
-            self.dock_reveal = false;
         }
         // The dock grows near the pointer and magnifies around it; not
         // while the bar shows the level or a notification over it.
@@ -3747,6 +3877,8 @@ impl View for Desktop {
             || self.popup.as_ref().is_some_and(|p| !p.settled)
             || self.mag.moving()
             || self.grow.moving()
+            || self.slide.moving()
+            || (self.dock_reveal && self.reveal_left != 0)
             || self.bounce.is_some()
             || self.bar_moving()
             || self.notes.iter().any(|n| n.moving())
@@ -3759,11 +3891,14 @@ impl View for Desktop {
     fn event(&mut self, l: &mut Looper, ev: Event) -> bool {
         let quit = self.handle(l, ev);
         self.update_dock_size(l);
+        self.update_reveal(l);
         // Into or out of full screen: the bar and the dock come and go.
         let full = self.full_screen();
         if full != self.was_full {
             self.was_full = full;
             self.dock_reveal = false;
+            self.reveal_left = 0;
+            self.slide = Slide::at(0);
             l.damage(self.screen());
         }
         quit
@@ -4035,7 +4170,7 @@ impl Desktop {
                 // The bar changing shape (the dock growing or shrinking too):
                 // where it is now and where it was.
                 let growing = self.grow.moving();
-                if self.bar_moving() || growing {
+                if self.bar_moving() || growing || self.slide.moving() {
                     self.damage_bar(l);
                 }
                 // The icons move under a pointer that stays still while the
@@ -4216,6 +4351,10 @@ pub fn run(d: &mut Display) {
         ending: None,
         was_full: false,
         dock_reveal: false,
+        slide: Slide::at(0),
+        reveal_left: 0,
+        ptr_a: (0, 0),
+        ptr_b: (0, 0),
         history: Vec::new(),
         quiet: false,
         // With a password, the computer starts locked.
