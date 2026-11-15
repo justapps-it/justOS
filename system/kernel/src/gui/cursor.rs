@@ -103,7 +103,8 @@ impl Cursor {
     pub fn poll(&mut self, w: i32, h: i32) -> bool {
         let Some(p) = input::pointer() else { return false };
         self.buttons = p.buttons;
-        self.scrolled = self.wheel.map_or(0, |w| w - p.wheel);
+        // The wheel counts up as it turns towards the user: scrolling down.
+        self.scrolled = self.wheel.map_or(0, |w| p.wheel - w);
         self.wheel = Some(p.wheel);
         let (old_x, old_y) = (self.x, self.y);
         if p.absolute {

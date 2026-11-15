@@ -18,6 +18,8 @@ A script is a list of steps, one per line:
     glide <x> <y>               move there in small steps (button held or not)
     release <x> <y>             ...and up again, there
     type <text>                 letters, digits, space and simple punctuation
+    wheel up|down [n]           turn the mouse wheel n notches (up: away from
+                                the user)
     key <name>                  a QEMU key name: ret, esc, spc, tab, ctrl-spc...
     hold <name> / unhold <name> keep a key down (ctrl, shift, alt) and let go
     serial <text>               a command line typed on the serial console
@@ -246,6 +248,12 @@ def main():
             elif op == "release":
                 q.pointer(int(a[0]), int(a[1]), False)
                 time.sleep(0.1)
+            elif op == "wheel":
+                # One event per notch, as a mouse sends them.
+                for _ in range(int(a[1]) if len(a) > 1 else 1):
+                    for down in (True, False):
+                        q.cmd("input-send-event", events=[{"type": "btn", "data": {"button": "wheel-" + a[0], "down": down}}])
+                    time.sleep(0.05)
             elif op in ("hold", "unhold"):
                 q.key_state(a[0], op == "hold")
                 time.sleep(0.05)
