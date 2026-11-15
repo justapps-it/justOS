@@ -103,10 +103,6 @@ impl Slide {
         ui::lerp(self.from as i32, self.to as i32, p) as u32
     }
 
-    fn target(&self) -> u32 {
-        self.to
-    }
-
     /// Towards `to` from where it is now; whether that is a change.
     fn set(&mut self, to: u32) -> bool {
         if to == self.to {
