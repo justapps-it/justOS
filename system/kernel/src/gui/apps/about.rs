@@ -104,6 +104,10 @@ impl App for About {
                 let cx = area.x + 130;
                 c.fill_circle(cx, area.y + 170, 74, 0xFF14_1414);
                 draw_mark(c, cx, area.y + 170, 56, 0xFFF2_EFE6);
+                // The computer's name under its picture.
+                let device = text::fit(Font::Strong, &crate::host::name(), 210);
+                text::draw_centered(c, Font::Strong, cx, area.y + 262, &device, ui::text());
+                text::draw_centered(c, Font::Small, cx, area.y + 284, "Nome del dispositivo", ui::text_faint());
                 let x = area.x + 250;
                 text::draw(c, Font::Title, x, area.y + 76, "justOS", ui::text());
                 text::draw(c, Font::Body, x, area.y + 116, &format!("Versione {}", crate::VERSION), ui::text_dim());

@@ -44,7 +44,7 @@ impl fmt::Display for Ip {
 type Mac = [u8; 6];
 const BROADCAST_MAC: Mac = [0xFF; 6];
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct Config {
     pub ip: Ip,
     pub mask: Ip,
@@ -66,6 +66,10 @@ struct Iface {
     config: Config,
     dhcp: Dhcp,
     attempts: u32,
+    /// The DHCP server that gave the address.
+    server: Ip,
+    /// A request sent while bound (the computer's name changed): its id.
+    renewing: Option<u32>,
 }
 
 struct Stack {
@@ -236,11 +240,10 @@ pub fn send_udp(dst: Ip, src_port: u16, dst_port: u16, data: &[u8]) -> Result<()
 
 const DHCP_MAGIC: [u8; 4] = [99, 130, 83, 99];
 
-fn dhcp_send(iface: u32, kind: u8, xid: u32, requested: Option<(Ip, Ip)>) {
-    let mac = match STACK.lock().ifaces.get(&iface) {
-        Some(i) => i.mac,
-        None => return,
-    };
+/// The DHCP message of `kind` (1 discover, 3 request) from `mac`, asking
+/// for address and server `requested` if given, with the host name `host`
+/// (option 12) so that the network knows the computer by its name.
+pub fn dhcp_message(kind: u8, xid: u32, mac: Mac, requested: Option<(Ip, Ip)>, host: &str) -> Vec<u8> {
     let mut d = vec![0u8; 240];
     d[0] = 1; // request
     d[1] = 1; // Ethernet
@@ -257,9 +260,38 @@ fn dhcp_send(iface: u32, kind: u8, xid: u32, requested: Option<(Ip, Ip)>) {
         d.extend_from_slice(&server.0);
     }
     d.extend_from_slice(&[55, 3, 1, 3, 6]); // ask for mask, router, DNS
-    d.extend_from_slice(&[12, 6]);
-    d.extend_from_slice(b"justos");
+    let host = &host.as_bytes()[..host.len().min(63)];
+    if !host.is_empty() {
+        d.extend_from_slice(&[12, host.len() as u8]);
+        d.extend_from_slice(host);
+    }
     d.push(255);
+    d
+}
+
+/// The host name in a DHCP message (option 12), if it has one.
+pub fn dhcp_host_name(d: &[u8]) -> Option<&[u8]> {
+    let mut i = 240;
+    while i + 1 < d.len() && d[i] != 255 {
+        if d[i] == 0 {
+            i += 1;
+            continue;
+        }
+        let len = d[i + 1] as usize;
+        if d[i] == 12 {
+            return d.get(i + 2..i + 2 + len);
+        }
+        i += 2 + len;
+    }
+    None
+}
+
+fn dhcp_send(iface: u32, kind: u8, xid: u32, requested: Option<(Ip, Ip)>) {
+    let mac = match STACK.lock().ifaces.get(&iface) {
+        Some(i) => i.mac,
+        None => return,
+    };
+    let d = dhcp_message(kind, xid, mac, requested, &crate::host::hostname());
     let packet = ipv4_packet(Ip::ANY, Ip::BROADCAST, 17, &udp_datagram(68, 67, &d), 0);
     send_ethernet(iface, BROADCAST_MAC, 0x0800, &packet);
 }
@@ -298,15 +330,33 @@ fn dhcp_receive(iface: u32, d: &[u8]) {
             drop(s);
             dhcp_send(iface, 3, xid, Some((yiaddr, server)));
         }
-        (Dhcp::Requesting { xid: x, .. }, 5) if x == xid => {
+        (Dhcp::Requesting { xid: x, server: from, .. }, 5) if x == xid => {
             i.config = Config { ip: yiaddr, mask, gateway: router, dns, lease_s: lease };
             i.dhcp = Dhcp::Bound;
+            i.server = if server != Ip::ANY { server } else { from };
             drop(s);
             crate::info!("net", "net{iface}: address {yiaddr}, gateway {router}, DNS {dns}");
             EVENTS.notify_all();
         }
         (Dhcp::Requesting { xid: x, .. }, 6) if x == xid => {
             i.dhcp = Dhcp::Idle; // NAK: start over
+        }
+        (Dhcp::Bound, 5) if i.renewing == Some(xid) => {
+            // The same address, now under the computer's new name.
+            i.renewing = None;
+            if yiaddr != Ip::ANY {
+                i.config.ip = yiaddr;
+            }
+            if lease != 0 {
+                i.config.lease_s = lease;
+            }
+            drop(s);
+            crate::info!("net", "net{iface}: address {yiaddr} renewed as {}", crate::host::hostname());
+        }
+        (Dhcp::Bound, 6) if i.renewing == Some(xid) => {
+            i.renewing = None;
+            i.dhcp = Dhcp::Idle; // the address is gone: start over
+            i.attempts = 0;
         }
         _ => {}
     }
@@ -400,11 +450,20 @@ pub fn start() {
             let start_dhcp = {
                 let mut s = STACK.lock();
                 let iface =
-                    s.ifaces.entry(info.index).or_insert(Iface { mac: info.mac, config: Config::default(), dhcp: Dhcp::Idle, attempts: 0 });
+                    s.ifaces.entry(info.index).or_insert(Iface {
+                        mac: info.mac,
+                        config: Config::default(),
+                        dhcp: Dhcp::Idle,
+                        attempts: 0,
+                        server: Ip::ANY,
+                        renewing: None,
+                    });
                 let now = time::uptime_ms();
                 match iface.dhcp {
                     Dhcp::Idle => true,
-                    Dhcp::Discovering { since, .. } | Dhcp::Requesting { since, .. } => now - since > 3000 && iface.attempts < 10,
+                    Dhcp::Discovering { since, .. } | Dhcp::Requesting { since, .. } => {
+                        now - since > 3000 && iface.attempts < DHCP_ATTEMPTS
+                    }
                     Dhcp::Bound => false,
                 }
             };
@@ -438,6 +497,92 @@ pub fn start() {
 
 pub fn config(iface: u32) -> Option<(Config, bool)> {
     STACK.lock().ifaces.get(&iface).map(|i| (i.config, i.dhcp == Dhcp::Bound))
+}
+
+/// How DHCP is doing on an interface.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Lease {
+    /// It has an address.
+    Bound(Config),
+    /// Asking for one: the attempts so far (one every 3 seconds).
+    Asking(u32),
+    /// No answer after every attempt (no cable, or no DHCP server).
+    GaveUp,
+}
+
+/// How DHCP is doing on interface `iface` (None: not seen yet).
+pub fn lease(iface: u32) -> Option<Lease> {
+    let now = time::uptime_ms();
+    STACK.lock().ifaces.get(&iface).map(|i| match i.dhcp {
+        Dhcp::Bound => Lease::Bound(i.config),
+        Dhcp::Discovering { since, .. } | Dhcp::Requesting { since, .. } if i.attempts >= DHCP_ATTEMPTS && now - since > 3000 => {
+            Lease::GaveUp
+        }
+        _ => Lease::Asking(i.attempts),
+    })
+}
+
+/// Asks for an address again on every interface that has none, from the
+/// first attempt (the cable was plugged in, say).
+pub fn retry() {
+    let mut s = STACK.lock();
+    for i in s.ifaces.values_mut() {
+        if i.dhcp != Dhcp::Bound {
+            i.dhcp = Dhcp::Idle;
+            i.attempts = 0;
+        }
+    }
+}
+
+/// The computer's name changed: every interface with an address asks for it
+/// again under the new name, so that the network's DHCP server (and the
+/// router's list of devices) knows it.
+pub fn announce_name() {
+    let bound: Vec<(u32, u32, Ip, Ip)> = {
+        let mut s = STACK.lock();
+        let now = time::uptime_ms() as u32;
+        s.ifaces
+            .iter_mut()
+            .filter(|(_, i)| i.dhcp == Dhcp::Bound && i.server != Ip::ANY)
+            .map(|(&n, i)| {
+                let xid = now.wrapping_mul(2654435761) ^ n ^ 0x5EED;
+                i.renewing = Some(xid);
+                (n, xid, i.config.ip, i.server)
+            })
+            .collect()
+    };
+    for (n, xid, ip, server) in bound {
+        dhcp_send(n, 3, xid, Some((ip, server)));
+    }
+}
+
+/// Whether this computer reaches the internet: a host the system already
+/// talks to (where updates come from) has an address and answers on the
+/// HTTPS port. Takes a few seconds at most; call it from a thread of its own.
+pub fn internet() -> Result<(), &'static str> {
+    if !online() {
+        return Err("the network is not configured");
+    }
+    let ip = resolve(CHECK_HOST)?;
+    let conn = tcp::connect(ip, 443, 4000)?;
+    tcp::close(conn);
+    Ok(())
+}
+
+/// The host [`internet`] tries: the one the signed index of updates is on.
+pub const CHECK_HOST: &str = "raw.githubusercontent.com";
+
+/// DHCP gives up after this many discovers without an answer.
+const DHCP_ATTEMPTS: u32 = 10;
+
+/// The DHCP host name option is built as the server expects (a check for
+/// the shell's `hostname check`).
+pub fn dhcp_self_test() -> bool {
+    let d = dhcp_message(1, 1, [2, 0, 0, 0, 0, 1], None, "anna-pc");
+    let named = dhcp_host_name(&d) == Some(b"anna-pc".as_slice());
+    let mine = crate::host::hostname();
+    let d = dhcp_message(3, 2, [2, 0, 0, 0, 0, 1], Some((Ip([10, 0, 2, 15]), Ip([10, 0, 2, 2]))), &mine);
+    named && dhcp_host_name(&d) == Some(mine.as_bytes()) && d[d.len() - 1] == 255
 }
 
 /// Waits up to `ms` for any interface to get an address.

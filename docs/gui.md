@@ -11,15 +11,50 @@ dettagli solo sulla porta seriale.
 
 1. **Splash**: logo, nome e una barra che avanza mentre il kernel avvia le sue
    parti (memoria, dischi, driver, rete) e carica icone e sfondi.
-2. **Primo avvio**: una configurazione guidata in cinque passi: *Benvenuto*
-   (pulsante **INIZIA**), *Come ti chiami?*, *Scegli la tastiera*, *Scegli lo
-   sfondo*, *Tutto pronto*. Si usa con il mouse o con la tastiera (Invio per
-   andare avanti, Esc per tornare indietro). Alla fine crea le cartelle della
-   home (Documenti, Scaricati, Immagini, Musica, Video, Scrivania, Progetti).
+2. **Primo avvio**: una configurazione guidata in dieci passi, con una barra
+   di puntini che mostra a che punto sei e uno scorrimento di 200 ms tra un
+   passo e l'altro:
+   1. *Benvenuto* (pulsante **INIZIA**; la lingua per ora è solo l'italiano);
+   2. *Aspetto*: Scuro o Chiaro, con l'anteprima di una finestra; la scelta si
+      applica subito a tutta la configurazione;
+   3. *Tastiera*: Italiano o English (US), con un campo per provarla;
+   4. *Rete*: per ogni scheda trovata mostra "Connesso" con l'indirizzo DHCP,
+      "Cerco la rete…" oppure "Nessuna risposta" con il pulsante **Riprova**
+      (rifà il DHCP); una riga dice se *Internet funziona* o c'è la *Rete
+      locale soltanto* (risolve `raw.githubusercontent.com`, da cui arriva
+      l'indice degli aggiornamenti, e si connette alla porta 443). Senza
+      schede: "Nessuna scheda di rete". Il Wi-Fi non c'è ancora e la pagina lo
+      dice solo se non c'è un cavo collegato. Si può sempre continuare senza
+      rete. L'indirizzo fisso non è supportato dallo stack di rete e non è
+      offerto;
+   5. *Il tuo account*: nome e password facoltativa con conferma (la stessa
+      password del blocco schermo, salvata con salt e hash);
+   6. *Nome del dispositivo*: proposto dal nome ("Anna-PC"), validato come
+      nome host (lettere senza accenti, cifre, trattini, 1-63 caratteri); è il
+      nome che vede la rete (opzione 12 del DHCP), i programmi Linux
+      (`uname -n`, `/etc/hostname`, `/proc/sys/kernel/hostname`), *Informazioni
+      su justOS* e la shell (`hostname`, `sysinfo`);
+   7. *Data e ora*: l'ora del computer con frecce per correggerla (scrive
+      l'orologio CMOS). justOS non ha ancora i fusi orari: l'orologio è l'ora
+      locale;
+   8. *Privacy e aggiornamenti*: aggiornamenti automatici delle app, suono
+      all'avvio, widget sulla scrivania;
+   9. *Sfondo*;
+   10. *Tutto pronto*: riepilogo e **Inizia**.
+
+   Si usa con il mouse o con la tastiera (Invio per andare avanti, Esc per
+   tornare indietro, Tab o frecce tra i campi). Con le impostazioni di
+   partenza basta Invio a ogni passo, scrivendo il nome al passo *Il tuo
+   account*. Niente viene salvato prima dell'ultimo passo: se si spegne prima,
+   la configurazione riparte da capo. Alla fine crea le cartelle della home
+   (Documenti, Scaricati, Immagini, Musica, Video, Scrivania, Progetti).
+   Per l'automazione, nella shell `setup skip` la segna come fatta (`setup`
+   mostra lo stato).
 3. **Avvii successivi**: dopo lo splash compare direttamente la scrivania.
 
-Le scelte sono in `sys:/system/settings`; *Impostazioni → Generale →
-Configurazione iniziale* la ripropone al prossimo avvio. Il CD live non
+Le scelte sono in `sys:/system/settings` (il nome del dispositivo come
+`device-name=`, modificabile in *Impostazioni → Generale → Nome del
+dispositivo*); *Impostazioni → Generale → Configurazione iniziale* la ripropone al prossimo avvio. Il CD live non
 conserva nulla, quindi mostra la configurazione ogni volta.
 
 ## La scrivania
@@ -483,7 +518,7 @@ servono.
 
 `make run` apre justOS in una finestra di QEMU. `make shots` avvia justOS senza
 schermo, lo guida con mouse e tastiera (`scripts/gui-shots.py`, attraverso
-QMP) lungo `scripts/gui/tour.txt` (configurazione, ogni app, il Negozio che
+QMP) lungo `scripts/gui/tour.txt` (i dieci passi della configurazione iniziale, ogni app, il Negozio che
 installa e avvia un gioco) e salva le schermate in `build/shots/`; con
 `SCREEN=1920x1080` le coordinate del giro si riferiscono a uno schermo di
 quella misura.

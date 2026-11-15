@@ -52,14 +52,24 @@ cp --sparse=always "$IMAGE" justos.img || exit 2
 "$JUSTTOOL" fs justos.img mkdir /home/wl >/dev/null 2>&1
 "$JUSTTOOL" fs justos.img put wt /home/wl/wt >/dev/null || exit 2
 
-# The setup (as in scripts/gui/tour.txt), then the client. Its window is
+# The setup (ten steps by keys, as in scripts/gui/tour.txt), then the client. Its window is
 # green (20b060), with a magenta (c02080) subsurface at 20,20; "find" puts
 # the origin at the window's top-left corner.
 cat > steps.txt <<'EOF'
 wait 10
-click 512 543
+key ret
+wait 1
+key ret
+wait 1
+key ret
+wait 3
+key ret
 wait 1
 type Arc
+key ret
+wait 1
+key ret
+wait 1
 key ret
 wait 1
 key ret

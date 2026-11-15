@@ -11,7 +11,7 @@ mod music;
 mod notes;
 mod photos;
 mod picker;
-mod prefs;
+pub(super) mod prefs;
 pub mod prompt;
 mod reminders;
 pub mod search;

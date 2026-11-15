@@ -1,25 +1,40 @@
 # A tour of the interface for scripts/gui-shots.py (make shots), on a fresh
-# image at 1024x768: the setup, then the desktop, its apps and the store.
+# image at 1024x768: the setup (ten steps, by keys, no password), then the desktop, its apps and the store.
 # Dock icons at rest: x = 178 + 62 * i (File, Applicazioni, Editor di testo,
 # Note, Calendario, Foto, Musica, Calcolatrice, Negozio, Impostazioni),
 # Cestino at 817; y = 715. The justOS mark is at 108, the status at 901.
 wait 2
 shot 01-splash
 wait 8
-shot 02-benvenuto
-click 512 543
+shot 02a-benvenuto
+key ret
+wait 1
+shot 02b-aspetto
+key ret
+wait 1
+shot 02c-tastiera
+key ret
+wait 3
+shot 02d-rete
+key ret
 wait 1
 type Arc
-shot 03-nome
+shot 02e-account
 key ret
 wait 1
-shot 04-tastiera
+shot 02f-dispositivo
 key ret
 wait 1
-shot 05-sfondo
+shot 02g-orario
+key ret
+wait 1
+shot 02h-privacy
+key ret
+wait 1
+shot 02i-sfondo
 key ret
 wait 1.5
-shot 06-pronto
+shot 02j-fine
 key ret
 wait 4
 shot 07-scrivania

@@ -3,7 +3,7 @@
 # the image, from LINUX_PKGS) is started from the serial console; its window
 # has to appear, drawn with the justOS theme (the orange of checks, switches
 # and bars, none of Adwaita's blue), and go away with Ctrl+Q.
-# The GUI is driven with scripts/gui-shots.py, through the setup as in
+# The GUI is driven with scripts/gui-shots.py, through the ten-step setup (keys) as in
 # scripts/gui/tour.txt. The wallpaper has the same orange, so the window's
 # orange is what a screenshot before it does not have.
 #
@@ -19,9 +19,19 @@ cp --sparse=always "$IMAGE" justos.img || exit 2
 
 cat > steps.txt <<'EOF'
 wait 10
-click 512 543
+key ret
+wait 1
+key ret
+wait 1
+key ret
+wait 3
+key ret
 wait 1
 type Arc
+key ret
+wait 1
+key ret
+wait 1
 key ret
 wait 1
 key ret

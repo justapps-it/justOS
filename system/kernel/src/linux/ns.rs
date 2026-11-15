@@ -364,7 +364,8 @@ impl PidNs {
 
 pub struct UtsNs {
     id: u32,
-    /// The host and domain names.
+    /// The host and domain names; an empty host name is the computer's
+    /// ([`crate::host::hostname`], which the user may change).
     names: IrqLock<(String, String)>,
 }
 
@@ -422,7 +423,7 @@ fn first() -> Proc {
         .get_or_insert_with(|| {
             let user = Arc::new(UserNs { id: INIT_USER, parent: None, depth: 0, maps: IrqLock::new(Maps::default()) });
             let pid = Arc::new(PidNs { id: INIT_PID, parent: None, depth: 0, ids: IrqLock::new(PidIds::default()) });
-            let uts = Arc::new(UtsNs { id: INIT_UTS, names: IrqLock::new((String::from("justos"), String::from("(none)"))) });
+            let uts = Arc::new(UtsNs { id: INIT_UTS, names: IrqLock::new((String::new(), String::from("(none)"))) });
             Proc {
                 user,
                 pid: pid.clone(),
@@ -466,7 +467,10 @@ fn make(p: &mut Proc, ns: u64, child: bool) {
         p.pid_children = n;
     }
     if ns & CLONE_NEWUTS != 0 {
-        let names = p.uts.names.lock().clone();
+        let mut names = p.uts.names.lock().clone();
+        if names.0.is_empty() {
+            names.0 = crate::host::hostname();
+        }
         p.uts = Arc::new(UtsNs { id: new_id(), names: IrqLock::new(names) });
     }
     if ns & CLONE_NEWNET != 0 {
@@ -715,7 +719,11 @@ pub fn net() -> u32 {
 
 /// The host and domain names the calling process sees.
 pub fn names() -> (String, String) {
-    of(task::current_pid()).uts.names.lock().clone()
+    let mut names = of(task::current_pid()).uts.names.lock().clone();
+    if names.0.is_empty() {
+        names.0 = crate::host::hostname();
+    }
+    names
 }
 
 /// sethostname and setdomainname.

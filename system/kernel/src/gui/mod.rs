@@ -32,6 +32,7 @@ pub mod pace;
 pub(crate) mod res;
 mod settings;
 mod setup;
+pub use setup::{device_name as set_device_name, done as setup_done, skip as setup_skip};
 mod splash;
 mod textarea;
 mod ui;

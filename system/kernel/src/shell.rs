@@ -98,6 +98,8 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("play", "<file.wav> | stop", "play a sound file"),
     ("tone", "[hz] [ms]", "play a tone (default 440 Hz, 500 ms)"),
     ("volume", "[0-100]", "show or set the sound volume"),
+    ("hostname", "[name | check]", "the computer's name: show it, change it, or check the DHCP packet that sends it"),
+    ("setup", "[skip]", "first-start setup: its state, or mark it done without asking (for automation)"),
     ("display", "[WxH | scale auto|1|2]", "screen resolutions, switch to one, or the interface size"),
     ("fps", "[auto|60|120|144|240]", "frames the interface drew in the last second; or set the most a second"),
 ];
@@ -1101,6 +1103,35 @@ impl Shell {
                     _ => println!("{ERR}usage: volume [0-100]{RESET}"),
                 },
             },
+            "hostname" => match rest.first().copied() {
+                None => println!("{} ({})", crate::host::hostname(), crate::host::name()),
+                Some("check") => {
+                    if crate::net::dhcp_self_test() {
+                        println!("dhcp host name option: ok ({})", crate::host::hostname());
+                    } else {
+                        println!("{ERR}dhcp host name option: wrong{RESET}");
+                    }
+                }
+                Some(n) => match crate::host::problem(n) {
+                    Some(p) => println!("{ERR}hostname: {p}{RESET}"),
+                    None => {
+                        if crate::gui::active() {
+                            crate::gui::set_device_name(n);
+                        } else {
+                            crate::host::set(n);
+                        }
+                        println!("{} ({})", crate::host::hostname(), crate::host::name());
+                    }
+                },
+            },
+            "setup" => match rest.first().copied() {
+                None => println!("first-start setup: {}", if crate::gui::setup_done() { "done" } else { "not done yet" }),
+                Some("skip") => {
+                    crate::gui::setup_skip();
+                    println!("first-start setup: done");
+                }
+                _ => println!("{ERR}usage: setup [skip]{RESET}"),
+            },
             "display" => self.display(rest.first().copied(), rest.get(1).copied()),
             "fps" => self.fps(rest.first().copied()),
             _ => {
@@ -1713,6 +1744,7 @@ impl Shell {
     fn sysinfo(&self) {
         let mut brand = [0u8; 48];
         println!("{BOLD}justOS{RESET} {}", crate::VERSION);
+        println!("  name       {} ({})", crate::host::name(), crate::host::hostname());
         println!("  processor  {} ({} running)", crate::arch::cpu::brand(&mut brand), crate::arch::smp::count());
         let (_, usable) = mem::frame::stats();
         println!("  memory     {}", Size(usable));

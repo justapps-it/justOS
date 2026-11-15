@@ -102,6 +102,7 @@ const LAYOUTS: [(Layout, &str); 2] = [(Layout::It, "Italiano"), (Layout::Us, "En
 
 // The labels of the rows a note can appear under.
 const L_NAME: &str = "Il tuo nome";
+const L_DEVICE: &str = "Nome del dispositivo";
 const L_SETUP: &str = "Configurazione iniziale";
 const L_MODES: &str = "Risoluzione";
 const L_SCALE: &str = "Dimensione interfaccia";
@@ -191,6 +192,8 @@ enum Ctl {
     Text,
     /// The name field and "Salva".
     Name,
+    /// The computer's name, its field and "Salva".
+    Device,
     /// The first-start setup again, at the next start.
     Setup,
     /// Dark or light: a small picture of a window in each.
@@ -304,6 +307,9 @@ pub struct Prefs {
     pick: usize,
     name: String,
     editing: bool,
+    /// The computer's name being typed.
+    device: String,
+    editing_device: bool,
     /// A new password being typed.
     password: String,
     editing_password: bool,
@@ -401,8 +407,9 @@ fn volume_bar(r: Rect) -> Rect {
 }
 
 /// A small picture of a window in the theme of palette `p`, over the
-/// wallpaper `backdrop` (as big as `r`).
-fn draw_theme(c: &mut Canvas, r: Rect, p: &ui::Palette, backdrop: Option<&Canvas>) {
+/// wallpaper `backdrop` (as big as `r`). The first-start setup shows them
+/// too.
+pub(crate) fn draw_theme(c: &mut Canvas, r: Rect, p: &ui::Palette, backdrop: Option<&Canvas>) {
     match backdrop {
         Some(b) => c.blit_round_from(b, 0, 0, r, 12, 0),
         None => c.fill_round_grad(r, 12, 0xFF3B_2E5A, 0xFFE0_8F6E),
@@ -465,6 +472,8 @@ impl Prefs {
             pick: 0,
             name: settings::get().name,
             editing: false,
+            device: crate::host::name(),
+            editing_device: false,
             password: String::new(),
             editing_password: false,
             note: ("", ""),
@@ -489,7 +498,10 @@ impl Prefs {
     fn cards(&self, s: Section) -> Vec<Card> {
         match s {
             Section::General => vec![
-                card(vec![row(L_NAME, "Come ti saluta justOS", Ctl::Name)]),
+                card(vec![
+                    row(L_NAME, "Come ti saluta justOS", Ctl::Name),
+                    row(L_DEVICE, &format!("In rete: {}", crate::host::hostname()), Ctl::Device),
+                ]),
                 card(vec![
                     row(L_SETUP, "La rifai al prossimo avvio", Ctl::Setup),
                     row("Versione", "", Ctl::Info(format!("justOS {}", crate::VERSION))),
@@ -629,7 +641,7 @@ impl Prefs {
         match ctl {
             Ctl::Info(s) => (text::width(Font::Body, s).min(inner), bh),
             Ctl::Text => (0, 0),
-            Ctl::Name | Ctl::Password => (inner.min(320), 38),
+            Ctl::Name | Ctl::Device | Ctl::Password => (inner.min(320), 38),
             Ctl::Setup => (button_w("Ripeti"), 34),
             Ctl::Test => (button_w("Prova"), 34),
             Ctl::Forget(_) => (button_w("Chiedi di nuovo"), 34),
@@ -730,7 +742,7 @@ impl Prefs {
     fn parts(&self, p: &Placed) -> Vec<Rect> {
         let r = p.ctl_r;
         match &p.row.ctl {
-            Ctl::Name => {
+            Ctl::Name | Ctl::Device => {
                 let (f, b) = field_and_button(r, "Salva");
                 vec![f, b]
             }
@@ -838,6 +850,11 @@ impl Prefs {
             Ctl::Name => {
                 let (f, b) = field_and_button(r, "Salva");
                 ui::text_field(c, f, &self.name, "Nome", self.editing);
+                ui::button(c, b, "Salva", true, hot(1));
+            }
+            Ctl::Device => {
+                let (f, b) = field_and_button(r, "Salva");
+                ui::text_field(c, f, &self.device, crate::host::DEFAULT, self.editing_device);
                 ui::button(c, b, "Salva", true, hot(1));
             }
             Ctl::Password => {
@@ -976,6 +993,17 @@ impl Prefs {
         self.note = (L_PASSWORD, if removing { "Password tolta" } else { "Password impostata" });
     }
 
+    fn save_device(&mut self) {
+        if let Some(problem) = crate::host::problem(&self.device) {
+            self.note = (L_DEVICE, problem);
+            return;
+        }
+        let device = self.device.clone();
+        settings::update(|s| s.device_name = device);
+        self.editing_device = false;
+        self.note = (L_DEVICE, "Nome salvato");
+    }
+
     fn save_name(&mut self) {
         let name = String::from(self.name.trim());
         settings::update(|s| s.name = name);
@@ -991,6 +1019,13 @@ impl Prefs {
                     self.editing = true;
                 } else {
                     self.save_name();
+                }
+            }
+            Ctl::Device => {
+                if k == 0 {
+                    self.editing_device = true;
+                } else {
+                    self.save_device();
                 }
             }
             Ctl::Password => {
@@ -1165,6 +1200,7 @@ impl App for Prefs {
         self.flash = None;
         // A click anywhere else leaves the fields.
         self.editing = false;
+        self.editing_device = false;
         self.editing_password = false;
         self.searching = false;
         match target {
@@ -1210,7 +1246,7 @@ impl App for Prefs {
             let lights = match t {
                 Target::Side(_) | Target::Result(_) => true,
                 Target::Ctl(i, k) => match page.rows[i].row.ctl {
-                    Ctl::Name | Ctl::Password => k == 1,
+                    Ctl::Name | Ctl::Device | Ctl::Password => k == 1,
                     Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Modes => true,
                     _ => false,
                 },
@@ -1253,6 +1289,25 @@ impl App for Prefs {
                 _ => {
                     ui::edit_text(&mut self.password, &ev, 64);
                 }
+            }
+            return Action::Redraw;
+        }
+        if self.editing_device {
+            match ev.key {
+                Key::Enter => self.save_device(),
+                Key::Escape => {
+                    self.device = crate::host::name();
+                    self.editing_device = false;
+                }
+                Key::Backspace => {
+                    self.device.pop();
+                }
+                Key::Char(ch) if !ev.ctrl && self.device.len() < crate::host::MAX => {
+                    if let Some(ch) = crate::host::name_char(ch) {
+                        self.device.push(ch);
+                    }
+                }
+                _ => {}
             }
             return Action::Redraw;
         }

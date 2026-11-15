@@ -44,6 +44,9 @@ pub struct Settings {
     pub dock: Option<alloc::vec::Vec<String>>,
     /// The most frames a second ("Fluidità"; 0: automatic).
     pub fluidity: u32,
+    /// The computer's name, as the user wrote it (empty: the default);
+    /// [`crate::host`] makes the host name from it.
+    pub device_name: String,
 }
 
 impl Default for Settings {
@@ -65,6 +68,7 @@ impl Default for Settings {
             dock_magnify: true,
             dock: None,
             fluidity: 0,
+            device_name: String::new(),
         }
     }
 }
@@ -98,6 +102,7 @@ fn apply(s: &Settings) {
     DOCK_COMPACT.store(s.dock_compact, Ordering::Relaxed);
     DOCK_MAGNIFY.store(s.dock_magnify, Ordering::Relaxed);
     super::pace::set_choice(s.fluidity);
+    crate::host::set(&s.device_name);
     CHANGES.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -126,6 +131,7 @@ fn load() -> Settings {
             "dock-magnify" => s.dock_magnify = v != "off",
             "dock" => s.dock = Some(v.split(';').filter(|e| !e.is_empty()).map(String::from).collect()),
             "fluidity" => s.fluidity = v.parse().unwrap_or(0),
+            "device-name" => s.device_name = String::from(v),
             _ => {}
         }
     }
@@ -190,6 +196,9 @@ pub fn update(f: impl FnOnce(&mut Settings)) {
     if s.fluidity != 0 {
         text.push_str(&format!("fluidity={}\n", s.fluidity));
     }
+    if !s.device_name.is_empty() {
+        text.push_str(&format!("device-name={}\n", s.device_name));
+    }
     if let Ok(p) = fs::abs(FILE) {
         if let Err(e) = fs::write_file(&p, text.as_bytes()) {
             crate::warn!("gui", "cannot save the settings: {e}");
@@ -222,17 +231,22 @@ fn stretch(salt: &str, password: &str) -> String {
     hex(&d)
 }
 
+/// What the settings keep of `password`: "salt:hash" in hex (empty for
+/// none).
+pub fn password_hash(password: &str) -> String {
+    if password.is_empty() {
+        return String::new();
+    }
+    let mut salt = [0u8; 16];
+    crate::rand::fill(&mut salt);
+    let salt = hex(&salt);
+    let hash = stretch(&salt, password);
+    format!("{salt}:{hash}")
+}
+
 /// Sets the password that unlocks the computer (empty removes it).
 pub fn set_password(password: &str) {
-    let stored = if password.is_empty() {
-        String::new()
-    } else {
-        let mut salt = [0u8; 16];
-        crate::rand::fill(&mut salt);
-        let salt = hex(&salt);
-        let hash = stretch(&salt, password);
-        format!("{salt}:{hash}")
-    };
+    let stored = password_hash(password);
     update(|s| s.password = stored);
 }
 

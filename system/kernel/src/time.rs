@@ -143,6 +143,41 @@ fn write_cmos(reg: u8, v: u8) {
     outb(0x71, v);
 }
 
+/// Sets the CMOS clock, and the system's time with it, to `secs` since the
+/// justOS epoch (local time, as the clock keeps it): the first-start setup
+/// corrects a clock that is wrong.
+pub fn set_clock(secs: u64) {
+    let t = from_epoch(secs);
+    let status_b = cmos(0x0B);
+    let bcd = status_b & 4 == 0;
+    let enc = |x: u64| if bcd { (((x / 10) << 4) | (x % 10)) as u8 } else { x as u8 };
+    let dec = |x: u8| if bcd { (x & 0x0F) + (x >> 4) * 10 } else { x };
+    let hour = if status_b & 2 != 0 {
+        enc(t.hour)
+    } else {
+        // 12-hour mode: 12 AM is 12, PM sets the top bit.
+        let h12 = if t.hour % 12 == 0 { 12 } else { t.hour % 12 };
+        enc(h12) | if t.hour >= 12 { 0x80 } else { 0 }
+    };
+    // The century register, only where it holds one.
+    let century = (19..=21).contains(&dec(cmos(0x32)));
+    // Updates stop while the registers are written (the SET bit).
+    write_cmos(0x0B, status_b | 0x80);
+    write_cmos(0x00, enc(t.sec));
+    write_cmos(0x02, enc(t.min));
+    write_cmos(0x04, hour);
+    // Day of the week: 1 is Sunday.
+    write_cmos(0x06, enc((t.weekday + 1) % 7 + 1));
+    write_cmos(0x07, enc(t.day));
+    write_cmos(0x08, enc(t.month));
+    write_cmos(0x09, enc(t.year % 100));
+    if century {
+        write_cmos(0x32, enc(t.year / 100));
+    }
+    write_cmos(0x0B, status_b & !0x80);
+    BOOT_TIME.store(secs.saturating_sub(uptime_ms() / 1000), Ordering::Relaxed);
+}
+
 /// The CMOS clock, in seconds since the justOS epoch.
 fn read_rtc() -> u64 {
     // Read twice until stable: the clock may tick between register reads.

@@ -416,7 +416,10 @@ fn virtual_file(text: &str) -> Option<Kind> {
             let dns = crate::net::dns_server().map(|ip| alloc::format!("{ip}")).unwrap_or_else(|| String::from("10.0.2.3"));
             data(alloc::format!("nameserver {dns}\n"))
         }
-        "/etc/hosts" => data(String::from("127.0.0.1 localhost\n::1 localhost\n")),
+        "/etc/hosts" => data(alloc::format!("127.0.0.1 localhost\n::1 localhost\n127.0.1.1 {}\n", super::ns::names().0)),
+        // The computer's name (as uname gives it in this UTS namespace).
+        "/etc/hostname" | "/proc/sys/kernel/hostname" => data(alloc::format!("{}\n", super::ns::names().0)),
+        "/proc/sys/kernel/domainname" => data(alloc::format!("{}\n", super::ns::names().1)),
         "/etc/passwd" => data(String::from("root:x:0:0:root:/home:/bin/sh\n")),
         "/etc/group" => data(String::from("root:x:0:\n")),
         "/etc/localtime" => None,

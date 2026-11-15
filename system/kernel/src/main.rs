@@ -19,6 +19,7 @@ mod dev;
 mod driver;
 mod fs;
 mod gui;
+mod host;
 mod ipc;
 mod linux;
 mod mem;
@@ -146,6 +147,7 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
     gui::boot_progress(75);
     driver::process_inbox();
     driver::start_monitor();
+    host::load();
     net::start();
     ipc::start_services();
     appupdate::start();
