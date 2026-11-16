@@ -1,209 +1,122 @@
 <div align="center">
 
-<img src="docs/brand/banner.png" alt="justOS" width="100%">
+<img src="docs/brand/banner.png" alt="Logo di justOS" width="100%">
 
 ### Un sistema operativo per PC x86-64, scritto da zero in Rust.
 
-Boot loader, kernel, file system, driver e interfaccia grafica: tutto
-progettato apposta. E sopra ci girano anche Firefox, i programmi Linux,
-quelli Windows e le app Android.
+Boot loader per BIOS e UEFI, kernel, file system, driver e interfaccia
+grafica: tutto progettato apposta. E sopra ci girano Firefox, i programmi
+Linux e quelli Windows.
 
-[![Versione](https://img.shields.io/github/v/release/matthias-peterlini/justOS?label=versione&color=ff5a1f)](https://github.com/matthias-peterlini/justOS/releases/latest)
-[![Build](https://github.com/matthias-peterlini/justOS/actions/workflows/build.yml/badge.svg)](https://github.com/matthias-peterlini/justOS/actions/workflows/build.yml)
+[![Build](https://github.com/justapps-it/justOS/actions/workflows/build.yml/badge.svg)](https://github.com/justapps-it/justOS/actions/workflows/build.yml)
 [![Licenza](https://img.shields.io/badge/licenza-GPL--3.0--or--later-171615)](LICENSE)
 [![Rust](https://img.shields.io/badge/scritto%20in-Rust-171615?logo=rust)](https://www.rust-lang.org)
 
-**[Scarica il CD live](https://github.com/matthias-peterlini/justOS/releases/latest/download/justos.iso)** ·
-**[Immagine per chiavetta USB](https://github.com/matthias-peterlini/justOS/releases/latest/download/justos-img.zip)** ·
-[Novità](https://github.com/matthias-peterlini/justOS/releases/latest) ·
-[Documentazione](docs/) ·
-[Roadmap](docs/roadmap.md) ·
-[justos.dev](https://justos.dev)
+[Provalo](#provalo) ·
+[Funzioni](#funzioni) ·
+[Stato del progetto](#stato-del-progetto) ·
+[Documentazione](#documentazione) ·
+[Roadmap](docs/roadmap.md)
 
 <br>
 
-<img src="docs/screenshots/scrivania.jpg" alt="La scrivania di justOS">
-
-<sub>La scrivania: l'ora che fluttua sullo sfondo, il dock con il menu J▮ a sinistra e lo stato a destra.</sub>
-
-<br><br>
-
-[Perché](#perché-justos) ·
-[Com'è](#comè) ·
-[Le app degli altri sistemi](#le-app-degli-altri-sistemi) ·
-[Provarlo](#provarlo-in-un-minuto) ·
-[Cosa c'è](#cosa-cè) ·
-[Compilare](#compilare)
+<img src="docs/screenshots/scrivania.png" alt="La scrivania di justOS: l'ora sullo sfondo e il dock in basso" width="800">
 
 </div>
 
 <br>
 
-## Perché justOS
+## Cos'è
 
-<table>
-<tr>
-<td width="33%" valign="top">
+justOS è un sistema operativo per PC x86-64 scritto in Rust, senza codice di
+Linux, Unix o Windows: i loader, il kernel, il file system (JustFS), i driver,
+le app di base e l'interfaccia sono nuovi. Nel sistema non ci sono crate di
+terze parti, solo il compilatore Rust con `core` e `alloc`.
 
-**Scritto da zero**
+Sopra a questa base c'è uno strato di compatibilità con Linux, con un
+compositor Wayland dentro il kernel: ci girano Firefox ESR, che è già
+installato, GTK 3 e gli altri programmi Linux; con Wine ci girano anche molti
+programmi Windows. L'interfaccia è un dock, finestre a pixel morbidi, tema
+scuro o chiaro e una configurazione guidata al primo avvio.
 
-Nel sistema non c'è codice di Linux, Unix, DOS o Windows e nessuna crate di
-terze parti: solo il compilatore Rust, `core` e `alloc`.
+È un progetto in sviluppo: [più sotto](#stato-del-progetto) c'è scritto con
+onestà cosa funziona e cosa no.
 
-</td>
-<td width="33%" valign="top">
+## Funzioni
 
-**Si avvia ovunque**
-
-La stessa immagine parte da BIOS e da UEFI, da una chiavetta USB, da un
-disco o come CD live.
-
-</td>
-<td width="33%" valign="top">
-
-**Pulito e veloce**
-
-Niente barra in alto: un dock e finestre a pixel morbidi, tema scuro o chiaro, animazioni
-morbide e l'interfaccia a 2× sugli schermi ad alta densità.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**Si aggiorna da solo**
-
-Come un telefono: la versione nuova va nell'altro slot di sistema e parte in
-prova. Se qualcosa va storto, si torna da soli a quella di prima.
-
-</td>
-<td valign="top">
-
-**App al sicuro**
-
-Ogni app vive nella sua sandbox e chiede il permesso per cartelle, rete,
-fotocamera e microfono, come su un telefono.
-
-</td>
-<td valign="top">
-
-**Esegue anche gli altri**
-
-Programmi Linux, Windows a 64 e a 32 bit, Java e app Android girano
-accanto alle app di justOS, senza modifiche.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-**Driver da soli**
-
-I driver sono pacchetti a parte: il kernel riconosce l'hardware e carica
-quello giusto, all'avvio e a sistema avviato.
-
-</td>
-<td valign="top">
-
-**Pronto per i portatili**
-
-Batteria, coperchio, temperature e sospensione in RAM, letti dal firmware
-con un interprete ACPI scritto da zero.
-
-</td>
-<td valign="top">
-
-**Il web con Firefox**
-
-Firefox ESR è di serie: lo stesso di Debian, con le sue finestre sulla
-scrivania di justOS.
-
-</td>
-</tr>
-</table>
+| | |
+|---|---|
+| **Avvio** | JustBoot: loader scritti da zero per BIOS (MBR e secondo stadio in assembly) e per UEFI (applicazione EFI in Rust). La stessa immagine parte da chiavetta USB, disco o CD live. |
+| **Desktop** | Dock con menu di sistema e stato, Applicazioni, centro di controllo, centro notifiche, ricerca globale (Ctrl+Spazio), desktop virtuali, snap delle finestre, tema scuro e chiaro, HiDPI a 2×. |
+| **App** | File, Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi. |
+| **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland. **Firefox ESR è il browser di serie.** I programmi con un file `.desktop` compaiono in Applicazioni. |
+| **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS. |
+| **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione in RAM. |
+| **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
+| **Primo avvio** | Configurazione guidata in 10 passi: aspetto, tastiera, rete, account, nome del dispositivo, privacy e sfondo. |
+| **Sicurezza** | Le app di justOS hanno un'identità e una sandbox, e chiedono il permesso per cartelle, rete, fotocamera e microfono. Password con sale e blocco automatico dello schermo. |
 
 ## Com'è
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/centro-controllo.jpg" alt="Centro di controllo"><br><b>Centro di controllo</b>: account, rete, suono, volume e luminosità, spegni.</td>
-<td width="50%"><img src="docs/screenshots/finestre.jpg" alt="Musica, Note e File"><br><b>Finestre</b>: Musica, Note e File insieme.</td>
+<td width="33%"><img src="docs/screenshots/primo-avvio-aspetto.png" alt="Primo avvio: scelta del tema scuro o chiaro" width="100%"><br><sub>Primo avvio: il tema, scuro o chiaro.</sub></td>
+<td width="33%"><img src="docs/screenshots/primo-avvio-rete.png" alt="Primo avvio: la rete cablata è connessa" width="100%"><br><sub>Primo avvio: la rete.</sub></td>
+<td width="33%"><img src="docs/screenshots/primo-avvio-sfondo.png" alt="Primo avvio: scelta dello sfondo" width="100%"><br><sub>Primo avvio: lo sfondo.</sub></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/negozio.jpg" alt="Negozio"><br><b>Negozio</b>: giochi e app, installati con un clic.</td>
-<td><img src="docs/screenshots/applicazioni.jpg" alt="Applicazioni"><br><b>Applicazioni</b>: tutte le app, con ricerca (Ctrl+Spazio).</td>
+<td><img src="docs/screenshots/negozio.png" alt="Il Negozio con le app in evidenza" width="100%"><br><sub>Il Negozio.</sub></td>
+<td><img src="docs/screenshots/note.png" alt="L'app Note con una notifica" width="100%"><br><sub>Note, con una notifica.</sub></td>
+<td><img src="docs/screenshots/firefox.png" alt="Firefox ESR in una finestra di justOS" width="100%"><br><sub>Firefox ESR.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/lanciatore.png" alt="Applicazioni: tutte le app con la ricerca" width="100%"><br><sub>Applicazioni (Ctrl+Spazio).</sub></td>
+<td><img src="docs/screenshots/impostazioni-chiaro.png" alt="Impostazioni con il tema chiaro" width="100%"><br><sub>Impostazioni, tema chiaro.</sub></td>
+<td></td>
 </tr>
 </table>
 
-<details>
-<summary><b>Altre schermate</b></summary>
-<br>
-<table>
-<tr>
-<td width="50%"><img src="docs/screenshots/avvio.jpg" alt="Avvio"><br><b>Avvio</b>: solo il logo e una barra di caricamento.</td>
-<td width="50%"><img src="docs/screenshots/benvenuto.jpg" alt="Primo avvio"><br><b>Primo avvio</b>: la configurazione guidata parte con INIZIA.</td>
-</tr>
-<tr>
-<td><img src="docs/screenshots/notifiche.jpg" alt="Centro notifiche"><br><b>Centro notifiche</b>: il calendario e le notifiche ricevute.</td>
-<td><img src="docs/screenshots/negozio-app.jpg" alt="Una app nel Negozio"><br><b>La pagina di un'app</b>: descrizione, versione, dimensioni.</td>
-</tr>
-<tr>
-<td><img src="docs/screenshots/giochi.jpg" alt="2048 e Campo minato"><br><b>Giochi</b>: 2048 e Campo minato, programmi del Negozio.</td>
-<td><img src="docs/screenshots/foto.jpg" alt="Foto"><br><b>Foto</b>: la libreria delle immagini.</td>
-</tr>
-<tr>
-<td><img src="docs/screenshots/calendario.jpg" alt="Calendario e Promemoria"><br><b>Calendario e Promemoria</b>: eventi, feste, cose da fare.</td>
-<td><img src="docs/screenshots/impostazioni.jpg" alt="Impostazioni"><br><b>Impostazioni</b>: nome, tastiera, sfondo, schermo, password.</td>
-</tr>
-</table>
-</details>
+## Provalo
 
-## Le app degli altri sistemi
+Non ci sono ancora versioni pubblicate da scaricare: justOS si compila dai
+sorgenti.
 
-justOS ha le sue app, ma non chiede di rinunciare a quelle che usi già. Ecco
-a che punto è ogni famiglia, senza giri di parole:
+**Requisiti.** Rust stable (`rustup` installa da solo versione e target, grazie
+a `rust-toolchain.toml`), `nasm`, `qemu-system-x86_64` e, per l'avvio UEFI,
+OVMF. `make test-compat` usa anche `musl-gcc` e il gcc di MinGW-w64
+(`gcc-mingw-w64-x86-64`), se ci sono. La prima volta `make` scarica dagli
+archivi di Debian circa 380 MiB di pacchetti (restano in `build/debcache`).
 
-| Da dove | Stato | Cosa gira |
-|---|---|---|
-| **Linux** | 🟢 funziona | programmi statici e dinamici con la glibc di Debian, GTK 3, Wayland (il compositor è nel kernel). **Firefox ESR è di serie** e le app Linux con un file `.desktop` compaiono in Applicazioni. Non c'è un server X11 né l'accelerazione 3D |
-| **Windows** | 🟡 in parte | **Wine 10 è di serie nell'immagine di disco**: un doppio clic su un `.exe` lo avvia, a 64 e a 32 bit, con finestre di justOS (la prima volta Wine prepara il disco `C:` in un paio di minuti). Il CD live non ha Wine e usa `winrun`, scritto da zero, per i `.exe` a 64 bit piccoli. Mancano DirectX accelerato e l'audio; i programmi grandi e recenti spesso non partono ancora |
-| **Android** | 🟡 agli inizi | bytecode Dalvik (`.dex`, `.apk`, `.jar`) con un interprete scritto da zero e una piccola parte del framework. Il driver binder c'è; le app vere del Play Store non girano ancora |
-| **macOS** | 🔴 no | i pacchetti `.pkg` si aprono e si estraggono, ma i programmi Mach-O non si eseguono: servirebbero le librerie di Apple |
+```sh
+git clone https://github.com/justapps-it/justOS.git
+cd justOS
 
-Nell'app File un doppio clic avvia i programmi Linux con finestra e, con
-l'immagine di disco, i `.exe` con Wine (senza Terminale); le pagine web si aprono in Firefox. I
-`.deb` di Debian e Ubuntu (xz, zstd) non si installano ancora e le app per macOS
-dicono che non funzionano. La tabella dei casi, con cosa è verificato, è in
-[docs/compat.md](docs/compat.md#aprire-con-un-doppio-clic).
+make            # l'immagine di disco build/justos.img (BIOS e UEFI), con Firefox e Wine
+make run        # la avvia in QEMU
+```
 
-I programmi con licenza chiedono l'accesso con il tuo account, come sul loro
-sistema: justOS non aggira nessun controllo. I dettagli sono in
-[docs/compat.md](docs/compat.md).
+Altre forme:
 
-## Provarlo in un minuto
+```sh
+make WINE=0          # l'immagine senza Wine, da 1 GiB invece che da 5 GiB
+make iso             # il CD live build/justos.iso (senza Firefox e Wine: gira in memoria)
+make run-uefi        # in QEMU con UEFI (anche run-q35, run-nvme, run-iso)
+make run MEMORY=2G   # più memoria (di norma 1 GiB; Wine è provato con 2 GiB)
+make SIZE=8G         # un'immagine di un'altra dimensione
+```
 
-1. **Scarica** [`justos.iso`](https://github.com/matthias-peterlini/justOS/releases/latest/download/justos.iso), il CD live (circa 70 MiB).
-2. **Avvialo** in una macchina virtuale:
-   - **QEMU**:
-     ```sh
-     qemu-system-x86_64 -m 1G -cdrom justos.iso -device ich9-intel-hda -device hda-output
-     ```
-   - **VirtualBox**: una macchina "Other/Unknown (64-bit)" con 1 GiB di memoria, senza disco, con `justos.iso` nel lettore CD.
-   - **VMware** e **Hyper-V** (prima generazione) vanno bene allo stesso modo.
-3. **Scegli** nome, tastiera e sfondo: dopo c'è la scrivania.
+L'immagine è da 5 GiB perché porta Firefox e Wine, e Wine al primo avvio
+prepara il suo disco `C:`; è un file sparso, quindi sul disco occupa circa
+1,8 GiB.
 
-Il CD live gira in memoria, quindi le modifiche si perdono allo spegnimento,
-e non ha né Firefox né Wine (le librerie di Debian non stanno in memoria).
-Per tenere le modifiche, per i programmi Windows o per avviare un PC vero, c'è
-[`justos-img.zip`](https://github.com/matthias-peterlini/justOS/releases/latest/download/justos-img.zip)
-(circa 570 MiB): scompattata è un'immagine di disco da 5 GiB, con Firefox e
-Wine, che si scrive su una chiavetta USB da almeno 8 GB con balenaEtcher
-(che legge anche lo zip), Rufus in modalità DD o `dd`. Parte con BIOS e con
-UEFI; Secure Boot va disattivato. In una macchina virtuale si usa come disco:
-per esempio `qemu-system-x86_64 -m 2G -drive file=justos.img,format=raw`
-(Wine è provato con 2 GiB di memoria).
+**Su una chiavetta USB.** Scrivi `build/justos.img` su una chiavetta da
+almeno 8 GB con balenaEtcher, Rufus in modalità DD o `dd`. Parte con BIOS e con
+UEFI; Secure Boot va disattivato. Su un PC vero tieni presente che molti
+driver sono scritti dalla documentazione dei chip e provati in QEMU, non
+ancora su molto hardware reale, e che sulle schede video vere lo schermo resta
+nella risoluzione scelta dal firmware.
 
-### Scorciatoie da sapere
+**Scorciatoie.**
 
 | Tasti | Cosa fanno |
 |---|---|
@@ -214,136 +127,83 @@ per esempio `qemu-system-x86_64 -m 2G -drive file=justos.img,format=raw`
 | **Ctrl+Alt+frecce** | aggancia la finestra a metà schermo, la ingrandisce, la ripristina |
 | **logo+L** · **Stamp** | blocca lo schermo · salva una schermata in Immagini |
 
-## Cosa c'è
+Il Terminale (nel dock) ha una shell: `help` elenca i comandi; `dev` e `drv`
+mostrano dispositivi e driver, `install <nome>` installa un programma dal
+Negozio, `sysupdate` gestisce i due slot di sistema.
 
-| | |
-|---|---|
-| **Di serie** | Firefox, File, Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Anteprima, Terminale, Monitor attività, Impostazioni, Info sistema; Wine per i programmi Windows (Firefox e Wine nell'immagine di disco, non nel CD live) |
-| **Nel Negozio** | 2048, Campo minato, Serpente, Sudoku, Tris e Disegno; BusyBox e Lua per il Terminale; programmi Linux e Windows da GitHub. Le app si aggiornano da sole, da un indice firmato |
-| **Doppio clic** | un programma parte; un pacchetto `.deb`, `.tar.gz`, `.zip` o `.pkg` si installa da solo |
+## Stato del progetto
 
-<details>
-<summary><b>Com'è fatto dentro</b></summary>
-<br>
-
-| Parte | Cosa fa | Dettagli |
+| Area | Stato | Note |
 |---|---|---|
-| **JustBoot** | loader per BIOS (MBR + secondo stadio in assembly) e per UEFI (un'applicazione EFI in Rust); entrambi scelgono uno dei due slot di sistema (aggiornamenti A/B con ritorno indietro) e passano al kernel la stessa `BootInfo` | [architettura](docs/architettura.md#aggiornamenti-del-sistema-ab) |
-| **Kernel** | 64 bit, memoria virtuale a 4 livelli, scheduler preemptivo su tutti i processori, thread, code di attesa, MSI/MSI-X, porte di messaggi tra programmi, ACPI con un interprete AML scritto da zero (spegnimento, sospensione in RAM, batteria, temperature) | [architettura](docs/architettura.md#kernel) |
-| **Driver** | pacchetti `.jdp` indipendenti dal kernel: il kernel confronta i manifesti con l'hardware e carica il driver giusto da solo, all'avvio e a sistema avviato | [driver](docs/driver.md) |
-| **JustFS** | il file system nativo: blocchi da 4 KiB, extent, controllo di coerenza; volumi con nome (`sys:`, `ram:`, `chiavetta:`) | [architettura](docs/architettura.md#file-system-justfs) |
-| **Interfaccia** | splash, configurazione guidata, scrivania con dock, Applicazioni, centro di controllo, notifiche, ricerca globale, desktop virtuali, snap delle finestre, trascinamento dei file, HiDPI, animazioni | [gui](docs/gui.md) |
-| **Sicurezza** | identità delle app, sandbox, permessi, password con sale e blocco automatico | [roadmap](docs/roadmap.md#le-basi-comuni) |
-| **Programmi** | in modalità utente, ognuno nel suo spazio di indirizzi, a riga di comando o con finestre proprie (`justui`) | [programmi](docs/programmi.md) |
-| **Compatibilità** | eseguibili ELF Linux (statici o dinamici con la glibc; GTK 3 e Firefox su Wayland), `.exe` Windows (console e finestre; con Wine 10 anche a 32 bit), programmi Java e app Android (`.dex`, `.apk`) | [compatibilità](docs/compat.md) |
-| **Rete** | ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS; TLS 1.3 con certificati verificati e HTTP(S) | |
-| **Shell** | una quarantina di comandi, cronologia, completamento con Tab | qui sotto, nei primi passi |
+| Avvio BIOS e UEFI, kernel multiprocessore, JustFS | Funziona | Provato in QEMU; fino a 16 processori. |
+| Desktop e app di base | Funziona | Dock, ricerca, desktop virtuali, tema scuro e chiaro, HiDPI. |
+| Firefox ESR e programmi Linux | Funziona | Glibc di Debian, GTK 3, Wayland. Niente X11, niente accelerazione 3D (quindi niente WebGL), niente DRM Widevine. |
+| Programmi Windows | In parte | Wine 10 a 64 e 32 bit, console e finestre. Mancano DirectX accelerato e l'audio; i programmi grandi e recenti spesso non partono ancora. Non si garantisce che un dato programma funzioni. |
+| Aggiornamenti A/B del sistema | Funziona | Provati in QEMU (`make test-update`), con ritorno indietro. |
+| Hardware reale | In parte | Molti driver sono provati solo in QEMU; dettagli in [docs/driver.md](docs/driver.md#hardware-supportato). |
+| App Android | In corso | Interprete Dalvik per programmi semplici e driver binder; le app vere non girano. |
+| Wi-Fi, Bluetooth | Non ancora | Nessun driver. |
+| Accelerazione grafica, più monitor | Non ancora | Il desktop è disegnato dal processore. |
+| Fusi orari, indirizzo IP statico | Non ancora | |
+| App macOS | No | I `.pkg` si aprono, ma i programmi Mach-O non si eseguono. |
+| Installazione sul disco interno del PC | In arrivo | Oggi si avvia da chiavetta o da disco scritto a mano. |
 
-</details>
+I programmi Linux e Windows girano come programmi di sistema, fuori dalla
+sandbox delle app di justOS. Cosa manca e in che ordine arriverà è nella
+[roadmap](docs/roadmap.md).
 
-<details>
-<summary><b>Hardware supportato</b></summary>
-<br>
+## Documentazione
 
-| Tipo | Supportato |
+| Documento | Contenuto |
 |---|---|
-| Dischi | IDE, SATA (AHCI), NVMe, virtio |
-| USB | controller USB 3, 2 e 1.1, hub, tastiere, mouse, tavolette, chiavette e dischi (anche come disco di sistema), collegamento a caldo |
-| Schede SD | lettori standard (SD Host Controller): schede SD, SDHC, SDXC, MMC |
-| Rete | Intel PRO/1000 (e1000, 82574, I217–I219), Intel 82576, I210/I211, I350 e I225/I226 (2,5 Gbit), Realtek RTL8139, RTL8169/8111/8168 e RTL8125 (2,5 Gbit), AMD PCnet, virtio |
-| Audio | Intel HD Audio (quasi ogni PC dal 2005), AC'97 |
-| Video | qualunque scheda (Intel, AMD, NVIDIA, Hyper-V) con il framebuffer del firmware; cambio di risoluzione con le schede di QEMU (VGA, Cirrus, QXL), VirtualBox (VBoxVGA, VMSVGA), VMware e virtio-gpu |
-| Input | tastiera e mouse PS/2 e USB, pulsante di accensione (ACPI) |
-| Portatili | batteria, alimentatore, coperchio, temperature ed embedded controller, dall'AML del firmware; sospensione in RAM (S3) dal menu, dal tasto o chiudendo il coperchio |
+| [docs/architettura.md](docs/architettura.md) | avvio, memoria, kernel, JustFS, aggiornamenti A/B |
+| [docs/gui.md](docs/gui.md) | desktop, finestre, temi, scorciatoie |
+| [docs/compat.md](docs/compat.md) | programmi Linux, Windows (Wine), Java e Android, doppio clic |
+| [docs/driver.md](docs/driver.md) | formato dei driver e hardware supportato |
+| [docs/programmi.md](docs/programmi.md) | scrivere programmi per justOS |
+| [docs/roadmap.md](docs/roadmap.md) | cosa c'è, cosa manca, in che ordine |
 
-Mancano ancora il Wi-Fi, il Bluetooth, la sospensione s2idle dei portatili
-più recenti, l'accelerazione e il cambio di risoluzione sulle schede video
-vere. Lo stato di ogni driver, provato o no, è in
-[docs/driver.md](docs/driver.md#hardware-supportato); cosa manca e in che
-ordine arriverà è nella [roadmap](docs/roadmap.md).
+## Architettura in breve
 
-Prima di provarlo su un PC vero:
-
-- il kernel e i programmi usano tutti i processori (fino a 16);
-- sulle schede video vere lo schermo resta nella risoluzione scelta dal
-  firmware (il loader UEFI ne sceglie una grande);
-- molti driver sono scritti dalla documentazione dei chip e provati in
-  QEMU, non ancora su hardware vero.
-
-</details>
+```
+  App di justOS      Firefox · programmi Linux      Programmi Windows (Wine)
+        │                      │                            │
+        │            strato Linux: ELF, glibc, socket,      │
+        │            compositor Wayland, binder             │
+        └──────────────────────┴────────────────────────────┘
+                               │
+  Kernel (Rust, 64 bit): memoria, scheduler, ACPI/AML, rete, desktop
+        │                                   │
+  Driver (.jdp, caricati da soli)      JustFS (volumi sys:, ram:, …)
+        │
+  JustBoot: BIOS (MBR + assembly) · UEFI (applicazione EFI)
+```
 
 <details>
-<summary><b>Primi passi nel Terminale</b></summary>
+<summary><b>Compilare e provare in dettaglio</b></summary>
 <br>
 
-```
-help                   tutti i comandi
-dev / drv              dispositivi trovati e driver installati
-vol / disks            volumi montati, dischi e partizioni
-ls sys:/home           i tuoi file
-display 1920x1080      cambia risoluzione (con un driver video)
-display scale 2        interfaccia al 200% (auto: secondo lo schermo)
-play sys:/system/sounds/avvio.wav
-volume 60
-net / ping 10.0.2.2    rete
-suspend 10             sospende il computer per 10 secondi
-install sudoku         un programma dal Negozio
-updates check          aggiornamenti delle app
-sysupdate              i due slot di sistema (check, install, rollback)
-shutdown / restart
-```
-
-</details>
-
-## Compilare
-
-Servono Rust stable (`rustup` installa da solo la versione e i target
-giusti, grazie a `rust-toolchain.toml`), `nasm`, `qemu-system-x86_64` e, per
-provare l'avvio UEFI, OVMF. `make test-compat` usa anche `musl-gcc` e il gcc
-di MinGW-w64 (`gcc-mingw-w64-x86-64`), se ci sono, per i suoi programmi di
-prova.
+I test girano tutti in QEMU, senza schermo:
 
 ```sh
-make            # l'immagine di disco build/justos.img (BIOS e UEFI), con Wine
-make WINE=0     # la stessa senza Wine, da 1 GiB
-make iso        # il CD live build/justos.iso (senza Firefox e Wine)
-make run        # avvia justOS in QEMU (anche run-uefi, run-q35, run-nvme, run-iso)
-```
-
-L'immagine è da 5 GiB perché porta Firefox e Wine, e Wine al primo avvio
-prepara il suo disco `C:` (vedi [docs/compat.md](docs/compat.md#wine));
-senza Wine (`WINE=0`) è da 1 GiB. Il file è sparso: sul disco occupa quanto
-i dati, circa 1,8 GiB. `make SIZE=8G` ne cambia la dimensione, `make run
-MEMORY=2G` dà più memoria alla macchina virtuale (di norma 1 GiB, quanto
-serve a Firefox; Wine è provato con 2 GiB). La prima volta `make` scarica
-dagli archivi di Debian circa 380 MiB di pacchetti, che restano in
-`build/debcache`.
-
-<details>
-<summary><b>I test</b>: girano tutti in QEMU, senza schermo</summary>
-<br>
-
-```sh
+make check          # test delle librerie e dello strumento host
 make test           # una sessione di comandi scritta (anche test-uefi, test-iso)
 make test-drivers   # un avvio per ogni disco, scheda di rete, controller USB e lettore SD
-make test-audio     # suoni su ogni scheda audio emulata, registrati e controllati
-make test-display   # cambio di risoluzione e risveglio su ogni scheda video emulata
+make test-audio     # suoni su ogni scheda audio emulata
+make test-display   # cambio di risoluzione su ogni scheda video emulata
 make test-acpi      # pulsante di accensione, batteria, sospensione e risveglio
 make test-update    # aggiornamento nell'altro slot, prova, conferma, ritorno indietro
-SLEEP=1 make test-drivers  # gli stessi, dopo una sospensione (anche test-audio)
-make test-compat    # programmi Linux, Windows (anche con finestre), Java e Android
+make test-compat    # programmi Linux, Windows, Java e Android
 make test-linux     # lo strato Linux: processi, segnali, socket, binder
 make test-wayland   # il compositor Wayland
 make test-gtk       # un programma GTK 3 con il tema di justOS
-make shots          # usa l'interfaccia (ogni app, il Negozio) e salva le schermate
-make check          # test delle librerie e dello strumento host
+make shots          # usa l'interfaccia e salva le schermate
 ```
 
-I test avviano un'immagine senza Wine, più piccola e più veloce da copiare:
-`build/justos-test.img` (la costruiscono da soli, non serve prima `make`),
-oppure quella data con `IMAGE=` (`make test IMAGE=build/prova.img`). Gli
-script in `scripts/` prendono qualunque immagine, anche quella con Wine:
-`scripts/test-compat.sh build/justos.img`.
+I test avviano un'immagine senza Wine (`build/justos-test.img`, la costruiscono
+da soli) oppure quella data con `IMAGE=`; gli script in `scripts/` accettano
+qualunque immagine. Su GitHub il workflow [Build](.github/workflows/build.yml)
+esegue `make check` e costruisce immagine e CD a ogni push.
 
 </details>
 
@@ -354,38 +214,38 @@ script in `scripts/` prendono qualunque immagine, anche quella con Wine:
 | Percorso | Contenuto |
 |---|---|
 | `boot/bios/`, `boot/uefi/` | JustBoot per BIOS e per UEFI |
-| `system/kernel/` | il kernel, con l'interfaccia grafica (`src/gui`) |
+| `system/kernel/` | il kernel, con l'interfaccia grafica (`src/gui`) e lo strato Linux |
 | `system/drivers/` | i driver, uno per cartella, ognuno con il suo `driver.manifest` |
-| `system/apps/` | i programmi, tra cui `winrun` (programmi Windows) e `dalvik` (Java e Android) |
-| `system/store/` | le app del Negozio (giochi e Disegno), con icona e scheda |
-| `system/libs/` | le librerie: ABI dei driver (`justdk`, `justdrv`), programmi (`justrt`), finestre (`justui`), disegno (`justgfx`), immagini PNG, JPEG e GIF (`justimage`), matematica (`justmath`), JustFS, USB, virtio, TLS (`justtls`), Dalvik (`justdex`) |
+| `system/apps/` | i programmi, tra cui `winrun` (programmi Windows semplici) e `dalvik` (Java e Android) |
+| `system/store/` | le app del Negozio, con icona e scheda |
+| `system/libs/` | le librerie: ABI dei driver, programmi, finestre, disegno, immagini, JustFS, USB, virtio, TLS, Dalvik |
 | `tools/justtool/` | strumento host: crea pacchetti, immagini e CD, legge e scrive volumi JustFS |
-| `tools/assets/` | i generatori di caratteri, icone, sfondi, suoni, musica e del banner di questa pagina |
-| `tools/qemu/` | modelli per QEMU di dispositivi che QEMU non ha (Realtek RTL8169, RTL8168, RTL8125) |
+| `tools/assets/` | i generatori di caratteri, icone, sfondi, suoni e del banner |
 | `rootfs/` | i file del volume di sistema |
 | `scripts/` | i test automatici in QEMU |
 | `docs/` | la documentazione |
 
 </details>
 
+## Contribuire
+
+Segnalazioni e proposte sono benvenute: apri una issue o una pull request su
+[justapps-it/justOS](https://github.com/justapps-it/justOS). Prima di
+inviare una modifica esegui `make check` e, se tocchi il kernel o i driver, i
+test che la riguardano (`make test`, `make test-drivers`, `make test-compat`).
+Leggi la [roadmap](docs/roadmap.md) per sapere cosa serve di più.
+
 ## Licenza
 
 Copyright (C) 2026 Matthias Peterlini <https://matthiaspeterlini.tech>
 
 justOS è software libero: puoi ridistribuirlo e/o modificarlo secondo i
-termini della GNU General Public License pubblicata dalla Free Software
-Foundation, nella versione 3 o (a tua scelta) in una qualsiasi versione
-successiva (GPL-3.0-or-later). È distribuito nella speranza che sia utile,
-ma SENZA ALCUNA GARANZIA, nemmeno quella implicita di COMMERCIABILITÀ o di
-IDONEITÀ A UN PARTICOLARE SCOPO. Il testo completo è in [LICENSE](LICENSE) e
-su <https://licence.justos.dev>.
+termini della GNU General Public License, nella versione 3 o (a tua scelta) in
+una qualsiasi versione successiva (GPL-3.0-or-later). È distribuito nella
+speranza che sia utile, ma SENZA ALCUNA GARANZIA. Il testo completo è in
+[LICENSE](LICENSE).
 
-I caratteri Google Sans Flex e DejaVu Sans Mono hanno le loro licenze
-libere (SIL OFL), in `system/kernel/assets/LICENSES.md`; le foto degli
-sfondi sono di Unsplash (licenza Unsplash), con gli autori in
+I caratteri Google Sans Flex e DejaVu Sans Mono hanno le loro licenze libere
+(SIL OFL), in `system/kernel/assets/LICENSES.md`; le foto degli sfondi sono di
+Unsplash (licenza Unsplash), con gli autori in
 `rootfs/system/gui/wallpapers/CREDITS.txt`.
-
-<div align="center">
-<br>
-<sub>Scritto da zero, in Rust · <a href="https://justos.dev">justos.dev</a></sub>
-</div>
