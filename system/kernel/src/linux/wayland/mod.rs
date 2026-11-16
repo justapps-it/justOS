@@ -220,6 +220,8 @@ struct Top {
     id: u32,
     win: Option<Arc<Mutex<Win>>>,
     title: String,
+    /// What the program calls itself (a Windows program: its file name).
+    app_id: String,
     min: (i32, i32),
     max: (i32, i32),
     /// Popups, bottom to top (their surfaces).
@@ -948,7 +950,7 @@ impl Client {
                     Role::Xdg(x) => x,
                     _ => Xdg { id: obj, ..Xdg::default() },
                 };
-                s.role = Role::Top(Top { xdg, id, win: None, title: String::new(), min: (0, 0), max: (0, 0), popups: Vec::new(), asked: (0, 0), nc: None });
+                s.role = Role::Top(Top { xdg, id, win: None, title: String::new(), app_id: String::new(), min: (0, 0), max: (0, 0), popups: Vec::new(), asked: (0, 0), nc: None });
             }
             2 => {
                 let (id, parent_xdg, positioner) = (a.uint(), a.uint(), a.uint());
@@ -1021,6 +1023,7 @@ impl Client {
                     w.lock().title = t.title.clone();
                 }
             }
+            3 => t.app_id = a.text(),
             7 => {
                 t.max = (a.int(), a.int());
                 self.update_resizable(surf);
@@ -1271,10 +1274,12 @@ impl Client {
     /// Shows a toplevel on the desktop, the first time it has content.
     fn map_window(&mut self, id: u32) {
         let (w, h) = self.window_size(id);
-        let title = match self.surfs.get(&id).map(|s| &s.role) {
-            Some(Role::Top(t)) => t.title.clone(),
+        let (title, app_id) = match self.surfs.get(&id).map(|s| &s.role) {
+            Some(Role::Top(t)) => (t.title.clone(), t.app_id.clone()),
             _ => return,
         };
+        // A Windows program installed from the launcher has its own icon.
+        let icon = if self.windows { crate::gui::window::icon_for_class(&app_id).unwrap_or_else(|| self.icon.clone()) } else { self.icon.clone() };
         let win = Win::new(title.clone(), w, h);
         if let Some(Surface { role: Role::Top(t), .. }) = self.surfs.get_mut(&id) {
             t.win = Some(win.clone());
@@ -1289,7 +1294,7 @@ impl Client {
         }
         self.compose(id, None);
         crate::info!("wayland", "window \"{title}\" {w}x{h} of process {}", self.pid);
-        window::open(win, self.inbox.clone(), id, self.icon.clone());
+        window::open(win, self.inbox.clone(), id, icon);
     }
 
     /// The content size of a toplevel: its window geometry, or its surface

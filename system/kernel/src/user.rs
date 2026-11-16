@@ -171,6 +171,9 @@ struct Start {
     kind: Kind,
     /// The program file (Linux programs see it as /proc/self/exe).
     exe: String,
+    /// Variables for this program alone ("NAME=value"; "NAME=" takes a
+    /// default away), see [`spawn_env`].
+    env: Vec<String>,
 }
 
 /// A path as one argument, quoted if it has spaces.
@@ -196,6 +199,13 @@ fn app_for(path: &Path, cwd: Path) -> (Option<crate::sandbox::App>, Path) {
 
 /// Starts a program. Returns its process id.
 pub fn spawn(path: &Path, args: &str, cwd: Path) -> Result<u32, Error> {
+    spawn_env(path, args, cwd, Vec::new())
+}
+
+/// Starts a program with variables of its own in its environment (a Linux
+/// program; "NAME=value" sets one, "NAME=" leaves a default out). The
+/// programs it starts get them too. Returns its process id.
+pub fn spawn_env(path: &Path, args: &str, cwd: Path, env: Vec<String>) -> Result<u32, Error> {
     let name = path.name();
     let (app, cwd) = app_for(path, cwd);
     let mut magic = [0u8; 4];
@@ -213,16 +223,16 @@ pub fn spawn(path: &Path, args: &str, cwd: Path) -> Result<u32, Error> {
         let runner = fs::abs(runner).map_err(fs_error)?;
         let image = fs::read_file(&runner).map_err(fs_error)?;
         let shown = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
-        return start(image, String::from(shown), &alloc::format!("{} {args}", quoted(path)), cwd, Kind::Native, path, app);
+        return start(image, String::from(shown), &alloc::format!("{} {args}", quoted(path)), cwd, Kind::Native, path, app, env);
     }
     let image = fs::read_file(path).map_err(fs_error)?;
     let kind = if name.to_ascii_lowercase().ends_with(".app") { Kind::Native } else { Kind::Linux };
     let shown = if kind == Kind::Native { &name[..name.len() - 4] } else { name };
-    start(image, String::from(shown), args, cwd, kind, path, app)
+    start(image, String::from(shown), args, cwd, kind, path, app, env)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn start(image: Vec<u8>, name: String, args: &str, cwd: Path, kind: Kind, exe: &Path, app: Option<crate::sandbox::App>) -> Result<u32, Error> {
+fn start(image: Vec<u8>, name: String, args: &str, cwd: Path, kind: Kind, exe: &Path, app: Option<crate::sandbox::App>, env: Vec<String>) -> Result<u32, Error> {
     if image.len() < 64 || &image[..4] != b"\x7fELF" {
         return Err(Error::BadProgram);
     }
@@ -250,7 +260,7 @@ fn start(image: Vec<u8>, name: String, args: &str, cwd: Path, kind: Kind, exe: &
             job: pid,
         },
     );
-    let start = Box::into_raw(Box::new(Start { image, args: String::from(args), kind, exe: alloc::format!("{exe}") }));
+    let start = Box::into_raw(Box::new(Start { image, args: String::from(args), kind, exe: alloc::format!("{exe}"), env }));
     match task::spawn_suspended(&name, user_start, start as *mut c_void, cr3, pid) {
         Some(tid) => {
             if let Some(p) = PROCS.lock().get_mut(&pid) {
@@ -519,7 +529,7 @@ unsafe extern "C" fn user_start(arg: *mut c_void) {
     let start = unsafe { Box::from_raw(arg as *mut Start) };
     let (entry, rsp, rdi, rsi) = match start.kind {
         Kind::Native => native_image(&start),
-        Kind::Linux => match crate::linux::load(&start.image, &current_name(), &start.args, &start.exe) {
+        Kind::Linux => match crate::linux::load(&start.image, &current_name(), &start.args, &start.exe, &start.env) {
             Ok((entry, rsp)) => (entry, rsp, 0, 0),
             Err(e) => {
                 crate::println!("\x1b[91m{}: {}\x1b[0m", current_name(), e.as_str());
@@ -813,7 +823,7 @@ pub fn run_foreground(path: &Path, args: &str, cwd: Path) -> Result<i64, Error> 
 /// how the shell runs `ls` out of a single `busybox` image.
 pub fn run_applet_foreground(path: &Path, argv0: &str, args: &str, cwd: Path) -> Result<i64, Error> {
     let image = fs::read_file(path).map_err(fs_error)?;
-    let pid = start(image, String::from(argv0), args, cwd, Kind::Linux, path, current_app())?;
+    let pid = start(image, String::from(argv0), args, cwd, Kind::Linux, path, current_app(), Vec::new())?;
     *FOREGROUND.lock() = Some(pid);
     let code = wait(pid);
     *FOREGROUND.lock() = None;

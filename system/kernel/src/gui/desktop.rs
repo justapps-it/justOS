@@ -1774,6 +1774,11 @@ impl Desktop {
 
     /// Starts a program that opens a window of its own.
     fn spawn(&mut self, l: &mut Looper, path: &str) {
+        // A Windows program installed in Wine: its shortcut opens like a file
+        // (Wine's preparation may come first).
+        if apps::winapps::is_link(path) {
+            return self.open_file(l, path);
+        }
         if !self.hop_again(l, path) {
             self.start(l, apps::start_for(path));
         }
@@ -1806,7 +1811,7 @@ impl Desktop {
             return;
         }
         let cwd = fs::abs(&s.cwd).unwrap_or_else(|_| Path::root("sys"));
-        match fs::abs(&s.program).map_err(|_| justdk::syscall::Error::NotFound).and_then(|p| crate::user::spawn(&p, &s.args, cwd)) {
+        match fs::abs(&s.program).map_err(|_| justdk::syscall::Error::NotFound).and_then(|p| crate::user::spawn_env(&p, &s.args, cwd, s.env.clone())) {
             Ok(pid) => {
                 // Its icon waits in the dock, widened into a capsule that
                 // says it is starting, until its first window comes; then
@@ -4094,6 +4099,10 @@ impl Desktop {
                 // Questions of the sandbox, and file pickers for programs.
                 for app in super::apps::prompt::take_new() {
                     self.open(l, app, false);
+                }
+                // Windows programs that waited for Wine's preparation.
+                for path in super::apps::winprep::take_ready() {
+                    self.open_file(l, &path);
                 }
                 self.check_starting(l);
                 // The apps kept in the dock, changed in the settings.

@@ -434,7 +434,7 @@ pub fn user_bytes<'a>(ptr: u64, len: u64) -> Result<&'a mut [u8], i64> {
 /// argument and environment pointers and the auxiliary vector, as the System
 /// V ABI lays them out. A dynamically linked program starts in its dynamic
 /// loader, which finds the program through the auxiliary vector.
-pub fn load(elf: &[u8], name: &str, args: &str, exe: &str) -> Result<(u64, u64), JustError> {
+pub fn load(elf: &[u8], name: &str, args: &str, exe: &str, env: &[String]) -> Result<(u64, u64), JustError> {
     let argv = core::iter::once(name.to_string()).chain(justrt_split(args)).collect::<Vec<_>>();
     // The Linux view of the program's path ("/apps/rg").
     let exe_linux = match exe.split_once(':') {
@@ -442,7 +442,7 @@ pub fn load(elf: &[u8], name: &str, args: &str, exe: &str) -> Result<(u64, u64),
         None => exe.to_string(),
     };
     tty::reset();
-    load_program(elf, name, &argv, &default_env(), &exe_linux)
+    load_program(elf, name, &argv, &default_env(env), &exe_linux)
 }
 
 /// Maps a program (and the dynamic loader it names) into the current,
@@ -489,7 +489,10 @@ pub fn masked(mode: u32) -> u16 {
 
 /// The environment of a Linux program justOS starts (one started by
 /// another Linux program gets what that one passes to execve).
-fn default_env() -> Vec<String> {
+///
+/// `own` are variables for this program alone, over the defaults and over
+/// `export`: "NAME=value" sets one, "NAME=" leaves it out.
+fn default_env(own: &[String]) -> Vec<String> {
     let (cols, rows) = crate::console::size();
     let extra = extra_env();
     let set = |v: &String| extra.iter().any(|e| e.split_once('=').map(|(n, _)| n) == v.split_once('=').map(|(n, _)| n));
@@ -503,6 +506,8 @@ fn default_env() -> Vec<String> {
         .chain(["GSETTINGS_BACKEND=memory", "NO_AT_BRIDGE=1"].iter().map(|s| s.to_string()))
         .filter(|v| !set(v))
         .chain(extra.iter().cloned())
+        .filter(|v| !own.iter().any(|o| o.split_once('=').map(|(n, _)| n) == v.split_once('=').map(|(n, _)| n)))
+        .chain(own.iter().filter(|o| !o.ends_with('=')).cloned())
         .collect()
 }
 

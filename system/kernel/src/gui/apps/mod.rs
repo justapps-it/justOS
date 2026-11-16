@@ -19,6 +19,8 @@ pub mod store;
 mod terminal;
 mod textedit;
 mod viewer;
+pub mod winapps;
+pub mod winprep;
 
 use super::wm::App;
 use crate::fs;
@@ -165,6 +167,7 @@ pub fn catalog() -> Vec<Entry> {
         v.push(Entry { icon: package_icon(&p.id), name: p.name, launch });
     }
     v.extend(linux_apps());
+    v.extend(winapps::entries());
     v
 }
 
@@ -289,8 +292,11 @@ pub struct Start {
     pub note: Option<String>,
     /// What to say if it ends without a window (None: the usual words).
     pub fail: Option<String>,
-    /// It may take minutes (Wine preparing its C: drive the first time).
+    /// It may take minutes (a big program).
     pub slow: bool,
+    /// Variables for this program alone ("NAME=value"; "NAME=" leaves a
+    /// default out).
+    pub env: Vec<String>,
 }
 
 /// Where programs started from the desktop run, unless they say otherwise.
@@ -376,6 +382,12 @@ fn tell(path: &str, text: &str, icon: &str) -> Opener {
 /// How a program the desktop starts by its path (a launcher entry, a
 /// double click on a program with a window) is started.
 pub fn start_for(path: &str) -> Start {
+    // A Windows program installed in Wine, by its shortcut.
+    if winapps::is_link(path) && winprep::needed().is_none() {
+        if let Some(Opener::Start(s)) = wine(path, "lnk") {
+            return s;
+        }
+    }
     let file = path.rsplit('/').next().unwrap_or(path);
     let linux = linux_app_for(path);
     // A big Linux program (Firefox) takes a while to show its window: say
@@ -402,6 +414,7 @@ pub fn start_for(path: &str) -> Start {
         note,
         fail: None,
         slow: false,
+        env: Vec::new(),
     }
 }
 
@@ -445,24 +458,16 @@ fn has_wine() -> bool {
     is_file(WINE)
 }
 
-/// Whether Wine's C: drive is made (else the first start makes it, which
-/// takes a minute or more).
-fn wine_ready() -> bool {
-    let env = crate::linux::extra_env();
-    let var = |name: &str| env.iter().find_map(|v| v.strip_prefix(name).and_then(|v| v.strip_prefix('=')).map(String::from));
-    let prefix = var("WINEPREFIX").unwrap_or_else(|| alloc::format!("{}/.wine", var("HOME").unwrap_or_else(|| String::from("/home"))));
-    is_file(&alloc::format!("sys:{prefix}/system.reg"))
-}
-
-/// Wine's debugging messages off (`WINEDEBUG=-all`: they slow a program
-/// down and fill the terminal), unless the user chose them with `export
-/// WINEDEBUG=...` in the terminal. The variable then stays among the ones
-/// `export` lists, for every Linux program started from now on (only Wine
-/// reads it).
-fn quiet_wine() {
+/// What Wine's programs get in their environment: no debugging messages
+/// (they slow a program down and fill the terminal; unless the user chose
+/// them with `export WINEDEBUG=...` in the terminal), and no offer to
+/// download Mono or Gecko (nothing in the system can use them).
+fn wine_env() -> Vec<String> {
+    let mut env = alloc::vec![String::from("WINEDLLOVERRIDES=mscoree,mshtml=")];
     if !crate::linux::extra_env().iter().any(|v| v.starts_with("WINEDEBUG=")) {
-        crate::linux::set_env("WINEDEBUG", "-all");
+        env.push(String::from("WINEDEBUG=-all"));
     }
+    env
 }
 
 /// A Windows file (`ext`: exe, msi, bat, cmd, lnk) run by Wine: the
@@ -491,16 +496,23 @@ fn wine(path: &str, ext: &str) -> Option<Opener> {
         "lnk" => (alloc::format!("start /wait /unix {}", quote(&unix)), false),
         _ => (quote(&unix), !windowed_exe(path)),
     };
-    quiet_wine();
-    let first = !wine_ready();
-    let note = if first {
-        Some("Prima apertura: preparo Windows…")
-    } else if terminal {
-        None
-    } else {
-        Some("Si avvia con Wine…")
-    };
-    Some(Opener::Start(Start {
+    // Wine's C: drive is made (or brought up to date) first, in a window of
+    // our own; the program waits for it and starts when it is ready.
+    if winprep::needed().is_some() {
+        let name = String::from(file);
+        return Some(if winprep::request(path) {
+            Opener::App(Box::new(winprep::WinPrep::new()))
+        } else {
+            Opener::Tell(name, String::from("Si apre appena Windows è pronto."), String::from("file-exe"))
+        });
+    }
+    if ext == "msi" {
+        return Some(install_msi(path, &dos, p.parent().to_string(), file));
+    }
+    let note = if terminal { None } else { Some("Si avvia con Wine…") };
+    // Programs an installer makes show up in the launcher; look out for them.
+    winapps::watch();
+    let mut start = Start {
         program: String::from(WINE),
         args,
         cwd: alloc::format!("{}", p.parent()),
@@ -511,8 +523,57 @@ fn wine(path: &str, ext: &str) -> Option<Opener> {
         icon: Some(super::window::icon_for("wine64")),
         note: note.map(String::from),
         fail: Some(String::from("Wine non è riuscito ad avviarlo.")),
-        slow: first,
-    }))
+        slow: false,
+        env: wine_env(),
+    };
+    // A shortcut of an installed program goes by its name and its icon (the
+    // windows get it too, see `winapps::icon_for_class`).
+    if let Some(prog) = winapps::find(path) {
+        start.name = prog.name;
+        start.icon = Some(prog.icon);
+    }
+    Some(Opener::Start(start))
+}
+
+/// Set while an `.msi` installs (one at a time: the installer service is
+/// one).
+static MSI_BUSY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// An `.msi` package: `msiexec /i` runs in a thread of its own that says
+/// when it is done, and what appeared in the launcher.
+fn install_msi(path: &str, dos: &str, cwd: String, file: &str) -> Opener {
+    use core::sync::atomic::Ordering;
+    let icon = String::from("file-exe");
+    if MSI_BUSY.swap(true, Ordering::SeqCst) {
+        return Opener::Tell(String::from(file), String::from("Un'altra installazione è ancora in corso."), icon);
+    }
+    let (args, file_name) = (alloc::format!("msiexec /i {}", quote(dos)), String::from(file));
+    let _ = path;
+    let spawned = crate::task::spawn("msi", move || {
+        winapps::announce();
+        let code = fs::abs(WINE).ok().zip(fs::abs(&cwd).ok()).and_then(|(w, c)| crate::user::spawn_env(&w, &args, c, wine_env()).ok()).and_then(crate::user::wait);
+        // Wine's menu builder runs after the installer: give it a moment.
+        for _ in 0..20 {
+            crate::task::sleep_ms(2000);
+            if !crate::user::processes().iter().any(|p| p.name.starts_with("wine")) {
+                break;
+            }
+        }
+        let fresh = winapps::announce();
+        match code {
+            // 3010: done, a restart is wanted (nothing to restart here).
+            Some(0) | Some(3010) if fresh.is_empty() => crate::gui::notify(&file_name, "Installazione finita.", "file-exe"),
+            Some(0) | Some(3010) => {}
+            Some(c) => crate::gui::notify(&file_name, &alloc::format!("L'installazione non è riuscita (codice {c})."), "file-exe"),
+            None => crate::gui::notify(&file_name, "L'installazione non è partita.", "file-exe"),
+        }
+        MSI_BUSY.store(false, Ordering::SeqCst);
+    });
+    if spawned.is_none() {
+        MSI_BUSY.store(false, Ordering::SeqCst);
+        return Opener::Tell(String::from(file), String::from("Memoria insufficiente."), icon);
+    }
+    Opener::Tell(String::from(file), alloc::format!("Installo «{file}»…"), icon)
 }
 
 /// A Windows file: through Wine when the system has it; else a program
@@ -636,6 +697,7 @@ fn appimage(path: &str, kind: u8) -> Opener {
         note: Some(String::from("Si estrae, ci vuole un po'…")),
         fail: Some(String::from("Questa AppImage non si è avviata: su justOS servono i programmi per Wayland, senza FUSE.")),
         slow: true,
+        env: Vec::new(),
     })
 }
 
@@ -759,6 +821,7 @@ fn desktop_file(path: &str) -> Opener {
         note: (!terminal).then(|| String::from(STARTING)),
         fail: None,
         slow: false,
+        env: Vec::new(),
     })
 }
 
@@ -893,6 +956,9 @@ pub fn for_file(path: &str) -> Opener {
         // the system has it; else a program with a window of its own needs
         // no terminal.
         "exe" | "msi" | "bat" | "cmd" | "lnk" => windows(path, ext),
+        // Windows patches and the packages of the Microsoft Store.
+        "msp" => tell(path, "Le patch .msp non funzionano su justOS: serve il programma da aggiornare, con il suo installatore.", "file-exe"),
+        "msix" | "appx" | "msixbundle" | "appxbundle" => tell(path, "I pacchetti .msix non funzionano su justOS.", "file-exe"),
         // Android apps get a window; Java programs (DEX) a terminal.
         "apk" => Opener::Spawn(String::from(path)),
         "dex" | "jar" => Opener::Run(quoted),

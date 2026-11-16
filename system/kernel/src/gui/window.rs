@@ -238,6 +238,12 @@ pub fn icon_for(program: &str) -> String {
         .map_or_else(|| String::from("window"), |e| e.icon)
 }
 
+/// The icon for the window of a Windows program installed from the
+/// launcher, by the class its window names (its file name).
+pub fn icon_for_class(class: &str) -> Option<String> {
+    super::apps::winapps::icon_for_class(class)
+}
+
 pub fn intern(name: &str) -> &'static str {
     let mut k = KINDS.lock();
     if let Some(s) = k.iter().find(|s| **s == name) {

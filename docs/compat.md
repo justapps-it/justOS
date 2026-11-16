@@ -216,9 +216,37 @@ cd sys:/usr/lib/wine
 
 La prima volta Wine prepara il disco `C:` (il suo prefisso, in
 `/home/.wine`): ci vuole circa un minuto, di più nell'emulatore (in QEMU
-la finestra del Blocco note arriva in meno di due minuti), e una notifica lo
-dice. Con un doppio clic su un `.exe` nell'app File (vedi "Aprire con un
-doppio clic") Wine parte da solo.
+circa 110 secondi). Con un doppio clic su un `.exe` o `.msi` nell'app File
+(vedi "Aprire con un doppio clic") si apre una finestra di justOS,
+«Programmi Windows», con una barra di avanzamento, la percentuale e i minuti
+rimasti; la finestra grigia di Wine non compare più. Finita la
+preparazione il programma parte da solo. Dettagli
+(`system/kernel/src/gui/apps/winprep.rs`):
+
+- `wineboot --init` gira con `WAYLAND_DISPLAY` e `XDG_RUNTIME_DIR` vuoti
+  (servono tutti e due, altrimenti libwayland ripiega su `wayland-0` e la
+  finestra di Wine compare), `WINEDLLOVERRIDES=mscoree,mshtml=` (niente
+  richieste di Mono/Gecko) e `WINEDEBUG=-all`.
+- L'avanzamento sono i byte scritti sul volume di sistema rispetto al totale
+  atteso; il totale si impara alla prima volta
+  (`sys:/home/.cache/justos-winprep`), prima è stimato dalle DLL.
+- Gli altri programmi aperti durante l'attesa vanno in coda e partono alla
+  fine. «Annulla» (o chiudere la finestra) ferma Wine e toglie il prefisso a
+  metà; un nuovo doppio clic ricomincia. Se la preparazione fallisce la
+  finestra offre «Riprova» e «Chiudi». Anche dopo un aggiornamento di Wine
+  (cambia `wine.inf`) la finestra compare, con un testo più breve.
+- Il dock non mostra la percentuale (servirebbe una variante in `bar.rs`).
+
+**Installare con un `.msi`.** Il doppio clic su un `.msi` (sul disco di
+sistema: Wine vede solo `sys:`) lancia `msiexec /i` in un thread e mostra
+«Installo ...». Finita l'installazione, i collegamenti che Wine scrive in
+`~/.local/share/applications/wine` e sul desktop di Windows entrano nel
+launcher con il loro nome e la loro icona
+(`system/kernel/src/gui/apps/winapps.rs`), e una notifica dice
+««Nome» è installato». Un programma installato si avvia dal launcher e può
+essere fissato nel dock. I `.msp` e i `.msix`/`.appx` non sono supportati e
+lo dicono. Non testati: MSI a 32 bit, percorsi non ASCII, installer con
+finestre proprie.
 
 **Quanto spazio.** I file di Wine sono la gran parte dell'immagine: dei
 1,7 GiB occupati da un'immagine appena costruita, 1,3 GiB sono le DLL di
@@ -375,8 +403,10 @@ parte, la sua icona salta nel dock finché non arriva la finestra.
 
 | File | Cosa succede | Stato |
 |---|---|---|
-| `.exe` con finestre, con Wine (nell'immagine di disco di serie; non nel CD live né con `make WINE=0`) | parte con Wine, senza Terminale; la prima volta Wine prepara l'ambiente Windows (circa 2 minuti nell'emulatore, lo dice una notifica) | verificato: il Blocco note a 64 bit e un secondo programma |
-| `.exe` a 32 bit, `.msi`, `.bat`, con Wine | stessa strada (`msiexec /i` per gli `.msi`; i `.bat` e i programmi da console girano nel Terminale) | non verificato con un doppio clic (a 32 bit funziona dalla shell) |
+| `.exe` con finestre, con Wine (nell'immagine di disco di serie; non nel CD live né con `make WINE=0`) | parte con Wine, senza Terminale; la prima volta si apre la finestra «Programmi Windows» con la barra (circa 110 secondi nell'emulatore), poi il programma parte; altri programmi aperti nell'attesa vanno in coda | verificato con screenshot: barra 0-100%, nessuna finestra di Wine, poi il Blocco note a 64 bit; non verificati coda, annulla, tema chiaro, errore |
+| `.msi`, con Wine | `msiexec /i` in un thread; il programma installato compare nel launcher con una notifica, e parte con un clic | verificato con un MSI di prova costruito con wixl (`Prova MSI`): installato, notifica, avvio con la finestra del Blocco note; nessun installer di terze parti provato |
+| `.msp`, `.msix`, `.appx` | una notifica dice che non sono supportati | non verificato |
+| `.exe` a 32 bit, `.bat`, con Wine | stessa strada (i `.bat` e i programmi da console girano nel Terminale) | non verificato con un doppio clic (a 32 bit funziona dalla shell) |
 | `.exe` senza Wine (CD live, `make WINE=0`) | il piccolo `winrun`, come prima; `.msi` e `.bat` dicono che serve Wine | non verificato con un doppio clic |
 | programma Linux con finestra (collegato a GTK, Qt, SDL, Wayland o X11) | parte senza Terminale | verificato |
 | programma Linux da riga di comando | si apre nel Terminale | come prima |
