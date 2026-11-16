@@ -137,7 +137,7 @@ e Wine. I dettagli sono in
 | **F11** | schermo intero |
 | **Alt+Tab** · **Ctrl+Q** | passa alla finestra successiva · chiude quella in primo piano |
 | **Ctrl+Alt+frecce** | aggancia la finestra a metà schermo, la ingrandisce, la ripristina |
-| **logo+L** · **Stamp** | blocca lo schermo · salva una schermata in Immagini |
+| **Ctrl+Maiusc+L** · **Stamp** | blocca lo schermo · salva una schermata in Immagini |
 
 Il Terminale (nel dock) ha una shell: `help` elenca i comandi; `dev` e `drv`
 mostrano dispositivi e driver, `install <nome>` installa un programma dal

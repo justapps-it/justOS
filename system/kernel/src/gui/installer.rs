@@ -213,7 +213,7 @@ fn tips() -> Vec<&'static str> {
     v.push("Nel Negozio ci sono giochi come 2048 e Sudoku, e strumenti come BusyBox e Lua.");
     v.push("Il tema chiaro o scuro si sceglie nelle Impostazioni.");
     v.push("F3 mostra tutte le finestre e i desktop virtuali.");
-    v.push("Logo+L blocca lo schermo; Stamp salva una schermata in Immagini.");
+    v.push("Ctrl+Maiusc+L blocca lo schermo; Stamp salva una schermata in Immagini.");
     v
 }
 

@@ -27,7 +27,7 @@ pub enum Key {
     F(u8),
     /// Print Screen: a picture of the screen.
     PrintScreen,
-    /// The logo key with L: lock the computer.
+    /// Ctrl and Shift with L: lock the computer.
     Lock,
     /// The logo key with Tab: all the windows and desktops at a glance.
     Overview,
@@ -170,7 +170,11 @@ fn key(usage: u32, value: i32) {
             0x4F if s.logo && ctrl => Some(Key::NextDesktop),
             0x3A..=0x45 => Some(Key::F(usage - 0x3A + 1)),
             0x46 => Some(Key::PrintScreen),
-            0x0F if s.logo => Some(Key::Lock), // L, wherever the layout puts it
+            // L, wherever the layout puts it. Not the logo key with L: in a
+            // virtual machine on Windows the host takes that for itself and
+            // the guest never sees the logo key come up again, so that every
+            // L after it locked the screen.
+            0x0F if ctrl && shift => Some(Key::Lock),
             0x49 => Some(Key::Insert),
             0x4A => Some(Key::Home),
             0x4B => Some(Key::PageUp),

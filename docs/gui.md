@@ -172,7 +172,7 @@ Presa a modello da macOS:
 - **Schermata**: il tasto **Stamp** (o *Schermata* nel menu J▮) salva
   lo schermo in `sys:/home/Immagini` come `Schermata <data> alle <ora>.qoi`,
   che Foto apre subito.
-- **Blocco**: **logo+L** o *Blocca schermo* nel menu J▮ coprono tutto
+- **Blocco**: **Ctrl+Maiusc+L** o *Blocca schermo* nel menu J▮ coprono tutto
   con l'ora sullo sfondo sfocato. Con una password (*Impostazioni →
   Blocco e password*) justOS si avvia bloccato, si blocca da solo dopo 2, 5 o 15
   minuti senza usarlo e prima di ogni sospensione, così al risveglio chiede
