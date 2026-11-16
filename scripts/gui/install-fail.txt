@@ -1,0 +1,26 @@
+# The installer when the disk goes away halfway, for scripts/gui-shots.py
+# (scripts/shots-install.sh): justOS on a USB stick (USB=1), the only disk it
+# fits on another USB disk with the QEMU id "t" (chosen by itself), pulled
+# out while the apps are copied; then "Riprova": no disk left.
+until 150 installer shown
+wait 2
+click 640 597
+wait 1.5
+click 640 597
+until 5 confirmation shown
+wait 1
+click 209 529
+wait 0.3
+click 640 597
+move 960 40
+until 10 step 3 of 5
+wait 3
+qmp device_del {"id": "t"}
+until 60 scollegato
+wait 3
+shot 11-non-riuscita
+click 640 597
+wait 1.5
+move 960 40
+wait 0.5
+shot 12-nessun-disco

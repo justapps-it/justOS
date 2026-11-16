@@ -71,6 +71,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("perms", "[allow|deny|ask <app> <perm>]", "what apps may use outside their sandbox"),
     ("updates", "[check|install <app>|all|auto on|off]", "updates of the installed apps"),
     ("sysupdate", "[check|install [file]|rollback|cancel]", "justOS updates: the two system slots"),
+    ("install-system", "[list | <disk> [--yes-erase <code>]]", "install justOS on a disk of this computer, erasing it"),
     ("dnd", "test", "check moving and copying files the way a drop does"),
     ("run", "<program> [args]", "start a program (also just: <program>)"),
     ("irq", "", "interrupt lines and message interrupts"),
@@ -971,6 +972,7 @@ impl Shell {
                     _ => println!("usage: sysupdate | sysupdate check | sysupdate install [[--unsigned] <file>] | sysupdate rollback | sysupdate cancel"),
                 }
             }
+            "install-system" => self.install_system(&rest),
             "dnd" => match rest.first().copied() {
                 Some("test") => {
                     crate::gui::dnd::self_test();
@@ -1592,6 +1594,68 @@ impl Shell {
             let vol = fs::volumes().into_iter().find(|v| v.source == d.name).map(|v| alloc::format!(" → {}:", v.name)).unwrap_or_default();
             let what = if d.parent.is_some() { d.kind.clone() } else { d.model.clone() };
             println!("  {indent}{BOLD}{:<10}{RESET} {:>10}  {}{ACCENT}{}{RESET}", d.name, Size(d.size_bytes()).to_string(), what, vol);
+        }
+    }
+
+    /// `install-system`: lists the disks justOS can go on; with a disk,
+    /// says what installing there erases; with `--yes-erase` and the disk's
+    /// code, installs.
+    fn install_system(&self, rest: &[&str]) {
+        use crate::install;
+        let show = |t: &install::Target| {
+            let tag = if t.usable() { OK } else { DIM };
+            println!("  {tag}{:<8}{RESET} code {BOLD}{}{RESET} · {} · {} · {} · {}", t.disk.name, t.code, install::size_text(t.size), t.bus, t.name, t.contents);
+            println!("           {DIM}{}{RESET}", t.parts_text());
+            if let Some(p) = &t.problem {
+                println!("           {WARN}cannot be used: {p}{RESET}");
+            }
+            if let Some(n) = &t.note {
+                println!("           {DIM}{n}{RESET}");
+            }
+        };
+        match rest {
+            [] | ["list"] => {
+                let all = install::targets();
+                if all.is_empty() {
+                    println!("no disk to install justOS on (the disk this system runs from is never one)");
+                    return;
+                }
+                println!("disks justOS can be installed on ({} needed):", install::size_text(install::needed()));
+                for t in &all {
+                    show(t);
+                }
+                println!("{DIM}install-system <disk> shows what installing there erases{RESET}");
+            }
+            [name] => match install::targets().into_iter().find(|t| t.disk.name.eq_ignore_ascii_case(name)) {
+                Some(t) => {
+                    show(&t);
+                    if t.usable() {
+                        println!("{WARN}installing justOS on {} erases everything on it: {} ({}).{RESET}", t.disk.name, t.contents, t.parts_text());
+                        println!("to go ahead: install-system {} --yes-erase {}", t.disk.name, t.code);
+                    }
+                }
+                None => println!("{ERR}install-system: {name} is not a disk justOS can be installed on (see install-system list){RESET}"),
+            },
+            [name, "--yes-erase", code] => {
+                let mut last = (usize::MAX, u32::MAX);
+                let result = install::install(name, code, &mut |p| {
+                    let pct = p.permille / 10;
+                    if (p.phase, pct) != last {
+                        last = (p.phase, pct);
+                        println!("install: {pct}% {} ({} of {})", install::PHASES[p.phase], Size(p.done), Size(p.total));
+                    }
+                });
+                match result {
+                    Ok(v) => println!("{OK}justOS {v} is installed on {name}: remove the installation medium and restart{RESET}"),
+                    Err(f) => {
+                        println!("{ERR}install-system: {}{RESET}", f.message);
+                        if f.touched {
+                            println!("{WARN}{name} was partly written: what it held is gone and it does not start{RESET}");
+                        }
+                    }
+                }
+            }
+            _ => println!("usage: install-system [list] | install-system <disk> | install-system <disk> --yes-erase <code>"),
         }
     }
 

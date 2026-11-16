@@ -28,6 +28,8 @@
 //!   0x15 starts left for it while it is not known to work
 //!   0x16 slots known to work (bit 0 = A, bit 1 = B)
 //!   0x18 sequence number, one more on every change
+//!   0x1C the disk's id: its MBR signature (the UEFI loader passes it to
+//!        the kernel, which tells the disk it started from by it)
 //!   0x1FC checksum, as in the header
 //! ```
 //!
@@ -117,8 +119,8 @@ pub fn build(flat: &[u8], memsz: u64, entry: u64, pack: &[u8], version: &str, bu
 }
 
 /// A fresh BOOT.CTL: slot A starts, both slots known to work (a new disk
-/// has the same system in both).
-pub fn control(slot_a: u64, slot_b: u64, slot_sectors: u64) -> Vec<u8> {
+/// has the same system in both). `disk_id` is the disk's MBR signature.
+pub fn control(slot_a: u64, slot_b: u64, slot_sectors: u64, disk_id: u32) -> Vec<u8> {
     let mut c = vec![0u8; SECTOR];
     c[..8].copy_from_slice(CTL_MAGIC);
     put32(&mut c, 0x08, slot_a as u32);
@@ -128,6 +130,7 @@ pub fn control(slot_a: u64, slot_b: u64, slot_sectors: u64) -> Vec<u8> {
     c[0x15] = 0;
     c[0x16] = 0b11;
     put32(&mut c, 0x18, 1);
+    put32(&mut c, 0x1C, disk_id);
     seal(&mut c);
     c
 }
@@ -162,10 +165,11 @@ mod tests {
 
     #[test]
     fn control_sector() {
-        let c = control(4096, 53248, 49152);
+        let c = control(4096, 53248, 49152, 0x4152_4307);
         assert!(sealed(&c));
         assert_eq!(&c[..8], CTL_MAGIC);
         assert_eq!(get32(&c, 0x0C), 53248);
         assert_eq!(c[0x16], 3);
+        assert_eq!(get32(&c, 0x1C), 0x4152_4307);
     }
 }

@@ -397,7 +397,11 @@ fn cmd_image(args: &[String]) -> Result<()> {
     let at = |name: &str| offsets.iter().find(|(n, _)| n == name).map(|(_, o)| *o).unwrap();
     let (slot_a, slot_b) = (esp_lba + at("JUSTOS/SLOTA.BIN") / SECTOR, esp_lba + at("JUSTOS/SLOTB.BIN") / SECTOR);
     let ctl_at = at("JUSTOS/BOOT.CTL") as usize;
-    esp[ctl_at..ctl_at + SECTOR as usize].copy_from_slice(&slot::control(slot_a, slot_b, slot_size / SECTOR));
+    // The disk's signature (in the MBR, repeated in BOOT.CTL): the kernel
+    // tells the disk it started from by it, so it differs from disk to disk.
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let signature: u32 = 0x4152_0000 | ((std::process::id() ^ nanos ^ (nanos >> 16)) & 0xFFFF);
+    esp[ctl_at..ctl_at + SECTOR as usize].copy_from_slice(&slot::control(slot_a, slot_b, slot_size / SECTOR, signature));
 
     let mut f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(out).map_err(|e| format!("{out}: {e}"))?;
     f.set_len(size).map_err(|e| format!("{out}: {e}"))?;
@@ -418,7 +422,6 @@ fn cmd_image(args: &[String]) -> Result<()> {
         ..BootTable::default()
     }
     .write(&mut mbr);
-    let signature: u32 = 0x4152_4300 | (std::process::id() & 0xFF);
     mbr[0x1B8..0x1BC].copy_from_slice(&signature.to_le_bytes());
     let part_sectors = total_sectors - part_lba;
     let mut partition = |slot: usize, active: bool, kind: u8, lba: u64, sectors: u64| {
@@ -484,6 +487,15 @@ fn cmd_iso(args: &[String]) -> Result<()> {
     let mut fs =
         Fs::format(MemDisk::new((system_size as usize) / BLOCK_SIZE), "System", &CLOCK).map_err(|e| format!("system volume: {e}"))?;
     inputs.fill_system(&mut fs)?;
+    // What the installer (kernel/src/install) writes on a disk besides the
+    // files: a CD has no disk to take the loaders and a slot from.
+    let fserr = |e: justfs::Error| format!("system volume: system/install: {e}");
+    fs.create_dirs("system/install").map_err(fserr)?;
+    let slot_image = inputs.slot();
+    for (name, data) in [("stage1.bin", &inputs.stage1), ("stage2.bin", &inputs.stage2), ("BOOTX64.EFI", &efi), ("justos.slot", &slot_image)] {
+        fs.write_file(&format!("system/install/{name}"), data).map_err(fserr)?;
+    }
+    fs.sync().map_err(fserr)?;
     let system = fs.into_device().data;
 
     // The EFI image (FAT) holds the loader, the kernel, the boot pack and

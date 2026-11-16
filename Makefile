@@ -35,6 +35,10 @@
 #   make check      unit tests of the shared libraries and the host tool
 #   make test-update   install a system update into the other slot, restart
 #                   into it; a broken one goes back by itself (BIOS and UEFI)
+#   make test-install  install justOS from a disk, a USB stick and the live CD
+#                   on disk files (a made-up Windows on MBR and on GPT; SATA,
+#                   NVMe, virtio), BIOS and UEFI; then start each one alone
+#   make shots-install  screenshots of the installer (build/shots-install)
 #   make updates    the signed index of updates (build/updates): the store's
 #                   apps and this justOS as a system image, signed with the
 #                   private key in UPDATES_KEY; scripts/publish-updates.sh
@@ -127,7 +131,7 @@ ifeq ($(PROFILE),release)
 CARGO_PROFILE := --release
 endif
 
-.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-net test-linux test-wayland test-winprep test-gtk test-update shots assets check updates clean $(PACKAGES)
+.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-net test-linux test-wayland test-winprep test-gtk test-update shots assets check updates clean $(PACKAGES) shots-install test-install
 
 all: image
 
@@ -273,8 +277,14 @@ test-gtk: test-image
 test-update: test-image
 	OVMF_CODE=$(OVMF_CODE) OVMF_VARS=$(OVMF_VARS) scripts/test-update.sh $(TEST_IMAGE)
 
+test-install: test-image iso
+	OVMF_CODE=$(OVMF_CODE) OVMF_VARS=$(OVMF_VARS) scripts/test-install.sh $(TEST_IMAGE) $(ISO)
+
 shots: test-image
 	scripts/gui-shots.py $(TEST_IMAGE) scripts/gui/tour.txt $(BUILD)/shots
+
+shots-install: test-image iso
+	scripts/shots-install.sh $(TEST_IMAGE) $(ISO) $(BUILD)/shots-install
 
 assets:
 	tools/assets/gen_fonts.py system/kernel/assets/fonts.bin

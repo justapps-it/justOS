@@ -235,6 +235,56 @@ fn add_partition(disk: &Arc<Disk>, index: usize, start: u64, sectors: u64, kind:
     Some(p)
 }
 
+/// The MBR disk signature of a whole disk with 512-byte sectors and an MBR
+/// (justOS's loaders pass the one they started from).
+pub fn signature(disk: &Disk) -> Option<u32> {
+    if disk.parent.is_some() || disk.sector_size != 512 {
+        return None;
+    }
+    let mut mbr = [0u8; 512];
+    if disk.read(0, &mut mbr) != OK || mbr[510] != 0x55 || mbr[511] != 0xAA {
+        return None;
+    }
+    Some(u32::from_le_bytes(mbr[0x1B8..0x1BC].try_into().unwrap()))
+}
+
+/// A stretch of a whole disk as a disk of its own, not registered: for
+/// writing a partition before the partition table that names it exists
+/// (the installer).
+pub fn view(disk: &Arc<Disk>, start: u64, sectors: u64) -> Option<Arc<Disk>> {
+    if disk.parent.is_some() || sectors == 0 || start.checked_add(sectors)? > disk.sectors {
+        return None;
+    }
+    Some(Arc::new(Disk {
+        name: alloc::format!("{}@{start}", disk.name),
+        device: disk.device,
+        model: disk.model.clone(),
+        sector_size: disk.sector_size,
+        sectors,
+        readonly: disk.readonly,
+        removable: disk.removable,
+        parent: Some((disk.clone(), start)),
+        kind: String::new(),
+        desc: disk.desc,
+        io: Mutex::new(()),
+        gone: IrqLock::new(false),
+    }))
+}
+
+/// Reads the partition table of a whole disk again, after it was
+/// rewritten: its old partitions go, the new ones are registered (not
+/// mounted). Fails while a volume is mounted on one of the old ones.
+pub fn rescan(disk: &Arc<Disk>) -> Result<(), &'static str> {
+    let ours = |d: &Arc<Disk>| d.parent.as_ref().is_some_and(|(p, _)| Arc::ptr_eq(p, disk));
+    let old: Vec<Arc<Disk>> = DISKS.lock().iter().filter(|d| ours(d)).cloned().collect();
+    if old.iter().any(|p| crate::fs::is_mounted_on(&p.name)) {
+        return Err("a volume on this disk is in use");
+    }
+    DISKS.lock().retain(|d| !ours(d));
+    scan_partitions(disk);
+    Ok(())
+}
+
 fn mbr_type_name(t: u8) -> &'static str {
     match t {
         0xAC => "JustFS",
@@ -256,7 +306,10 @@ fn guid_kind(g: &[u8]) -> String {
         _ if g == GPT_JUSTFS => String::from("JustFS"),
         [0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11, ..] => String::from("EFI system"),
         [0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, ..] => String::from("Microsoft data"),
+        [0x16, 0xE3, 0xC9, 0xE3, 0x5C, 0x0B, 0xB8, 0x4D, ..] => String::from("Microsoft reserved"),
+        [0xA4, 0xBB, 0x94, 0xDE, 0xD1, 0x06, 0x40, 0x4D, ..] => String::from("Windows recovery"),
         [0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, ..] => String::from("Linux"),
+        [0x6D, 0xFD, 0x57, 0x06, 0xAB, 0xA4, 0xC4, 0x43, ..] => String::from("Linux swap"),
         _ => String::from("unknown"),
     }
 }

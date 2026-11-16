@@ -20,6 +20,7 @@ mod driver;
 mod fs;
 mod gui;
 mod host;
+mod install;
 mod ipc;
 mod linux;
 mod mem;
@@ -42,6 +43,16 @@ use boot::BootInfo;
 use core::arch::global_asm;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `BootInfo.disk_id`: the MBR signature of the disk the loader started
+/// from (0: not known).
+static BOOT_DISK: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// The MBR signature of the disk this system started from, 0 if not known
+/// (a CD, an older loader).
+pub fn boot_disk_id() -> u32 {
+    BOOT_DISK.load(core::sync::atomic::Ordering::Relaxed)
+}
 
 global_asm!(
     r#"
@@ -91,6 +102,7 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
         cpu::halt_forever();
     }
     sysupdate::init(boot.slot);
+    BOOT_DISK.store(boot.disk_id, core::sync::atomic::Ordering::Relaxed);
 
     cpu::enable_sse();
     cpu::detect_emulation();
@@ -139,6 +151,10 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
         // the background.
         info!("kernel", "waiting for USB disks");
         driver::wait_for_system(8000);
+    }
+    if fs::volume("sys").is_none() {
+        // The disk the loader named is not here: any system volume will do.
+        fs::adopt_system();
     }
     if fs::volume("sys").is_none() {
         warn!("kernel", "no system volume found: only boot: and ram: are available");

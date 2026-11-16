@@ -10,8 +10,8 @@
 //! ```
 //!
 //! Names are case-insensitive. Volumes mount by themselves when a disk with
-//! a JustFS partition shows up: the first one labelled "System" becomes
-//! `sys:`, the others use their label.
+//! a JustFS partition shows up: the first one labelled "System" on the disk
+//! the system started from becomes `sys:`, the others use their label.
 
 use crate::dev::block::{Disk, DiskBlocks};
 use crate::sync::{IrqLock, Mutex};
@@ -160,6 +160,11 @@ impl Volume {
     pub fn space(&self) -> (u64, u64) {
         self.fs.lock().space()
     }
+
+    /// When the file system was made (seconds since 2000).
+    pub fn created(&self) -> u64 {
+        self.fs.lock().superblock().created
+    }
 }
 
 static VOLUMES: IrqLock<Vec<Arc<Volume>>> = IrqLock::new(Vec::new());
@@ -188,15 +193,16 @@ fn mount(name: &str, source: &str, disk: Option<Arc<Disk>>, fs: Fs<Box<dyn Block
     v
 }
 
-/// Picks a free volume name for a label.
-fn name_for(label: &str, fallback: &str) -> String {
+/// Picks a free volume name for a label; "System" becomes `sys:` if there
+/// is none yet and `may_be_sys`.
+fn name_for(label: &str, fallback: &str, may_be_sys: bool) -> String {
     let mut base: String = label
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
         .collect::<String>()
         .trim_matches('-')
         .to_string();
-    if base == "system" && volume("sys").is_none() {
+    if base == "system" && may_be_sys && volume("sys").is_none() {
         return String::from("sys");
     }
     if base.is_empty() || base == "sys" || base == "boot" || base == "ram" {
@@ -265,10 +271,38 @@ pub fn offer(disk: &Arc<Disk>) {
     }
     match Fs::mount(Box::new(dev) as Box<dyn BlockDevice + Send>, &CLOCK) {
         Ok(fs) => {
-            let name = name_for(&fs.superblock().label.clone(), &disk.name);
+            let may_be_sys = ANY_SYSTEM.load(Ordering::Relaxed) || on_boot_disk(disk);
+            let name = name_for(&fs.superblock().label.clone(), &disk.name, may_be_sys);
             mount(&name, &disk.name, Some(disk.clone()), fs);
         }
         Err(e) => crate::warn!("fs", "{}: JustFS volume not mounted: {e}", disk.name),
+    }
+}
+
+/// Any system volume may become `sys:`, not only one on the disk the loader
+/// started from.
+static ANY_SYSTEM: AtomicBool = AtomicBool::new(false);
+
+/// Whether `disk` (a whole disk or a partition) is on the disk the system
+/// started from, as far as is known: the loader names that disk by its MBR
+/// signature. With a justOS disk and a USB stick in, the stick that started
+/// must not run on the disk's system volume, or the other way round.
+fn on_boot_disk(disk: &Arc<Disk>) -> bool {
+    let id = crate::boot_disk_id();
+    let whole = disk.parent.as_ref().map_or(disk, |(d, _)| d);
+    id == 0 || crate::dev::block::signature(whole) == Some(id)
+}
+
+/// No system volume on the disk the loader named (its signature changed, or
+/// its driver is missing): the first one found becomes `sys:`, as before
+/// disks were told apart.
+pub fn adopt_system() {
+    ANY_SYSTEM.store(true, Ordering::Relaxed);
+    let Some(v) = volumes().into_iter().find(|v| v.label == "System" && v.disk.is_some()) else { return };
+    let Some(disk) = v.disk.clone() else { return };
+    crate::warn!("fs", "the disk the system started from has no system volume here: using {}", disk.name);
+    if unmount(&v.name).is_ok() {
+        offer(&disk);
     }
 }
 
@@ -301,7 +335,7 @@ pub fn format(disk: &Arc<Disk>, label: &str) -> Result<String> {
     }
     let dev = DiskBlocks::new(disk.clone());
     let fs = Fs::format(Box::new(dev) as Box<dyn BlockDevice + Send>, label, &CLOCK)?;
-    let name = name_for(label, &disk.name);
+    let name = name_for(label, &disk.name, true);
     mount(&name, &disk.name, Some(disk.clone()), fs);
     Ok(name)
 }
@@ -559,6 +593,15 @@ pub fn stat(path: &Path) -> Result<Stat> {
     let id = find(&v, &mut fs, &path.inner, Follow::Yes)?;
     let n = fs.node(id)?;
     Ok(Stat { kind: n.kind, size: n.size, modified: n.modified, node: id, hidden: n.flags & justfs::FLAG_HIDDEN != 0, mode: n.mode })
+}
+
+/// A node as it is stored, for copying it whole (the installer). A link at
+/// the end of the path describes itself.
+pub fn node_info(path: &Path) -> Result<justfs::Node> {
+    let v = vol(path)?;
+    let mut fs = v.fs.lock();
+    let id = find(&v, &mut fs, &path.inner, Follow::No)?;
+    fs.node(id)
 }
 
 /// Sets the Unix permission bits of what `path` names (through links).

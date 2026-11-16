@@ -29,11 +29,13 @@ A script is a list of steps, one per line:
                                 it, "@n" in a position is n pixels from there
                                 ("click @20 @40"). Stops the script if the
                                 colour is nowhere.
+    qmp <command> [json]        a QMP command, e.g. qmp device_del {"id": "t"}
 
 Usage: scripts/gui-shots.py <image> <script> <out folder> [qemu options...]
 Environment: QEMU (default qemu-system-x86_64), UEFI=1 for OVMF, CDROM=1 to
-boot the image as a CD, KEEP=<file> to keep the disk as the session left it,
-SCREEN=<w>x<h> when the screen is not 1024x768.
+boot the image as a CD, USB=1 as a USB stick (xHCI), KEEP=<file> to keep the
+disk as the session left it, SCREEN=<w>x<h> when the screen is not 1024x768,
+MEMORY (default 512M).
 """
 import json
 import os
@@ -162,11 +164,16 @@ def main():
     qemu = os.environ.get("QEMU", "qemu-system-x86_64")
     # The serial console goes to serial.log, and to a socket the "serial"
     # step types on.
-    args = [qemu, "-m", "512M", "-display", "none", "-no-reboot",
+    args = [qemu, "-m", os.environ.get("MEMORY", "512M"), "-display", "none", "-no-reboot",
             "-chardev", f"socket,id=ser,path={ser},server=on,wait=off,logfile={out}/serial.log", "-serial", "chardev:ser",
             "-qmp", f"unix:{sock},server,nowait", "-usb", "-device", "usb-tablet"]
+    # The image starts first, before the disks given as QEMU options.
     if os.environ.get("CDROM") == "1":
-        args += ["-cdrom", disk]
+        args += ["-drive", f"file={disk},format=raw,if=none,id=cd,media=cdrom",
+                 "-device", "ide-cd,drive=cd,bus=ide.1,bootindex=0"]
+    elif os.environ.get("USB") == "1":
+        args += ["-device", "qemu-xhci,id=xhci", "-drive", f"file={disk},format=raw,if=none,id=stick",
+                 "-device", "usb-storage,bus=xhci.0,drive=stick,bootindex=0"]
     else:
         args += ["-drive", f"file={disk},format=raw,if=ide"]
     if os.environ.get("UEFI") == "1":
@@ -290,6 +297,9 @@ def main():
                     # reading it keeps the console from stalling.
                     threading.Thread(target=drain, args=(console,), daemon=True).start()
                 console.sendall((rest + "\r").encode())
+            elif op == "qmp":
+                name, _, body = rest.partition(" ")
+                print("qmp", name, q.cmd(name, **(json.loads(body) if body.strip() else {})), flush=True)
             else:
                 raise SystemExit(f"unknown step: {line}")
             if op in ("click", "double", "right", "move", "press", "glide", "release"):

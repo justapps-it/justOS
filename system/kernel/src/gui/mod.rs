@@ -7,8 +7,9 @@
 //! 1. [`boot_start`] shows the splash as soon as the screen is up and
 //!    [`boot_progress`] moves its bar as the kernel starts its parts;
 //! 2. [`start`] runs the interface thread: it loads icons and wallpapers from
-//!    `sys:/system/gui`, then shows the setup on the first start (until it
-//!    is done once) and the desktop after that.
+//!    `sys:/system/gui`, then shows the installer when the system runs from
+//!    an installation medium ([`installer`]), the setup on the first start
+//!    (until it is done once) and the desktop after that.
 //!
 //! Drawing happens in a back buffer ([`gfx::Canvas`]); only the parts that
 //! changed are copied to the framebuffer, and the pointer is drawn straight
@@ -27,6 +28,7 @@ mod apps;
 mod cursor;
 mod desktop;
 pub mod dnd;
+mod installer;
 mod lock;
 pub mod pace;
 pub(crate) mod res;
@@ -513,6 +515,9 @@ fn run() {
     let Some(mut d) = DISPLAY.lock().take() else { return };
     apply_saved_mode(&mut d);
     d.apply_scale();
+    if crate::install::offer_at_start() {
+        installer::run(&mut d);
+    }
     if !settings::get().setup_done {
         setup::run(&mut d);
     }

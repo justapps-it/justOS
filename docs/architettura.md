@@ -137,6 +137,78 @@ aspettano un riavvio, altrimenti Info sistema li propone. Info sistema
 permette anche di annullare un aggiornamento in attesa e di tornare alla
 versione precedente; dal terminale c'è `sysupdate`.
 
+### Installazione su un disco del computer
+
+Da una chiavetta USB, da una scheda di memoria o dal CD live justOS si
+installa su un disco del computer, che viene cancellato
+(`system/kernel/src/install/`, l'interfaccia in `gui/installer.rs`, dal
+terminale `install-system`).
+
+**Quando viene proposta.** All'avvio dell'interfaccia, prima della
+configurazione iniziale, se il sistema gira da un mezzo rimovibile o da un
+CD (`sys:` in memoria), non porta il segno `/system/installed` (un sistema
+installato non lo propone più) e c'è almeno un disco su cui sta. "Prova
+senza installare" la chiude senza toccare nessun disco.
+
+**Il disco da cui gira non è mai fra quelli proposti.** Ogni disco fatto da
+`justtool` ha una firma propria `0x4152xxxx` nell'MBR (0x1B8), ripetuta in
+`BOOT.CTL` (0x1C); un disco installato ne riceve una a caso, diversa da
+quelle dei dischi presenti. Il loader la passa al kernel nella `BootInfo` e
+il kernel esclude il disco di `sys:` e ogni disco con quella firma, anche se
+le sue partizioni non sono montate; `sys:` stesso si monta solo dal disco con
+quella firma, così una chiavetta non gira sul volume di un disco già
+installato. I lettori CD non sono mai elencati.
+
+**Cosa c'è su un disco.** Per ogni disco l'elenco dice modello, dimensione,
+bus (SATA, NVMe, USB, virtio…) e cosa contiene, letto dalla tabella delle
+partizioni (MBR o GPT, i tipi e i GUID) e dai primi settori di ogni
+partizione: "contiene Windows (NTFS)", "contiene Windows (cifrato con
+BitLocker)", "contiene justOS", "contiene Linux", "è vuoto"… I dischi troppo piccoli, protetti da scrittura o con
+settori diversi da 512 byte compaiono ma non si possono scegliere.
+
+**La conferma.** Ogni disco ha un codice di 6 cifre esadecimali, dallo
+SHA-256 di nome, modello, dimensione e primi due settori. L'interfaccia mostra
+il disco con tutto quello che contiene, dice che verrà cancellato, e arma
+"Cancella e installa" (che non è il pulsante predefinito) solo dopo la
+casella "Ho capito, cancella questo disco"; dal terminale serve
+`install-system <disco> --yes-erase <codice>`. Il codice viene ricalcolato
+quando l'installazione parte: se il disco è cambiato (un altro disco con lo
+stesso nome, partizioni nuove) non si scrive niente.
+
+**Cosa viene scritto**, con la stessa disposizione di `justtool image`:
+
+1. si smontano i volumi del disco, si azzerano il primo MiB e gli ultimi 34
+   settori (la GPT di riserva: un firmware UEFI non deve più vederla);
+2. si formatta il volume JustFS "System" fino alla fine del disco (al più
+   2 TiB, il limite dell'MBR);
+3. si copiano i file del sistema in esecuzione, uno per uno (non i blocchi:
+   il volume nuovo è grande quanto il disco), prima il sistema e poi le app
+   (`/apps`, `/store`, `/usr`, `/opt`). Restano sul mezzo le impostazioni, i
+   permessi, il proxy e l'installatore stesso: il computer nuovo parte con
+   la configurazione iniziale. `/tmp` e la coda degli aggiornamenti si
+   copiano vuote;
+4. si rimonta il volume, si rilegge ogni file confrontandone lo SHA-256 e si
+   controlla il volume (`check`);
+5. la partizione EFI (FAT16): i due slot con il sistema in esecuzione (dallo
+   slot avviato o, dal CD, da `sys:/system/install`, che `justtool iso` ci
+   mette), `BOOTX64.EFI`, `BOOT.CTL` con la firma nuova, e si rileggono;
+   poi lo stadio 2 e, per ultimo, l'MBR. Un'interruzione prima dell'ultimo
+   passo lascia un disco che non parte, mai uno che parte a metà.
+
+Il loader UEFI è in `\EFI\BOOT\BOOTX64.EFI`, il percorso che ogni firmware
+prova da sé: non si scrivono voci nella NVRAM. Lo stesso disco parte anche
+da BIOS.
+
+**Limiti.** Settori da 512 byte (i dischi da 4K nativi non si possono
+scegliere); su dischi oltre i 2 TiB se ne usano 2; il loader non è firmato,
+quindi con Secure Boot attivo il firmware non lo avvia; non si installa
+accanto a un altro sistema: il disco scelto è cancellato tutto.
+
+`make test-install` installa da un disco IDE, da una chiavetta USB e dal CD
+su file che fanno da dischi (con un finto Windows su MBR e su GPT; SATA,
+NVMe, virtio), con BIOS e con UEFI, e poi avvia da solo ogni disco
+installato.
+
 ## Memoria
 
 Spazio di indirizzi virtuale (metà alta, uguale in tutti i processi):

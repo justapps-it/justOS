@@ -1,0 +1,11 @@
+# The installer from the live CD (scripts/shots-install.sh, CDROM=1): the
+# welcome says what the CD installs.
+until 150 installer shown
+move 960 40
+wait 2
+shot 01-benvenuto
+click 640 597
+wait 1.5
+move 960 40
+wait 0.5
+shot 02-dischi

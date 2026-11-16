@@ -55,6 +55,11 @@ pub struct BootInfo {
     /// A live system volume (booted from a CD), or 0.
     pub system_phys: u64,
     pub system_size: u64,
+    /// The MBR signature of the disk the loader started from (0: not
+    /// known — a CD, or an older loader). The UEFI loader takes it from
+    /// BOOT.CTL, which repeats it.
+    pub disk_id: u32,
+    pub _pad2: u32,
 }
 
 const _: () = {
@@ -69,6 +74,7 @@ const _: () = {
     assert!(offset_of!(BootInfo, loader) == 0x80);
     assert!(offset_of!(BootInfo, slot) == 0x84);
     assert!(offset_of!(BootInfo, system_phys) == 0x88);
+    assert!(offset_of!(BootInfo, disk_id) == 0x98);
 };
 
 /// One entry of the firmware memory map (E820 layout).

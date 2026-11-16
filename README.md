@@ -53,6 +53,7 @@ onestà cosa funziona e cosa no.
 | **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS. |
 | **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione in RAM. |
 | **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
+| **Installazione** | Dalla chiavetta o dal CD justOS si installa sul disco del computer, con scelta del disco, conferma e barra di avanzamento. |
 | **Primo avvio** | Configurazione guidata in 10 passi: aspetto, tastiera, rete, account, nome del dispositivo, privacy e sfondo. |
 | **Sicurezza** | Le app di justOS hanno un'identità e una sandbox, e chiedono il permesso per cartelle, rete, fotocamera e microfono. Password con sale e blocco automatico dello schermo. |
 
@@ -116,6 +117,17 @@ driver sono scritti dalla documentazione dei chip e provati in QEMU, non
 ancora su molto hardware reale, e che sulle schede video vere lo schermo resta
 nella risoluzione scelta dal firmware.
 
+**Sul disco del PC.** Avviato dalla chiavetta o dal CD, justOS propone di
+installarsi su un disco del computer: si sceglie il disco, si conferma che va
+cancellato, una barra mostra l'avanzamento, poi si toglie la chiavetta e si
+riavvia. Il disco da cui justOS sta girando non è mai fra quelli proposti; di
+ogni disco si vede cosa contiene ("contiene Windows (NTFS)"), e "Cancella e
+installa" funziona solo dopo aver spuntato "Ho capito, cancella questo disco".
+**Tutto quello che c'è sul disco scelto viene cancellato**: justOS non si
+installa accanto a Windows. Dal CD si installa il sistema del CD, senza Firefox
+e Wine. I dettagli sono in
+[docs/architettura.md](docs/architettura.md#installazione-su-un-disco-del-computer).
+
 **Scorciatoie.**
 
 | Tasti | Cosa fanno |
@@ -129,7 +141,8 @@ nella risoluzione scelta dal firmware.
 
 Il Terminale (nel dock) ha una shell: `help` elenca i comandi; `dev` e `drv`
 mostrano dispositivi e driver, `install <nome>` installa un programma dal
-Negozio, `sysupdate` gestisce i due slot di sistema.
+Negozio, `sysupdate` gestisce i due slot di sistema, `install-system list` elenca i
+dischi su cui installare justOS.
 
 ## Stato del progetto
 
@@ -146,7 +159,7 @@ Negozio, `sysupdate` gestisce i due slot di sistema.
 | Accelerazione grafica, più monitor | Non ancora | Il desktop è disegnato dal processore. |
 | Fusi orari, indirizzo IP statico | Non ancora | |
 | App macOS | No | I `.pkg` si aprono, ma i programmi Mach-O non si eseguono. |
-| Installazione sul disco interno del PC | In arrivo | Oggi si avvia da chiavetta o da disco scritto a mano. |
+| Installazione sul disco interno del PC | Funziona | Provata in QEMU (`make test-install`) con BIOS e UEFI, non ancora su hardware reale. Cancella tutto il disco scelto. |
 
 I programmi Linux e Windows girano come programmi di sistema, fuori dalla
 sandbox delle app di justOS. Cosa manca e in che ordine arriverà è nella
@@ -193,11 +206,13 @@ make test-audio     # suoni su ogni scheda audio emulata
 make test-display   # cambio di risoluzione su ogni scheda video emulata
 make test-acpi      # pulsante di accensione, batteria, sospensione e risveglio
 make test-update    # aggiornamento nell'altro slot, prova, conferma, ritorno indietro
+make test-install   # installazione su dischi finti (SATA, NVMe, virtio) da disco, chiavetta e CD
 make test-compat    # programmi Linux, Windows, Java e Android
 make test-linux     # lo strato Linux: processi, segnali, socket, binder
 make test-wayland   # il compositor Wayland
 make test-gtk       # un programma GTK 3 con il tema di justOS
 make shots          # usa l'interfaccia e salva le schermate
+make shots-install  # le schermate dell'installazione, con il tema scuro e chiaro
 ```
 
 I test avviano un'immagine senza Wine (`build/justos-test.img`, la costruiscono

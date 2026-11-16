@@ -90,6 +90,9 @@ struct BootInfo {
     slot: u32,
     system_phys: u64,
     system_size: u64,
+    /// The disk's MBR signature, as BOOT.CTL repeats it (0: not known).
+    disk_id: u32,
+    _pad2: u32,
 }
 
 const _: () = {
@@ -101,6 +104,7 @@ const _: () = {
     assert!(offset_of!(BootInfo, loader) == 0x80);
     assert!(offset_of!(BootInfo, slot) == 0x84);
     assert!(offset_of!(BootInfo, system_phys) == 0x88);
+    assert!(offset_of!(BootInfo, disk_id) == 0x98);
 };
 
 const FB_RGB: u32 = 1;
@@ -348,17 +352,19 @@ fn sector_ok(s: &[u8; SECTOR], magic: &[u8; 8]) -> bool {
     &s[..8] == magic && (0..SECTOR / 4).fold(0u32, |a, i| a.wrapping_add(le32(s, i * 4))) == 0
 }
 
-/// Which slot starts (0 = A, 1 = B) and the BootInfo flags, from
-/// BOOT.CTL; `None` without one (a live CD). A slot not yet known to work
-/// uses up one of its starts, written back at once; with none left, the
-/// other starts. A damaged BOOT.CTL starts slot A.
-fn choose_slot(vol: &Volume) -> Option<(usize, u32)> {
+/// Which slot starts (0 = A, 1 = B), the BootInfo flags and the disk's id
+/// (BOOT.CTL 0x1C, its MBR signature), from BOOT.CTL; `None` without one
+/// (a live CD). A slot not yet known to work uses up one of its starts,
+/// written back at once; with none left, the other starts. A damaged
+/// BOOT.CTL starts slot A.
+fn choose_slot(vol: &Volume) -> Option<(usize, u32, u32)> {
     let file = vol.try_open_mode("\\JUSTOS\\BOOT.CTL", FILE_MODE_READ | FILE_MODE_WRITE).or_else(|_| vol.try_open("\\JUSTOS\\BOOT.CTL")).ok()?;
     let mut ctl = [0u8; SECTOR];
     if !try_read(file, 0, ctl.as_mut_ptr(), SECTOR as u64) || !sector_ok(&ctl, CTL_MAGIC) {
         close(file);
-        return Some((0, 0));
+        return Some((0, 0, 0));
     }
+    let disk_id = le32(&ctl, 0x1C);
     let mut slot = (ctl[0x14] & 1) as usize;
     let mut flags = 0;
     if (ctl[0x16] >> slot) & 1 == 0 {
@@ -384,7 +390,7 @@ fn choose_slot(vol: &Volume) -> Option<(usize, u32)> {
         }
     }
     close(file);
-    Some((slot, flags))
+    Some((slot, flags, disk_id))
 }
 
 /// The kernel (address, memory size, entry) and the boot pack (address,
@@ -653,17 +659,17 @@ extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
     unsafe { (boot_services().set_watchdog_timer)(0, 0, 0, core::ptr::null()) };
 
     let vol = Volume::of_image(image);
-    let ((kernel_phys, kernel_size, entry), (pack_phys, pack_size), slot) = match choose_slot(&vol) {
-        Some((slot, flags)) => match load_slot(&vol, slot) {
-            Some(loaded) => (loaded.0, loaded.1, (slot as u32 + 1) | flags),
+    let ((kernel_phys, kernel_size, entry), (pack_phys, pack_size), slot, disk_id) = match choose_slot(&vol) {
+        Some((slot, flags, id)) => match load_slot(&vol, slot) {
+            Some(loaded) => (loaded.0, loaded.1, (slot as u32 + 1) | flags, id),
             // A damaged slot: the other one, if it was not the other already.
             None if flags & SLOT_FALLBACK == 0 => match load_slot(&vol, slot ^ 1) {
-                Some(loaded) => (loaded.0, loaded.1, ((slot as u32 ^ 1) + 1) | SLOT_FALLBACK),
+                Some(loaded) => (loaded.0, loaded.1, ((slot as u32 ^ 1) + 1) | SLOT_FALLBACK, id),
                 None => fail("no system slot can be read", 0),
             },
             None => fail("no system slot can be read", 0),
         },
-        None => (load_kernel(&vol), load_boot_pack(&vol), 0),
+        None => (load_kernel(&vol), load_boot_pack(&vol), 0, 0),
     };
     let (system_phys, system_size) = load_system(&vol);
     close(vol.0);
@@ -683,6 +689,7 @@ extern "efiapi" fn efi_main(image: Handle, st: *mut SystemTable) -> Status {
     info.slot = slot;
     info.system_phys = system_phys;
     info.system_size = system_size;
+    info.disk_id = disk_id;
 
     // The screen is set last: after the mode change the firmware console
     // may not show text any more.

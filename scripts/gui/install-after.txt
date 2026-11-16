@@ -1,0 +1,6 @@
+# The disk justOS was installed on, started alone (scripts/shots-install.sh):
+# it starts on the first-start setup, as a new computer.
+until 120 system slot A
+move 960 40
+wait 8
+shot 01-primo-avvio

@@ -53,7 +53,7 @@ jobs:
           VERBOSE: "1"
         run: |
           failed=""
-          for t in test-uefi test-iso test-drivers test-display test-acpi test-update test-linux test-wayland test-gtk; do
+          for t in test-uefi test-iso test-drivers test-display test-acpi test-update test-install test-linux test-wayland test-gtk; do
             echo "::group::$t"
             make $t || failed="$failed $t"
             echo "::endgroup::"

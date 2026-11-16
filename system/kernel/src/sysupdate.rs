@@ -283,6 +283,27 @@ pub fn status() -> Result<Status, String> {
     })
 }
 
+/// For the installer: the disk this system started from, the slot image it
+/// runs (read back and checked against its SHA-256) and the sectors of a
+/// slot there.
+pub fn running_image() -> Result<(Arc<Disk>, Vec<u8>, u64), String> {
+    let me = booted().ok_or("questo sistema non è partito da uno slot")?;
+    let l = layout()?;
+    let c = l.control()?;
+    let mut head = vec![0u8; SECTOR];
+    check(l.disk.read(c.lba(me), &mut head), "slot")?;
+    let h = Header::parse(&head).ok_or("lo slot in uso non ha un'intestazione valida")?;
+    if h.total > c.sectors() {
+        return Err("lo slot in uso è più grande del suo spazio".to_string());
+    }
+    let mut image = vec![0u8; h.total as usize * SECTOR];
+    check(l.disk.read(c.lba(me), &mut image), "slot")?;
+    if Sha256::digest(&image[SECTOR..]) != h.sha256 {
+        return Err("lo slot in uso è danneggiato sul disco".to_string());
+    }
+    Ok((l.disk, image, c.sectors()))
+}
+
 /// Reads the slots again for [`slots`].
 fn refresh() {
     let Some(me) = booted() else { return };

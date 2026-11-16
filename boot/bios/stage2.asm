@@ -77,6 +77,8 @@ BI_LOADER       equ 0x80
 BI_SLOT         equ 0x84
 BI_SYSTEM_PHYS  equ 0x88
 BI_SYSTEM_SIZE  equ 0x90
+BI_DISK_ID      equ 0x98
+MBR_SIGNATURE   equ 0x7C00 + 0x1B8
 
 ; BOOT.CTL and the slot header (see tools/justtool/src/slot.rs).
 CTL_SLOT_A      equ 0x08                ; then slot B at 0x0C
@@ -127,6 +129,13 @@ stage2:
     movzx eax, byte [boot_drive]
     mov [BOOTINFO + BI_BOOT_DRIVE], eax
     mov dword [BOOTINFO + BI_LOADER], 1                 ; BIOS
+    ; The disk's MBR signature: the kernel tells the disk it started from
+    ; by it (a CD has none).
+    test byte [BT_FLAGS], BOOT_CD
+    jnz .no_disk_id
+    mov eax, [MBR_SIGNATURE]
+    mov [BOOTINFO + BI_DISK_ID], eax
+.no_disk_id:
 
     call enable_a20
     call check_long_mode
