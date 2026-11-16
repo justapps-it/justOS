@@ -1,40 +1,40 @@
-justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, con il linguaggio JustScript.
+justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui girano Firefox, i programmi Linux e quelli Windows.
 
-![La scrivania di justOS](https://raw.githubusercontent.com/matthias-peterlini/justOS/main/docs/screenshots/scrivania.jpg)
+![La scrivania di justOS](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/scrivania.png)
 
-La prima versione con il nome justOS.
+La prima versione pubblicata in [justapps-it/justOS](https://github.com/justapps-it/justOS), la nuova casa del progetto.
 
-## Novità della 0.7
+## Novità della 0.8
 
-- **arcOS diventa justOS**: nuovo nome, nuovo marchio J▮ e licenza GPL-3.0-or-later. JustFS ha un formato nuovo: i dischi creati con arcOS non si leggono più.
-- **Il nuovo stile justOS**: niente barra in alto, l'ora e la data fluttuano sullo sfondo; il dock in vetro chiaro ha il marchio J▮ (menu di sistema) a sinistra e lo stato (rete, suono, anello della batteria) a destra, che apre il centro di controllo con account, riquadri, cursori verticali di volume e luminosità, Spegni, Blocca e Riavvia. Finestre di vetro rosato con tre pulsanti tondi su una pillola chiara; a schermo intero (F11) l'ora passa nella riga del titolo. Nuovo sfondo a pixel e cinque foto delle Dolomiti; il carattere è Google Sans Flex.
-- **Aggiornamenti di sistema A/B**: il kernel e i driver stanno in due slot. Un aggiornamento si scrive in quello libero e parte in prova; se non si avvia, justOS torna da solo alla versione di prima. Info sistema cerca, installa e torna indietro.
-- **App nella sandbox**: ogni app ha la sua cartella; Documenti, Immagini, gli altri dischi, la rete, la fotocamera e il microfono si usano solo con un permesso, chiesto la prima volta e gestito in *Impostazioni → Privacy delle app*. Il selettore di file dà accesso solo al file scelto.
-- **Aggiornamenti delle app in background**, da un indice firmato (Ed25519), con la sezione Aggiornamenti nel Negozio.
-- **Portatili**: batteria, alimentatore, coperchio e temperature, letti dal firmware con un interprete ACPI scritto da zero; sospensione in RAM dal menu, dal tasto e chiudendo il coperchio, con la schermata di blocco al risveglio.
-- **Schermi ad alta densità**: l'interfaccia a 2× da 2560×1440 in su, o a scelta nelle Impostazioni.
-- **Il desktop**: desktop virtuali e vista d'insieme (F3), finestre agganciate a metà e a quarti, ricerca globale con Ctrl+Spazio, file trascinati tra le finestre, schede in File (Ctrl+T), schermata di blocco con password.
-- **JavaScript nel Browser**: `justjs`, un interprete scritto da zero, con il DOM, gli eventi, i timer e `fetch`; basta per i siti semplici.
-- **JustStudio**, l'ambiente di sviluppo per JustScript.
-- **Più programmi**: i programmi Windows aprono finestre semplici, l'app dalvik esegue programmi Android e Java semplici; un doppio clic installa pacchetti `.deb`, `.tar.gz`, `.tgz`, `.tar`, `.zip` e `.gz` con un programma Linux statico o Windows x64.
-- **Tutti i processori**: il kernel usa fino a 16 core.
-- **Schermi**: driver per Cirrus e per il framebuffer di qualsiasi firmware.
+- **Programmi Linux veri**: gli eseguibili dinamici girano con la glibc di Debian, e un compositor Wayland dentro il kernel dà loro finestre di justOS. Funzionano GTK 3 e i programmi con un file `.desktop`, che compaiono in Applicazioni.
+- **Firefox ESR è il browser di serie**, già installato nell'immagine di disco. Il browser scritto apposta, JustScript e JustStudio non ci sono più.
+- **Programmi Windows con Wine 10**: un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia, a 64 bit e, in parte, a 32 bit. La prima volta una finestra di justOS, *Programmi Windows*, prepara l'ambiente con una barra di avanzamento; i programmi installati compaiono in Applicazioni e nella ricerca.
+- **Installazione sul disco del computer**: avviato da chiavetta o da CD, justOS propone di installarsi su un disco interno, con scelta del disco, conferma esplicita e barra di avanzamento. Il disco scelto viene cancellato per intero.
+- **Primo avvio in 10 passi**: aspetto, tastiera, rete, account con password, nome del dispositivo, data e ora, privacy e aggiornamenti, sfondo.
+- **Nuovo aspetto a pixel morbidi**, con tema scuro e tema chiaro, e un centro di controllo ridisegnato. A schermo intero il dock sale dal bordo in basso.
+- **Ctrl+Maiusc+L** blocca lo schermo (prima era logo+L, che in una macchina virtuale su Windows restava "incastrato").
 
-![Il Negozio](https://raw.githubusercontent.com/matthias-peterlini/justOS/main/docs/screenshots/negozio.jpg)
+![Firefox ESR](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/firefox.png)
 
-Mancano ancora Wi-Fi, Bluetooth e l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware. Lo stato di ogni driver è in [docs/driver.md](https://github.com/matthias-peterlini/justOS/blob/main/docs/driver.md#hardware-supportato), cosa manca e in che ordine nella [roadmap](https://github.com/matthias-peterlini/justOS/blob/main/docs/roadmap.md).
+## Cosa non va ancora
+
+- Molti programmi Windows a 32 bit e quelli grandi (Steam, per esempio) si fermano: la compatibilità è agli inizi.
+- Mancano Wi-Fi, Bluetooth e l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware, alla risoluzione scelta dal firmware.
+- L'installazione su disco è provata in QEMU, non ancora su hardware vero; niente Secure Boot, dischi con settori da 4K o più grandi di 2 TiB.
+- Lo stato di ogni driver è in [docs/driver.md](https://github.com/justapps-it/justOS/blob/main/docs/driver.md#hardware-supportato), cosa manca e in che ordine nella [roadmap](https://github.com/justapps-it/justOS/blob/main/docs/roadmap.md).
 
 ## File
 
 | File | Cosa farne |
 |---|---|
-| `justos.iso` | **CD live**: si avvia in una macchina virtuale (VirtualBox, VMware, QEMU, Hyper-V di prima generazione) o da un CD, con BIOS o UEFI, senza disco rigido. Il sistema gira in memoria: le modifiche si perdono allo spegnimento. Non ha Firefox né Wine. |
-| `justos-img.zip` | **Immagine di disco** (circa 570 MiB; scompattata 5 GiB, BIOS e UEFI), con Firefox e **Wine** per i programmi Windows (doppio clic su un `.exe`): si scrive su una chiavetta USB da almeno 8 GB (balenaEtcher, Rufus in modalità DD, `dd`) per avviare un PC vero, con le modifiche che restano, o si usa come disco di una macchina virtuale. Secure Boot va disattivato. |
+| `justos-img.zip` | **Immagine di disco** (scompattata 5 GiB, BIOS e UEFI), con Firefox e Wine: si scrive su una chiavetta USB da almeno 8 GB (balenaEtcher, Rufus in modalità DD, `dd`) per avviare un PC vero, o si usa come disco di una macchina virtuale. Secure Boot va disattivato. |
+| `justos.iso` | **CD live**: si avvia in una macchina virtuale o da un CD, con BIOS o UEFI, senza disco rigido. Il sistema gira in memoria: le modifiche si perdono allo spegnimento. Non ha Firefox né Wine. |
 | `SHA256SUMS` | le impronte dei due file |
 
 ## Provarlo
 
-- **QEMU**: `qemu-system-x86_64 -m 512M -cdrom justos.iso -device ich9-intel-hda -device hda-output`
-- **VirtualBox**: nuova macchina "Other/Unknown (64-bit)", 512 MiB di memoria, nessun disco, `justos.iso` nel lettore CD.
+- **QEMU**, immagine di disco: `qemu-system-x86_64 -m 2G -smp 4 -drive file=justos.img,format=raw -device ich9-intel-hda -device hda-output` (con `-accel kvm` su Linux o `-accel whpx` su Windows va molto più veloce).
+- **QEMU**, CD live: `qemu-system-x86_64 -m 1G -cdrom justos.iso`
+- **VirtualBox**: nuova macchina "Other/Unknown (64-bit)", nessun disco, `justos.iso` nel lettore CD.
 
-Al primo avvio justOS chiede nome, tastiera e sfondo, poi apre la scrivania. Il Terminale (nel dock) ha la shell: `help` elenca i comandi. Documentazione nel [README](https://github.com/matthias-peterlini/justOS#readme).
+Al primo avvio justOS fa qualche domanda (tema, tastiera, account), poi apre la scrivania. Documentazione nel [README](https://github.com/justapps-it/justOS#readme).

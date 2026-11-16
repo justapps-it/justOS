@@ -16,7 +16,7 @@ use alloc::format;
 use alloc::string::String;
 
 /// Where justOS is released.
-pub const REPO: &str = "matthias-peterlini/justOS";
+pub const REPO: &str = "justapps-it/justOS";
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum State {

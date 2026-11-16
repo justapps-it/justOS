@@ -9,7 +9,10 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: on 26.04 the packages are built for x86-64-v3, and
+    # the static musl program of test-compat then needs a newer processor
+    # than the one QEMU emulates.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

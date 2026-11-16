@@ -79,8 +79,12 @@ onestà cosa funziona e cosa no.
 
 ## Provalo
 
-Non ci sono ancora versioni pubblicate da scaricare: justOS si compila dai
-sorgenti.
+**Scaricalo.** Nella pagina delle
+[versioni](https://github.com/justapps-it/justOS/releases/latest) ci sono
+`justos-img.zip`, l'immagine di disco con Firefox e Wine (per una chiavetta USB
+o una macchina virtuale), e `justos.iso`, il CD live senza Firefox e Wine.
+
+**Oppure compilalo dai sorgenti.**
 
 **Requisiti.** Rust stable (`rustup` installa da solo versione e target, grazie
 a `rust-toolchain.toml`), `nasm`, `qemu-system-x86_64` e, per l'avvio UEFI,
