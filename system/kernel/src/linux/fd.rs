@@ -1228,15 +1228,26 @@ pub fn sys_fchmod(fd: i32, mode: u32) -> i64 {
     }
 }
 
-pub fn sys_unlinkat(dirfd: i32, path_ptr: u64) -> i64 {
+/// unlink (`rmdir` false) and rmdir (true): a file is not removed by rmdir
+/// (dpkg uses that to tell files from folders) and a folder not by unlink.
+pub fn sys_unlinkat(dirfd: i32, path_ptr: u64, rmdir: bool) -> i64 {
     let text = super::path_text_at(dirfd, path_ptr).unwrap_or_default();
     if let Some(name) = super::shm::named(&text) {
         return super::shm::unlink_named(name);
     }
     match path_arg(dirfd, path_ptr) {
         // A local socket's name.
-        Ok((p, _)) if super::unix::unlink(&p) => 0,
+        Ok((p, _)) if !rmdir && super::unix::unlink(&p) => 0,
         Ok((p, _)) => {
+            if let Ok(st) = fs::lstat(&p) {
+                let dir = st.kind == justfs::Kind::Dir;
+                if dir && !rmdir {
+                    return -err::EISDIR;
+                }
+                if !dir && rmdir {
+                    return -err::ENOTDIR;
+                }
+            }
             // Mappings of it keep what they map, and descriptors what they
             // read and write.
             super::mm::forget_file(&p);
@@ -1266,6 +1277,35 @@ pub fn sys_renameat(olddir: i32, old: u64, newdir: i32, new: u64) -> i64 {
     }
     match fs::rename(&from, &to) {
         Ok(()) => 0,
+        Err(e) => -errno(user::fs_error(e)),
+    }
+}
+
+/// link / linkat: the volume has no hard links, so a link to a file is a
+/// copy of it (what dpkg does with its backup of the database, and what
+/// packages with hard-linked files need). A folder cannot be linked.
+pub fn sys_linkat(olddir: i32, old: u64, newdir: i32, new: u64) -> i64 {
+    let (from, to) = match (path_arg(olddir, old), path_arg(newdir, new)) {
+        (Ok((a, _)), Ok((b, _))) => (a, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let st = match fs::stat(&from) {
+        Ok(s) => s,
+        Err(e) => return -errno(user::fs_error(e)),
+    };
+    if st.kind == justfs::Kind::Dir {
+        return -err::EPERM;
+    }
+    if fs::lstat(&to).is_ok() {
+        return -err::EEXIST;
+    }
+    match fs::copy_file(&from, &to) {
+        Ok(()) => {
+            if st.mode != 0 {
+                let _ = fs::set_mode(&to, st.mode & 0o7777);
+            }
+            0
+        }
         Err(e) => -errno(user::fs_error(e)),
     }
 }

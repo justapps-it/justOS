@@ -43,7 +43,7 @@ MIRROR = "http://deb.debian.org/debian"
 # management, init and login machinery, and interpreters only maintainer
 # scripts use.
 SKIP = {
-    "debconf", "debconf-2.0", "cdebconf", "dpkg", "install-info", "ucf", "perl-base", "perl",
+    "debconf", "debconf-2.0", "cdebconf", "install-info", "ucf", "perl-base", "perl",
     "init-system-helpers", "adduser", "passwd", "login", "systemd", "systemd-sysv", "sensible-utils",
     "debianutils", "lsb-base", "sysvinit-utils", "usrmerge", "usr-is-merged", "dconf-service",
     "default-dbus-session-bus", "dbus-session-bus", "dbus", "dbus-bin", "dbus-daemon", "dbus-system-bus-common",
@@ -234,7 +234,9 @@ class Names:
         return "/".join(out)
 
 
-def unpack(deb, out, keep_docs, names):
+def unpack(deb, out, keep_docs, names, listing=None):
+    """Unpacks one package; `listing` (a list) gets the paths unpacked, as
+    dpkg's .list files name them."""
     files = 0
     with data_tar(deb) as tar:
         for m in tar.getmembers():
@@ -247,6 +249,8 @@ def unpack(deb, out, keep_docs, names):
             if rel is None:
                 continue
             dest = os.path.join(out, rel)
+            if listing is not None:
+                listing.append("/" + rel.rstrip("/"))
             if m.isdir():
                 os.makedirs(dest, exist_ok=True)
                 continue
@@ -360,6 +364,46 @@ def caches(out):
         print("debroot: made " + ", ".join(made))
 
 
+def dpkg_database(out, chosen, pkgs, lists):
+    """dpkg's database for the tree (/var/lib/dpkg): every package unpacked
+    here is "installed", so that dpkg knows what the image has, checks the
+    dependencies of a .deb opened later, and can remove or upgrade what it
+    installs. Nothing is configured by scripts (none ran): the tree is what
+    the packages' scripts would have made, see `caches`."""
+    db = os.path.join(out, "var/lib/dpkg")
+    os.makedirs(os.path.join(db, "info"), exist_ok=True)
+    os.makedirs(os.path.join(db, "updates"), exist_ok=True)
+    os.makedirs(os.path.join(db, "triggers"), exist_ok=True)
+    os.makedirs(os.path.join(db, "alternatives"), exist_ok=True)
+    os.makedirs(os.path.join(out, "var/log"), exist_ok=True)
+    os.makedirs(os.path.join(out, "etc/dpkg"), exist_ok=True)
+    keep = ("Package", "Priority", "Section", "Installed-Size", "Maintainer", "Architecture", "Multi-Arch", "Source",
+            "Version", "Provides", "Depends", "Pre-Depends", "Recommends", "Suggests", "Conflicts", "Breaks",
+            "Replaces", "Description", "Homepage")
+    status = []
+    for n in chosen:
+        f = pkgs[n]
+        lines = [f"Package: {n}", "Status: install ok installed"]
+        for k in keep[1:]:
+            if k in f:
+                v = f[k].replace("\n", "\n ")
+                lines.append(f"{k}: {v}")
+        status.append("\n".join(lines) + "\n")
+        # Multi-Arch: same packages are named with their architecture.
+        base = f"{n}:{f['Architecture']}" if f.get("Multi-Arch") == "same" else n
+        with open(os.path.join(db, "info", base + ".list"), "w") as lf:
+            lf.write("/.\n" + "".join(p + "\n" for p in lists.get(n, [])))
+    with open(os.path.join(db, "status"), "w") as f:
+        f.write("\n".join(status))
+    for name in ("available", "diversions", "statoverride", "lock", "lock-frontend", "triggers/Unincorp", "triggers/File"):
+        open(os.path.join(db, name), "w").close()
+    # The layout of the database: with multiarch names (name:amd64.list),
+    # which dpkg would otherwise convert the folder to.
+    with open(os.path.join(db, "info", "format"), "w") as f:
+        f.write("1\n")
+    print(f"debroot: dpkg database with {len(chosen)} packages")
+
+
 def wine32(a, pkgs, names):
     """Wine's DLLs for 32-bit Windows programs. Debian keeps them in the
     i386 build of libwine, next to 32-bit Linux libraries a 64-bit system
@@ -434,6 +478,7 @@ def main():
     os.makedirs(os.path.join(a.out, "usr"))
     total = 0
     names = Names()
+    lists = {}
     for n in chosen:
         f = pkgs[n]
         deb = os.path.join(a.cache, "pool", os.path.basename(f["Filename"]))
@@ -443,7 +488,9 @@ def main():
             if sha256(deb) != f["SHA256"]:
                 os.remove(deb)
                 raise SystemExit(f"debroot: {n}: checksum mismatch")
-        total += unpack(deb, a.out, a.keep_docs, names)
+        listing = []
+        total += unpack(deb, a.out, a.keep_docs, names, listing)
+        lists[n] = listing
     if "libwine" in chosen:
         total += wine32(a, pkgs, names)
     # /bin/sh is dash, as Debian's install scripts would make it.
@@ -455,6 +502,8 @@ def main():
         os.symlink(f"usr/{d}", os.path.join(a.out, d))
     caches(a.out)
     drop_long_names(a.out)
+    if "dpkg" in chosen:
+        dpkg_database(a.out, chosen, pkgs, lists)
     with open(os.path.join(a.out, "usr", "PACKAGES"), "w") as f:
         for n in chosen:
             f.write(f"{n} {pkgs[n]['Version']}\n")
