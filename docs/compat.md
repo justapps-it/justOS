@@ -34,7 +34,9 @@ sistema con la disposizione di Debian: tutto in `/usr`, con `/bin`, `/sbin`,
 collegamenti simbolici). L'app File non mostra queste cartelle. Quali
 pacchetti, lo dice `LINUX_PKGS` nel `Makefile` (per ora `libc6`, la glibc
 2.41 di Debian 13 con la sua localizzazione C.UTF-8, `libwayland-client0`
-con `libxkbcommon0` per i programmi con finestre, GTK 3 e Firefox), più
+con `libxkbcommon0` per i programmi con finestre, GTK 3, Firefox, e `dpkg`
+con gli strumenti che usa, `tar`, `coreutils`, `diffutils`, `grep`, `sed`:
+vedi "Pacchetti Debian"), più
 `WINE_PKGS` (Wine) se non c'è `WINE=0`; `make linux-root` rifà l'albero. Il
 CD live non le porta: il suo volume di
 sistema viene letto in memoria all'avvio, e l'albero di Debian è più
@@ -62,7 +64,7 @@ busybox ls -la             un programma installato (vedi "Installare programmi")
 | thread | `clone` per i thread, `futex`, `set_tid_address` |
 | rete | socket TCP e UDP, `poll`, `select`, `epoll` (anche edge-triggered: un descrittore pronto torna solo quando gli succede qualcosa di nuovo, come su Linux, non a ogni attesa) |
 | socket locali | `AF_UNIX` di tipo stream, datagram e seqpacket: `socketpair`, `bind`, `listen`, `connect`, `accept`, nomi su un percorso o astratti, descrittori passati con `SCM_RIGHTS`, `SO_PEERCRED`; il nome su un percorso non è un file del volume, ma `stat`, `access` e `unlink` lo vedono |
-| collegamenti simbolici | `symlink`, `readlink`, `lstat` |
+| collegamenti simbolici | `symlink`, `readlink`, `lstat`; i collegamenti fisici (`link`, `linkat`) sono copie del file, perché JustFS non li ha |
 | finestre | Wayland: `WAYLAND_DISPLAY=wayland-0` in `XDG_RUNTIME_DIR=/home/tmp`, servito dal kernel (vedi sotto) |
 | utenti | tutto gira come `root` |
 | nome del computer | `uname -n`, `gethostname`, `/etc/hostname`, `/proc/sys/kernel/hostname` e `/etc/hosts` danno il nome del dispositivo scelto al primo avvio o in Impostazioni (in minuscolo, "justos-pc" finché non ne scegli uno); un processo in un nuovo spazio UTS parte con lo stesso nome e `sethostname` lo cambia solo per quello spazio |
@@ -385,12 +387,44 @@ sottofondo, con una notifica alla fine (`system/kernel/src/store.rs`,
 
 | Pacchetto | Cosa succede |
 |---|---|
-| `.deb` (Debian, Ubuntu) | si apre l'archivio `ar`, poi `data.tar.gz` (o `data.tar`); il programma in `usr/bin` (o simile) si installa se è un ELF x86-64 statico. `data.tar.xz` e `.zst` (quelli di Debian e Ubuntu) non sono ancora supportati: un doppio clic lo dice con una notifica |
+| `.deb` (Debian, Ubuntu) | lo installa `dpkg`, in una finestra di justOS: vedi "Pacchetti Debian" qui sotto |
 | `.tar.gz`, `.tgz`, `.tar`, `.zip`, `.gz` | il primo programma Linux statico o Windows x64 dentro si installa |
 | `.pkg` (macOS) | si apre l'archivio `xar`, poi il `Payload` (cpio, anche compresso gzip); i file vanno in `sys:/home/Applicazioni macOS/<nome>`. I `Payload` compressi con LZMA (`pbzx`, i più recenti) non sono ancora supportati |
 
 Dal Terminale fa lo stesso `install <file>`, per esempio
-`install sys:/home/Scaricati/ripgrep_14.1.0-1_amd64.deb`.
+`install sys:/home/Scaricati/ripgrep-14.1.0-x86_64-unknown-linux-musl.tar.gz`.
+
+### Pacchetti Debian
+
+I `.deb` li installa `dpkg`, quello di Debian 13, che è nell'immagine con il
+suo database (`/var/lib/dpkg`): `debroot.py` lo scrive quando fa l'albero,
+con ogni pacchetto del sistema già installato, così `dpkg` sa cosa c'è.
+
+Un doppio clic su un `.deb` apre la finestra «Installazione»
+(`system/kernel/src/gui/apps/debinst.rs`). Prima di scrivere qualcosa legge
+il pacchetto con `dpkg-deb -f` (gzip, xz o zstd: li apre `dpkg`), ne mostra
+nome, versione, descrizione e spazio, e controlla che sia per amd64 (o
+`all`), che le sue dipendenze ci siano, nelle versioni chieste (`>=`, `<<`,
+`=`…), e che ci sia spazio. Se manca un pacchetto la finestra lo nomina e
+non installa niente: i pacchetti mancanti non si scaricano (ancora) da soli.
+Con «Installa» parte `dpkg -i` attraverso il livello Linux, script del
+pacchetto compresi, con una barra. Alla fine, se il pacchetto porta un
+`.desktop`, «Apri» avvia il programma, che è anche nel launcher; sennò la
+finestra dice il comando da digitare nel Terminale.
+
+Dal Terminale:
+
+```
+deb                        i pacchetti installati da un .deb (anche: deb list)
+deb install hello.deb      installa, con gli stessi controlli della finestra
+deb remove hello           lo toglie (dpkg --purge); quelli del sistema restano
+install hello.deb          come deb install
+```
+
+I programmi dei pacchetti vanno in `/usr/bin`: la shell li trova per nome
+dopo i suoi comandi, i programmi di `sys:/apps` e quelli di BusyBox.
+`hello` di Debian si chiama come l'app `hello` di justOS, quindi parte con
+`sys:/usr/bin/hello`; la finestra, alla fine, dice già cosa digitare.
 
 I programmi (ELF o `.exe`, riconosciuti dai primi byte anche senza
 estensione) si avviano con un doppio clic come descritto qui sotto.
@@ -412,8 +446,7 @@ parte, la sua icona salta nel dock finché non arriva la finestra.
 | programma Linux da riga di comando | si apre nel Terminale | come prima |
 | `.desktop` | parte il programma del suo `Exec` | verificato |
 | AppImage | si estrae e parte da lì (`--appimage-extract-and-run`: FUSE non c'è); ci vuole un po' | verificato con una AppImage |
-| `.deb` con `data.tar.xz` o `.zst` (quelli di Debian e Ubuntu) | una notifica dice che non si installa ancora (manca il decompressore) | non funziona |
-| `.deb` con gzip | va all'installatore, come prima | come prima |
+| `.deb` | la finestra «Installazione» lo legge, controlla dipendenze e spazio, e con «Installa» lo installa `dpkg` (vedi "Pacchetti Debian") | verificato con screenshot: `hello` di Debian 13 (barra, poi il comando da digitare), `xarchiver` (GTK 3: «Apri» apre la sua finestra, ed è nel launcher), `sl` (mancano `libncurses6` e `libtinfo6`: la finestra li nomina, niente scritto); dal Terminale anche un `.deb` con membri zstd; non verificati il tema chiaro, «Aggiorna», un pacchetto con script che falliscono, lo spazio che manca |
 | `.html`, `.htm` e link | si aprono in Firefox, se c'è; sennò i file nell'editor, e per i link una notifica dice che serve Firefox | verificato con un file .html; se Firefox è già aperto una seconda pagina non gli si può passare (manca D-Bus): una notifica dice di aprirla da Firefox (Ctrl+O) (verificato) |
 | `.dmg`, programmi Mach-O, cartelle `.app` di macOS | "Le app per macOS non funzionano su justOS." | non funziona |
 | `.pkg` | l'installatore lo scompatta, come prima | come prima |

@@ -25,6 +25,7 @@ pub use justgfx::qoi;
 pub mod text;
 
 mod apps;
+pub use apps::debinst;
 mod cursor;
 mod desktop;
 pub mod dnd;

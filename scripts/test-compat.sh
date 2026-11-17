@@ -51,11 +51,23 @@ EOF
     if musl-gcc -static -Os -o "$WORK/lhello" "$WORK/hello.c" 2>/dev/null; then
         strip "$WORK/lhello" 2>/dev/null
         "$JUSTTOOL" fs "$WORK/justos.img" put "$WORK/lhello" /home/compat/lhello >/dev/null && have_linux=1
-        # The same program in a Debian package, for `install <file>.deb`.
-        mkdir -p "$WORK/deb/usr/bin" && cp "$WORK/lhello" "$WORK/deb/usr/bin/debhello"
+        # The same program in a Debian package, for `install <file>.deb`
+        # (which dpkg installs into /usr/bin).
+        mkdir -p "$WORK/deb/usr/bin" "$WORK/debctl" && cp "$WORK/lhello" "$WORK/deb/usr/bin/debhello"
         printf '2.0\n' > "$WORK/debian-binary"
-        tar -czf "$WORK/control.tar.gz" -C "$WORK" debian-binary
-        tar -czf "$WORK/data.tar.gz" -C "$WORK/deb" ./usr
+        cat > "$WORK/debctl/control" <<'EOF'
+Package: debhello
+Version: 1.0
+Architecture: amd64
+Maintainer: justOS tests <tests@justos.invalid>
+Installed-Size: 40
+Section: misc
+Priority: optional
+Description: test program of justOS's compatibility tests
+ A static Linux program that prints its arguments.
+EOF
+        tar -czf "$WORK/control.tar.gz" --owner=0 --group=0 -C "$WORK/debctl" ./control
+        tar -czf "$WORK/data.tar.gz" --owner=0 --group=0 -C "$WORK/deb" ./usr
         (cd "$WORK" && ar rc debhello_1.0_amd64.deb debian-binary control.tar.gz data.tar.gz) &&
             "$JUSTTOOL" fs "$WORK/justos.img" put "$WORK/debhello_1.0_amd64.deb" /home/compat/debhello_1.0_amd64.deb >/dev/null
     fi
