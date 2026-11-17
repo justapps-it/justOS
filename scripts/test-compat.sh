@@ -165,7 +165,13 @@ while IFS= read -r pattern; do
     fi
 done < "$WORK/expect.txt"
 [ $STATUS -ne 0 ] && { echo "  the kernel stopped"; FAILED=1; }
-[ "${VERBOSE:-0}" = 1 ] && cat "$WORK/out.txt"
+if [ "${VERBOSE:-0}" = 1 ]; then
+    cat "$WORK/out.txt"
+elif [ $FAILED = 1 ]; then
+    # Where it went wrong, for a run whose files are gone (CI).
+    echo "  the session, from the first program on:"
+    sed -n '/cd sys:\/home\/compat/,$p' "$WORK/out.txt" | tail -n 150 | sed 's/^/    | /'
+fi
 if [ $FAILED = 0 ]; then
     echo "  ok    compat ($(grep -c . "$WORK/expect.txt") checks, linux=$have_linux windows=$have_windows)"
 fi

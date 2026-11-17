@@ -160,11 +160,6 @@ impl Volume {
     pub fn space(&self) -> (u64, u64) {
         self.fs.lock().space()
     }
-
-    /// When the file system was made (seconds since 2000).
-    pub fn created(&self) -> u64 {
-        self.fs.lock().superblock().created
-    }
 }
 
 static VOLUMES: IrqLock<Vec<Arc<Volume>>> = IrqLock::new(Vec::new());

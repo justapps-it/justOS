@@ -18,10 +18,10 @@
 //! from the disk it started from (the slot that runs, checked against its
 //! SHA-256) or, on a live CD, from `sys:/system/install` (`justtool iso`
 //! puts them there); and every file of `sys:` except what belongs to this
-//! computer and this session: the settings ([`SKIP`]), what is in the
-//! folders of [`EMPTY`], and in `/home` whatever was not there when the
-//! system volume was made. The installed system starts with the first-start
-//! setup.
+//! computer and this session: the settings ([`SKIP`]) and what is in the
+//! folders of [`EMPTY`]. The user's files in `/home` go along, so what was
+//! made while justOS ran from the stick is on the computer too; the
+//! installed system starts with the first-start setup.
 //!
 //! The boot partition is a FAT file system laid out here ([`fat`], as
 //! justtool lays it out); the system volume is formatted anew at the full
@@ -49,7 +49,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
-use justfs::{Block, BlockDevice, Fs, Kind, Node, BLOCK_SIZE};
+use justfs::{Block, BlockDevice, Fs, Kind, BLOCK_SIZE};
 use justtls::sha2::Sha256;
 
 const SECTOR: usize = 512;
@@ -71,9 +71,6 @@ const WRITE_BACK: u64 = 8 << 20;
 pub const MARKER: &str = "/system/installed";
 /// Where a live CD keeps what the installer needs besides the files.
 const PAYLOAD: &str = "sys:/system/install";
-/// How long after its volume was made a file of `/home` still counts as
-/// one the system came with (justtool writes them all in a few minutes).
-const FRESH: u64 = 30 * 60;
 
 /// Paths of `sys:` that are not copied: what a computer's first start
 /// writes (the settings, permissions given to apps, the proxy), test
@@ -81,8 +78,8 @@ const FRESH: u64 = 30 * 60;
 const SKIP: &[&str] =
     &["/system/settings", "/system/permissions.json", "/system/proxy", "/system/updates-test", "/system/install", MARKER, "/home/.dnd-test"];
 /// Folders copied empty: what is in them belongs to the session that runs
-/// (temporary files, downloads of updates).
-const EMPTY: &[&str] = &["/tmp", "/system/updates"];
+/// (temporary files, downloads of updates, programs' caches).
+const EMPTY: &[&str] = &["/tmp", "/system/updates", "/home/.cache"];
 /// Top folders copied in the second step, "le applicazioni".
 const APPS: &[&str] = &["/apps", "/store", "/usr", "/opt"];
 
@@ -609,20 +606,9 @@ fn sys(inner: &str) -> Path {
     Path { volume: String::from("sys"), inner: String::from(inner) }
 }
 
-/// Whether a node of `/home` came with the system: it was written when the
-/// system volume was made (`made`, by justtool), not later by someone using
-/// it, in this session (since `boot`) or before. Folders count from when
-/// they were made, files from when they last changed.
-fn came_with_system(n: &Node, made: u64, boot: u64) -> bool {
-    let t = if n.kind == Kind::Dir { n.created } else { n.modified.max(n.created) };
-    t < boot && t <= made + FRESH
-}
-
 /// Everything on `sys:` to copy, each folder before what is in it: the
 /// system first, then the applications.
 fn walk() -> Result<Vec<Item>, String> {
-    let made = fs::volume("sys").ok_or("non c'è il volume di sistema")?.created();
-    let boot = crate::time::now().saturating_sub(crate::time::uptime_ms() / 1000);
     let mut out = Vec::new();
     let mut dirs = vec![String::from("/")];
     while let Some(dir) = dirs.pop() {
@@ -633,9 +619,6 @@ fn walk() -> Result<Vec<Item>, String> {
                 continue;
             }
             let n = fs::node_info(&sys(&path)).map_err(fs_err(&path))?;
-            if under(&path, "/home") && !came_with_system(&n, made, boot) {
-                continue;
-            }
             let link = if n.kind == Kind::Link { fs::read_link(&sys(&path)).map_err(fs_err(&path))? } else { String::new() };
             if n.kind == Kind::Dir && !listed(EMPTY, &path) {
                 dirs.push(path.clone());
