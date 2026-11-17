@@ -445,6 +445,9 @@ fn parse(body: &[u8]) -> Option<Seg<'_>> {
 }
 
 fn send_all(out: Vec<Out>) {
+    if out.is_empty() {
+        return;
+    }
     for o in out {
         let Some(src) = local_ip() else { continue };
         let mut seg = o.seg;
@@ -452,6 +455,40 @@ fn send_all(out: Vec<Out>) {
         seg[16..18].copy_from_slice(&c.to_be_bytes());
         let _ = send_ipv4(o.dst, 6, &seg);
     }
+    // What was sent may have set a retransmission timer the network thread
+    // does not know of yet.
+    super::kick();
+}
+
+/// The window this side advertised is nearly shut and the application has
+/// read enough since to open it again: the peer must hear of it.
+fn window_reopened(c: &Tcb) -> bool {
+    matches!(c.state, State::Established | State::FinWait1 | State::FinWait2) && c.adv_wnd < (c.mss as u32) * 2 && c.rcv_wnd() >= c.adv_wnd + (RECV_BUF as u32) / 4
+}
+
+/// When [`timers`] next has something to do (uptime, ms): a retransmission,
+/// a window to reopen, a closed connection to forget.
+pub fn due() -> Option<u64> {
+    let t = TABLE.lock();
+    let mut due: Option<u64> = None;
+    for c in t.conns.values() {
+        let at = if window_reopened(c) {
+            Some(0)
+        } else {
+            match c.state {
+                State::TimeWait => Some(c.time_wait_until),
+                State::FinWait2 if c.detached => Some(c.time_wait_until),
+                _ => None,
+            }
+            .into_iter()
+            .chain(c.rtx_at)
+            .min()
+        };
+        if let Some(at) = at {
+            due = Some(due.map_or(at, |d| d.min(at)));
+        }
+    }
+    due
 }
 
 /// A reset for a segment that belongs to no connection.
@@ -715,10 +752,7 @@ pub fn timers() {
                 gave_up |= open && matches!(c.state, State::Closed);
             }
             // The application read: tell the peer the window opened again.
-            if matches!(c.state, State::Established | State::FinWait1 | State::FinWait2)
-                && c.adv_wnd < (c.mss as u32) * 2
-                && c.rcv_wnd() >= c.adv_wnd + (RECV_BUF as u32) / 4
-            {
+            if window_reopened(c) {
                 c.ack_now(&mut out);
             }
         }
@@ -940,6 +974,10 @@ pub fn try_recv(id: Conn, buf: &mut [u8]) -> Result<Read, &'static str> {
         let n = buf.len().min(c.recv_buf.len());
         for (dst, src) in buf.iter_mut().zip(c.recv_buf.drain(..n)) {
             *dst = src;
+        }
+        // The network thread sends the window update.
+        if window_reopened(c) {
+            super::kick();
         }
         return Ok(Read::Data(n));
     }

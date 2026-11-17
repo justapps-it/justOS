@@ -44,9 +44,12 @@ pub fn register(device: u32, desc: *const NetDesc) -> Status {
     drop(ifaces);
     let m = d.mac;
     crate::info!("net", "net{n}: MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5]);
+    crate::net::kick();
     n as Status
 }
 
+/// A frame from the wire (the driver's interrupt handler or poller): queued
+/// for the network thread, which is woken.
 pub fn receive(iface: u32, frame: &[u8]) {
     let mut ifaces = IFACES.lock();
     if let Some(Some(i)) = ifaces.get_mut(iface as usize) {
@@ -56,6 +59,8 @@ pub fn receive(iface: u32, frame: &[u8]) {
             i.rx.push_back(frame.to_vec());
         }
     }
+    drop(ifaces);
+    crate::net::kick();
 }
 
 /// Next received frame on an interface.

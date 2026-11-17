@@ -442,7 +442,36 @@ fn handle_frame(iface: u32, f: &[u8]) {
     }
 }
 
+/// Wakes the network thread: a frame came, an interface was added, DHCP
+/// starts over, or a connection has something to say (safe in interrupt
+/// handlers).
+pub fn kick() {
+    WAKE.signal();
+}
+
+static WAKE: task::Event = task::Event::new();
+
+/// The longest the network thread sleeps when nothing is due: a safety net
+/// for a wake-up that was missed, not a timer anything relies on.
+const IDLE_MS: u64 = 1000;
+
+/// When DHCP next has something to do on an interface (a new attempt).
+fn dhcp_due() -> Option<u64> {
+    STACK
+        .lock()
+        .ifaces
+        .values()
+        .filter_map(|i| match i.dhcp {
+            Dhcp::Idle => Some(0),
+            Dhcp::Discovering { since, .. } | Dhcp::Requesting { since, .. } if i.attempts < DHCP_ATTEMPTS => Some(since + 3001),
+            _ => None,
+        })
+        .min()
+}
+
 /// The network thread: picks up new interfaces, runs DHCP, handles frames.
+/// Between two of these it sleeps until a frame comes or a timer (DHCP's,
+/// TCP's) is due: an idle network costs no wake-ups.
 pub fn start() {
     task::spawn("netd", || loop {
         let mut busy = false;
@@ -483,11 +512,16 @@ pub fn start() {
             }
         }
         tcp::timers();
-        // While packets flow, look again at once; when quiet, rest a little.
+        // While packets flow, look again at once; when quiet, sleep until
+        // something is due or kick() says something came.
         if busy {
             task::yield_now();
         } else {
-            task::sleep_ms(1);
+            let now = time::uptime_ms();
+            let due = [dhcp_due(), tcp::due()].into_iter().flatten().min().unwrap_or(u64::MAX).min(now + IDLE_MS);
+            if due > now {
+                WAKE.wait(Some(due - now));
+            }
         }
     });
 }
@@ -532,6 +566,8 @@ pub fn retry() {
             i.attempts = 0;
         }
     }
+    drop(s);
+    kick();
 }
 
 /// The computer's name changed: every interface with an address asks for it
