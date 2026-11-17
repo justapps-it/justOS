@@ -94,7 +94,8 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("restart", "", "restart the computer (also: reboot)"),
     ("shutdown", "", "turn the computer off (also: off)"),
     ("suspend", "[seconds | check]", "sleep with memory kept (also: sleep); wake by key or button, or after seconds"),
-    ("install", "[name]", "install a program from the store (also: pkg)"),
+    ("install", "[name]", "install a program from the store (also: pkg); a .deb goes to dpkg"),
+    ("deb", "[list | install <file.deb> | remove <name>]", "Debian packages installed with dpkg (double click on a .deb does the same with a window)"),
     ("uninstall", "<name>", "remove a program installed from the store"),
     ("play", "<file.wav> | stop", "play a sound file"),
     ("tone", "[hz] [ms]", "play a tone (default 440 Hz, 500 ms)"),
@@ -151,6 +152,24 @@ const BUSYBOX_APPLETS: &[&str] = &[
     "xargs",
     "yes",
 ];
+
+/// The other names of the shell's commands (`dir` for `ls`) and those `help`
+/// does not list: with `COMMANDS`, every name the shell takes itself.
+const ALIASES: &[&str] = &[
+    "?", "pwd", "dir", "type", "md", "del", "ren", "move", "copy", "volumes", "eject", "devices", "drivers",
+    "keyboard", "tasks", "journal", "cls", "reboot", "off", "poweroff", "sleep", "pkg", "kpanic",
+];
+
+/// Whether typing `name` alone runs something else before a Linux program
+/// of that name in Debian's PATH: a command of the shell, a program in
+/// `sys:/apps` (justOS's own `hello`) or a BusyBox applet.
+pub fn shadowed(name: &str) -> bool {
+    let root = fs::abs("sys:/").ok();
+    COMMANDS.iter().any(|c| c.0 == name)
+        || ALIASES.contains(&name)
+        || root.is_some_and(|r| crate::user::find_program(name, &r).is_some())
+        || busybox_applet(name).is_some()
+}
 
 /// If `name` is a BusyBox applet and `busybox` is installed, the path to it.
 fn busybox_applet(name: &str) -> Option<Path> {
@@ -1060,6 +1079,7 @@ impl Shell {
                 }
             },
             "install" | "pkg" => self.install(&rest),
+            "deb" => self.deb(&rest),
             "uninstall" => self.uninstall(rest.first().copied()),
             "kpanic" => panic!("stopped on purpose (kpanic)"),
             "play" => {
@@ -1142,6 +1162,9 @@ impl Shell {
                     self.run_program(&args[0], prog_args);
                 } else if let Some(busybox) = busybox_applet(&args[0]) {
                     self.run_applet(busybox, &args[0], prog_args);
+                } else if let Some(path) = crate::user::find_linux_program(&args[0]) {
+                    // A program of a Debian package (/usr/bin/hello).
+                    self.report(&args[0], crate::user::run_foreground(&path, prog_args, self.cwd.clone()));
                 } else {
                     println!("{ERR}{cmd}: unknown command{RESET} {DIM}(type help){RESET}");
                 }
@@ -1277,7 +1300,7 @@ impl Shell {
             println!("{ERR}usage: <program> [arguments] &{RESET}");
             return;
         };
-        let Some(path) = crate::user::find_program(name, &self.cwd) else {
+        let Some(path) = crate::user::find_program(name, &self.cwd).or_else(|| crate::user::find_linux_program(name)) else {
             println!("{ERR}{name}: no such program{RESET}");
             return;
         };
@@ -1299,6 +1322,35 @@ impl Shell {
             Ok(-130) => println!("{DIM}^C{RESET}"),
             Ok(code) => println!("{DIM}{name} ended with code {code}{RESET}"),
             Err(e) => println!("{ERR}{name}: {}{RESET}", e.as_str()),
+        }
+    }
+
+    /// `deb list`: the packages installed from .deb files; `deb install
+    /// <file>` and `deb remove <name>` run dpkg through the Linux layer.
+    fn deb(&self, args: &[&str]) {
+        use crate::gui::debinst;
+        match (args.first().copied(), args.get(1).copied()) {
+            (None, _) | (Some("list"), _) => {
+                let list = debinst::user_packages();
+                if list.is_empty() {
+                    println!("no packages installed from .deb files");
+                }
+                for (name, version, about) in list {
+                    println!("  {BOLD}{name:<24}{RESET}{DIM}{version} · {about}{RESET}");
+                }
+            }
+            (Some("install"), Some(file)) => {
+                let Some(p) = self.path(file) else { return };
+                match debinst::install_blocking(&alloc::format!("{p}")) {
+                    Ok(log) => println!("{log}"),
+                    Err(e) => println!("{ERR}{file}: {e}{RESET}"),
+                }
+            }
+            (Some("remove"), Some(name)) => match debinst::remove(name) {
+                Ok(log) => println!("{log}"),
+                Err(e) => println!("{ERR}{name}: {e}{RESET}"),
+            },
+            _ => println!("usage: deb [list | install <file.deb> | remove <name>]"),
         }
     }
 
@@ -1324,7 +1376,10 @@ impl Shell {
             }
             return;
         };
-        // A package file (.deb, .tar.gz, .zip, .pkg...).
+        if name.to_ascii_lowercase().ends_with(".deb") {
+            return self.deb(&["install", name]);
+        }
+        // A package file (.tar.gz, .zip, .pkg...).
         if crate::store::is_package(name) {
             let Some(p) = self.path(name) else { return };
             match crate::store::install_file(&alloc::format!("{p}")) {

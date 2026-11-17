@@ -156,6 +156,23 @@ pub fn find_program(name: &str, cwd: &Path) -> Option<Path> {
     })
 }
 
+/// The folders of Debian's PATH, where the programs of Debian packages are
+/// (those of the system and those installed later with dpkg).
+const LINUX_PATH: [&str; 4] = ["sys:/usr/local/bin", "sys:/usr/bin", "sys:/usr/sbin", "sys:/usr/games"];
+
+/// A Linux program by its name, in Debian's PATH (`hello` ->
+/// `sys:/usr/bin/hello`). The shell looks here last, after its own
+/// commands and the programs in `sys:/apps`.
+pub fn find_linux_program(name: &str) -> Option<Path> {
+    if name.is_empty() || name.contains([':', '/']) {
+        return None;
+    }
+    LINUX_PATH.iter().find_map(|dir| {
+        let p = fs::abs(&alloc::format!("{dir}/{name}")).ok()?;
+        fs::stat(&p).ok().filter(|s| s.kind == justfs::Kind::File).map(|_| p)
+    })
+}
+
 /// Android apps and Java programs in DEX form, which `dalvik` runs.
 fn is_android(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();

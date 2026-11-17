@@ -1016,9 +1016,10 @@ fn dispatch(n: u64, a: [u64; 6]) -> i64 {
         81 => sys_fchdir(fd0),
         82 => fd::sys_renameat(fd::AT_FDCWD, a[0], fd::AT_FDCWD, a[1]),
         83 => fd::sys_mkdirat(fd::AT_FDCWD, a[0], a[1] as u32),
-        84 | 87 => fd::sys_unlinkat(fd::AT_FDCWD, a[0]),
+        84 => fd::sys_unlinkat(fd::AT_FDCWD, a[0], true),
+        87 => fd::sys_unlinkat(fd::AT_FDCWD, a[0], false),
         85 => fd::sys_openat(fd::AT_FDCWD, a[0], fd::O_CREAT | fd::O_WRONLY | fd::O_TRUNC, a[1] as u32), // creat
-        86 => -err::EPERM, // link: no hard links
+        86 => fd::sys_linkat(fd::AT_FDCWD, a[0], fd::AT_FDCWD, a[1]), // link: a copy
         88 => fd::sys_symlinkat(a[0], fd::AT_FDCWD, a[1]),
         89 => fd::sys_readlinkat(fd::AT_FDCWD, a[0], a[1], a[2]),
         90 => fd::sys_fchmodat(fd::AT_FDCWD, a[0], a[1] as u32),
@@ -1085,13 +1086,13 @@ fn dispatch(n: u64, a: [u64; 6]) -> i64 {
         257 => fd::sys_openat(fd0, a[1], a[2] as u32, a[3] as u32),
         258 => fd::sys_mkdirat(fd0, a[1], a[2] as u32),
         262 => fd::sys_newfstatat(fd0, a[1], a[2], a[3]),
-        263 => fd::sys_unlinkat(fd0, a[1]),
+        263 => fd::sys_unlinkat(fd0, a[1], a[2] & 0x200 != 0), // AT_REMOVEDIR
         264 | 316 => fd::sys_renameat(fd0, a[1], a[2] as i32, a[3]),
-        265 => -err::EPERM, // linkat
+        265 => fd::sys_linkat(fd0, a[1], a[2] as i32, a[3]), // linkat: a copy
         266 => fd::sys_symlinkat(a[0], a[1] as i32, a[2]),
         267 => fd::sys_readlinkat(fd0, a[1], a[2], a[3]),
         268 | 452 => fd::sys_fchmodat(fd0, a[1], a[2] as u32), // fchmodat, fchmodat2
-        260 | 280 => 0,           // fchownat, utimensat
+        260 | 277 | 280 => 0,     // fchownat, sync_file_range, utimensat
         269 | 439 => fd::sys_faccessat(fd0, a[1]),
         270 => poll::sys_pselect6(a[0], a[1], a[2], a[3], a[4]),
         271 => poll::sys_ppoll(a[0], a[1], a[2]),

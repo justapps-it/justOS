@@ -5,6 +5,7 @@ mod about;
 mod calculator;
 mod calendar;
 mod clock;
+pub mod debinst;
 mod files;
 mod monitor;
 mod music;
@@ -186,7 +187,7 @@ const LINUX_ICONS: [&str; 6] = [
 /// One .desktop file as a launcher entry: its name (the Italian one if it
 /// has one), its program and its icon. `None` for what is not an app to
 /// show (NoDisplay, a terminal program, a program that is not there).
-fn linux_app(text: &str) -> Option<Entry> {
+pub fn linux_app(text: &str) -> Option<Entry> {
     let (mut name, mut name_it, mut exec, mut icon) = (None, None, None, None);
     let mut main = false;
     for line in text.lines() {
@@ -825,38 +826,10 @@ fn desktop_file(path: &str) -> Opener {
     })
 }
 
-/// A Debian package. Debian's own (and Ubuntu's) pack their files with xz
-/// or zstd, which justOS cannot unpack yet: say so. A package packed with
-/// gzip (or not at all) goes to the installer, as before.
+/// A Debian package: a window that reads it, asks, and installs it with
+/// dpkg (see `debinst`).
 fn deb(path: &str) -> Opener {
-    match deb_data(path).as_deref() {
-        Some("data.tar") | Some("data.tar.gz") => Opener::Install(String::from(path)),
-        _ => tell(path, "I pacchetti .deb non si installano ancora.", "store"),
-    }
-}
-
-/// The name of a .deb's data member (data.tar.xz…), from the `ar` headers
-/// at its start.
-fn deb_data(path: &str) -> Option<String> {
-    let p = fs::abs(path).ok()?;
-    let mut magic = [0u8; 8];
-    if fs::read_at(&p, 0, &mut magic).ok()? != 8 || &magic != b"!<arch>\n" {
-        return None;
-    }
-    let mut at = 8u64;
-    for _ in 0..4 {
-        let mut h = [0u8; 60];
-        if fs::read_at(&p, at, &mut h).ok()? != 60 {
-            return None;
-        }
-        let name = core::str::from_utf8(&h[..16]).ok()?.trim_end().trim_end_matches('/');
-        if name.starts_with("data.tar") {
-            return Some(String::from(name));
-        }
-        let size: u64 = core::str::from_utf8(&h[48..58]).ok()?.trim().parse().ok()?;
-        at += 60 + size + (size & 1);
-    }
-    None
+    Opener::App(debinst::open(path))
 }
 
 /// A Mach-O program (macOS), from its first bytes: either byte order, 32
