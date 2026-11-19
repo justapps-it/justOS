@@ -1772,6 +1772,19 @@ impl Desktop {
         }
     }
 
+    /// A Files window at the folder of `path` (or at `path`, a folder).
+    fn show_in_files(&mut self, l: &mut Looper, path: &str) {
+        let folder = match fs::abs(path) {
+            Ok(p) if fs::is_dir(&p) => format!("{p}"),
+            _ => match path.rsplit_once('/') {
+                Some((dir, _)) if dir.ends_with(':') => format!("{dir}/"),
+                Some((dir, _)) => String::from(dir),
+                None => String::from("sys:/home"),
+            },
+        };
+        self.open(l, apps::files_at(&folder), false);
+    }
+
     /// Starts a program that opens a window of its own.
     fn spawn(&mut self, l: &mut Looper, path: &str) {
         // A Windows program installed in Wine: its shortcut opens like a file
@@ -4103,6 +4116,15 @@ impl Desktop {
                 // Windows programs that waited for Wine's preparation.
                 for path in super::apps::winprep::take_ready() {
                     self.open_file(l, &path);
+                }
+                // Files that Linux programs asked to open (Firefox's
+                // downloads, xdg-open): as a double click in Files.
+                for (show, path) in crate::linux::opener::take() {
+                    if show || fs::abs(&path).is_ok_and(|p| fs::is_dir(&p)) {
+                        self.show_in_files(l, &path);
+                    } else {
+                        self.open_file(l, &path);
+                    }
                 }
                 self.check_starting(l);
                 // The apps kept in the dock, changed in the settings.

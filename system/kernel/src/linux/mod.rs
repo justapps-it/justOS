@@ -29,6 +29,7 @@ pub mod fd;
 mod inotify;
 pub mod mm;
 mod ns;
+pub mod opener;
 mod poll;
 mod seccomp;
 mod shm;
@@ -956,7 +957,7 @@ fn dispatch(n: u64, a: [u64; 6]) -> i64 {
         18 => fd::sys_pwrite(fd0, a[1], a[2], a[3]),
         19 => sys_readv(fd0, a[1], a[2]),
         20 => sys_writev(fd0, a[1], a[2]),
-        21 => fd::sys_faccessat(fd::AT_FDCWD, a[0]),
+        21 => fd::sys_faccessat(fd::AT_FDCWD, a[0], a[1]),
         22 => fd::sys_pipe2(a[0], 0),
         23 => poll::sys_select_tv(a[0], a[1], a[2], a[3], a[4]),
         24 => {
@@ -1093,7 +1094,7 @@ fn dispatch(n: u64, a: [u64; 6]) -> i64 {
         267 => fd::sys_readlinkat(fd0, a[1], a[2], a[3]),
         268 | 452 => fd::sys_fchmodat(fd0, a[1], a[2] as u32), // fchmodat, fchmodat2
         260 | 277 | 280 => 0,     // fchownat, sync_file_range, utimensat
-        269 | 439 => fd::sys_faccessat(fd0, a[1]),
+        269 | 439 => fd::sys_faccessat(fd0, a[1], a[2]),
         270 => poll::sys_pselect6(a[0], a[1], a[2], a[3], a[4]),
         271 => poll::sys_ppoll(a[0], a[1], a[2]),
         272 => ns::sys_unshare(a[0]),

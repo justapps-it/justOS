@@ -98,6 +98,11 @@ pub fn open(id: &str) -> Option<Box<dyn App>> {
     })
 }
 
+/// A Files window showing `folder`.
+pub fn files_at(folder: &str) -> Box<dyn App> {
+    Box::new(Files::new(folder))
+}
+
 /// Does the app have one window at most?
 pub fn single(id: &str) -> bool {
     !matches!(id, "files" | "textedit" | "textedit-new" | "viewer")
