@@ -505,6 +505,9 @@ fn default_env(own: &[String]) -> Vec<String> {
         // GTK and GLib: settings kept in memory (there is no dconf service)
         // and no accessibility bus to look for.
         .chain(["GSETTINGS_BACKEND=memory", "NO_AT_BRIDGE=1"].iter().map(|s| s.to_string()))
+        // GTK's theme follows the desktop's (light text on the light panel
+        // would be unreadable); the programs read it when they start.
+        .chain([alloc::format!("GTK_THEME={}", if crate::gui::window::theme() == justdk::syscall::THEME_LIGHT { "justOS-light" } else { "justOS" })])
         .filter(|v| !set(v))
         .chain(extra.iter().cloned())
         .filter(|v| !own.iter().any(|o| o.split_once('=').map(|(n, _)| n) == v.split_once('=').map(|(n, _)| n)))

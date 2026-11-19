@@ -1,23 +1,35 @@
 /* justOS for GTK 3: Linux programs look like justOS's own apps. The
- * window's background is clear, so the desktop's frosted glass shows
- * through; text is white, buttons are pills, the accent is justOS's
- * orange and the typeface Google Sans Flex (see settings.ini). Built on
- * Adwaita's dark variant, which GTK carries inside itself.
+ * window's background is the colour of the body of justOS's windows, the
+ * boxes in it are clear; text is white, buttons are pills, the accent is
+ * justOS's orange and the typeface Google Sans Flex (see settings.ini).
+ * Built on Adwaita's dark variant, which GTK carries inside itself.
  *
  * Adwaita paints most fills with background-image and has a rule of its
  * own for every state, also for windows that are not in front
  * (:backdrop), so each rule here names those states too and clears the
- * image: justOS windows look the same in front and behind. */
+ * image: justOS windows look the same in front and behind.
+ * The light desktop theme gets ../../justOS-light. */
 @import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained-dark.css");
 
 @define-color just_accent #ff5a1f;
 @define-color just_ink #1b1a1f;
 @define-color just_menu rgba(44, 43, 49, 0.97);
 
-window, window.background, .background, .background:backdrop, dialog .dialog-vbox, stack, viewport,
+dialog .dialog-vbox, stack, viewport,
 notebook > stack, notebook > stack:not(:only-child):backdrop, notebook > header, notebook > header:backdrop,
 scrolledwindow, box, grid {
     background-color: transparent;
+    background-image: none;
+    color: #ffffff;
+    text-shadow: none;
+}
+
+/* The window itself is solid, in the colour of the desktop's window
+ * body (the panel under it shows the same): programs that sample the
+ * theme's colours (Firefox paints its dialogs from them) read a window
+ * colour, not "transparent", which they take for white. */
+window, window.background, .background, .background:backdrop {
+    background-color: #0f0f10;
     background-image: none;
     color: #ffffff;
     text-shadow: none;

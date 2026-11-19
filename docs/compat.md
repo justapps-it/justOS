@@ -115,12 +115,23 @@ L'immagine porta **GTK 3** di Debian (`libgtk-3-0t64`, con il caricatore SVG
 delle icone e i programmi di prova `gtk3-widget-factory` e `gtk3-demo` in
 `sys:/usr/bin`). I programmi GTK hanno l'aspetto di justOS: il tema
 **justOS** (`rootfs/usr/share/themes/justOS/gtk-3.0/gtk.css`, scelto da
-`rootfs/etc/gtk-3.0/settings.ini`) lascia trasparente lo sfondo, così dietro
-si vede il vetro della finestra, e usa testo bianco, pulsanti a pillola,
+`rootfs/etc/gtk-3.0/settings.ini`) dà alla finestra il colore del corpo
+delle finestre di justOS, e usa testo bianco, pulsanti a pillola,
 l'arancione di justOS per spunte, interruttori e barre, e il carattere Google
 Sans Flex. Parte da Adwaita scuro (che GTK ha dentro di sé) e copre anche lo
 stato delle finestre che non sono davanti: una finestra GTK resta uguale
 davanti e dietro, come quelle di justOS.
+
+Il tema segue quello della scrivania: con il tema scuro i programmi GTK
+partono con `GTK_THEME=justOS`, con il tema chiaro con `justOS-light`
+(`rootfs/usr/share/themes/justOS-light`, stessa struttura con testo scuro e
+riempimenti neri trasparenti; il kernel imposta la variabile in
+`linux::default_env`, quindi vale per i programmi avviati dopo il cambio).
+Con il solo tema scuro, sul pannello chiaro il testo bianco era invisibile:
+i dialoghi di Firefox erano bianchi, senza testo né etichette sui pulsanti.
+Lo sfondo della finestra GTK è ora pieno (lo stesso colore del corpo delle
+finestre di justOS): Firefox legge da lì i colori dei suoi dialoghi e lo
+"trasparente" lo prendeva per bianco, anche con il tema scuro.
 
 **Aprire un file da un programma Linux.** "Apri" nel pannello dei download di
 Firefox (GLib, `g_app_info_launch_default_for_uri`) e `xdg-open` finiscono
