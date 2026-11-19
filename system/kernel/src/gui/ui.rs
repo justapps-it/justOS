@@ -822,8 +822,8 @@ impl Looper {
     ///
     /// Frames are paced (see [`super::pace`]): one at most every period of
     /// the cap, the pointer included; while nothing moves the loop draws
-    /// nothing and waits for input (or a window's new picture), looking
-    /// every [`IDLE_LOOK_MS`] at what cannot wake it.
+    /// nothing and sleeps until something wakes it, or the next tick (every
+    /// 100 ms, for the clock and the like).
     pub fn run(&mut self, d: &mut Display, view: &mut dyn View) {
         use super::pace;
         // When the next frame may start (uptime, ns).
@@ -940,6 +940,9 @@ impl Looper {
     }
 }
 
-/// While nothing moves, how often the loop looks at what cannot wake it
-/// (Linux programs' windows, the terminal, requests from other threads).
-const IDLE_LOOK_MS: u64 = 8;
+/// While nothing moves, how often the loop looks around anyway. What has
+/// something to show wakes it (input, a window's new picture, Linux
+/// programs' windows, the terminal's text, new windows and requests from
+/// other threads: `input::wake_gui` and `wake_gui_soon`), so this is a
+/// safety net for what does not, at the pace of the tick.
+const IDLE_LOOK_MS: u64 = 100;

@@ -1487,6 +1487,8 @@ impl Client {
             }
         }
         win.generation += 1;
+        // The desktop shows it at its next frame, not at its next look.
+        crate::dev::input::wake_gui_soon();
     }
 
     /// Draws a surface and its subsurfaces, in their order.

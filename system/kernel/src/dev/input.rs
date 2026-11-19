@@ -119,6 +119,24 @@ pub fn wake_gui() {
     GUI_WAKE.signal();
 }
 
+/// Set by [`wake_gui_soon`], taken by the timer interrupt.
+static GUI_SOON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Wakes the graphical interface's loop at the next timer tick (within a
+/// millisecond): one atomic store, no lock, so it can be called from
+/// anywhere, with any lock held (the terminal's text, a window opened by
+/// another thread, a request to the interface).
+pub fn wake_gui_soon() {
+    GUI_SOON.store(true, core::sync::atomic::Ordering::Release);
+}
+
+/// From the timer interrupt of the first processor.
+pub fn tick() {
+    if GUI_SOON.load(core::sync::atomic::Ordering::Relaxed) && GUI_SOON.swap(false, core::sync::atomic::Ordering::AcqRel) {
+        GUI_WAKE.signal();
+    }
+}
+
 /// Waits at most `ms` for input or another [`wake_gui`]; whether it came.
 pub fn wait_gui(ms: u64) -> bool {
     GUI_WAKE.wait(Some(ms))

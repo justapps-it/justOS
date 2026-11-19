@@ -120,6 +120,7 @@ static NEW: IrqLock<Vec<Opening>> = IrqLock::new(Vec::new());
 /// Asks the desktop to show a window; `id` is its toplevel's surface.
 pub fn open(win: Arc<Mutex<Win>>, inbox: Arc<Inbox>, id: u32, icon: String) {
     NEW.lock().push(Opening { win, inbox, id, icon });
+    crate::dev::input::wake_gui_soon();
 }
 
 /// New windows for the desktop to open.

@@ -617,6 +617,7 @@ pub fn sleep_ms(ms: u64) {
 /// it came while a program ran (not the kernel).
 pub fn timer_tick(user: bool) {
     crate::time::tick();
+    crate::dev::input::tick();
     tick(true, user);
 }
 

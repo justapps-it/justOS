@@ -361,11 +361,18 @@ sistema resta a 1 kHz: il ciclo dorme fino al millisecondo giusto, ma le
 scadenze sono tenute in nanosecondi (`time::uptime_ns`), così in media i
 fotogrammi arrivano al ritmo scelto (a 240 Hz uno ogni 4 o 5 ms).
 
-A riposo il ciclo aspetta: lo svegliano subito il mouse e la tastiera
+A riposo il ciclo dorme. Lo svegliano subito il mouse e la tastiera
 (`input::wake_gui`) e la finestra di un programma che manda un'immagine
-nuova (`window::present`); in più guarda ogni 8 ms quello che non lo può
-svegliare (lo stato delle app, il Terminale, le richieste di altri thread)
-e ogni 100 ms manda alle app il loro `Tick`, come prima.
+nuova (`window::present`). Entro un millisecondo lo svegliano anche le
+finestre dei programmi Linux che hanno disegnato (il compositor Wayland), il
+testo nuovo del Terminale (che lo mostra al fotogramma successivo, non al
+`Tick`), le finestre nuove e le richieste di altri thread (risoluzione,
+dimensione dell'interfaccia, Impostazioni, programmi Windows pronti): chi ha
+qualcosa da mostrare chiama `input::wake_gui_soon`, che è un solo flag senza
+lock, e il timer di sistema sveglia il ciclo al tick successivo. Ogni 100 ms il ciclo
+manda alle app il loro `Tick` e intanto dà un'occhiata a tutto il resto, come
+rete di sicurezza: a scrivania ferma si sveglia una decina di volte al
+secondo, non più 125.
 
 *Impostazioni → Schermo → Fluidità* sceglie il ritmo massimo: *Automatica*,
 *60 Hz*, *120 Hz*, *144 Hz*, *240 Hz*. *Automatica* sarebbe la frequenza

@@ -99,6 +99,7 @@ pub fn create(pid: u32, title: &str, w: i32, h: i32, flags: u64) -> Result<u64, 
     let arc = Arc::new(Mutex::new(shared));
     WINDOWS.lock().push((handle, arc.clone()));
     NEW.lock().push(arc);
+    crate::dev::input::wake_gui_soon();
     Ok(handle)
 }
 

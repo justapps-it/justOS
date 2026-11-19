@@ -112,6 +112,8 @@ static GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64
 
 fn touched() {
     GENERATION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    // A Terminal window shows it at the interface's next frame.
+    crate::dev::input::wake_gui_soon();
 }
 
 struct Terminal {

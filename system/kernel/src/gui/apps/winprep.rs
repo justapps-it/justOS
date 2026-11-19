@@ -291,6 +291,8 @@ fn prepare() {
     st.ready = core::mem::take(&mut st.queue);
     st.phase = Phase::Idle;
     st.window = false;
+    drop(st);
+    crate::dev::input::wake_gui_soon();
 }
 
 /// Stopped by the user: what the preparation made is taken away, so that

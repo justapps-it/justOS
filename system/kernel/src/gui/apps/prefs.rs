@@ -80,11 +80,13 @@ static REQUESTED: AtomicU8 = AtomicU8::new(0);
 /// The settings open at Aspetto (the dock's menu).
 pub fn request_look() {
     REQUESTED.store(2, Ordering::Relaxed);
+    crate::dev::input::wake_gui_soon();
 }
 
 /// The settings open at Schermo (the desktop's menu).
 pub fn request_screen() {
     REQUESTED.store(3, Ordering::Relaxed);
+    crate::dev::input::wake_gui_soon();
 }
 
 fn take_requested() -> Option<Section> {

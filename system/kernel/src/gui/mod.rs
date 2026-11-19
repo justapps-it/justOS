@@ -359,6 +359,7 @@ pub fn before_sleep() {
 
 pub fn after_sleep() {
     REDRAW.store(true, core::sync::atomic::Ordering::Release);
+    crate::dev::input::wake_gui_soon();
 }
 
 fn take_sleep_lock() -> bool {
@@ -375,6 +376,7 @@ static MODE_REQUEST: IrqLock<Option<justdk::DisplayMode>> = IrqLock::new(None);
 /// Asks the interface to switch the screen to `mode`.
 pub fn request_mode(mode: justdk::DisplayMode) {
     *MODE_REQUEST.lock() = Some(mode);
+    crate::dev::input::wake_gui_soon();
 }
 
 /// Changes the resolution and remembers it (from the shell or the
@@ -432,6 +434,7 @@ pub fn change_scale(choice: u32) -> Result<(), &'static str> {
     }
     settings::update(|s| s.scale = choice);
     SCALE_REQUEST.store(true, core::sync::atomic::Ordering::Release);
+    crate::dev::input::wake_gui_soon();
     Ok(())
 }
 

@@ -153,6 +153,18 @@ impl App for Terminal {
         blink || console::generation() != self.seen
     }
 
+    /// New text (the shell's answer to a key, a program's output) is shown
+    /// at the next frame, not at the next tick: the console wakes the
+    /// interface when it changes.
+    fn animating(&self) -> bool {
+        console::generation() != self.seen
+    }
+
+    fn frame(&mut self) -> bool {
+        self.seen = console::generation();
+        true
+    }
+
     /// The rows whose cells or caret differ from the screen.
     fn changed(&mut self, area: Rect) -> Option<Rect> {
         let (cols, rows, ccol, crow, cursor) = console::snapshot(&mut self.cells);

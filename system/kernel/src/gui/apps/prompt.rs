@@ -48,6 +48,7 @@ static ANSWERED: WaitQueue = WaitQueue::new();
 fn ask(ask: Ask) -> Answer {
     let req = Arc::new(Mutex::new(Request { ask, answer: None, done: false }));
     NEW.lock().push(req.clone());
+    crate::dev::input::wake_gui_soon();
     loop {
         let got = ANSWERED.wait_for_timeout(100, || {
             let mut r = req.lock();
