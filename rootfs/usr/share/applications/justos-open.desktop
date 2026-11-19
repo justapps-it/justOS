@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Apri con justOS
+Comment=Apre il file come con un doppio clic nell'app File
+Exec=/usr/bin/justos-open %F
+Icon=file
+NoDisplay=true
+Terminal=false
+MimeType=application/vnd.microsoft.portable-executable;application/x-ms-dos-executable;application/x-msdownload;application/x-msi;application/x-bat;application/x-msdos-program;application/x-dosexec;application/x-executable;application/x-sharedlib;application/x-pie-executable;application/x-desktop;application/vnd.appimage;application/x-iso9660-appimage;application/vnd.android.package-archive;application/x-deb;application/x-java-archive;application/octet-stream;application/pdf;application/zip;application/json;text/plain;text/markdown;text/csv;text/x-log;text/x-csrc;text/x-chdr;text/x-python;text/x-shellscript;image/png;image/jpeg;image/gif;image/webp;image/bmp;audio/x-wav;audio/wav;inode/directory;x-scheme-handler/file;application/vnd.debian.binary-package;application/x-debian-package;application/x-sh;application/x-shellscript;application/x-ms-installer;application/x-apple-diskimage;

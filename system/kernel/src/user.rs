@@ -937,6 +937,14 @@ pub(crate) fn is_running(pid: u32) -> bool {
     PROCS.lock().get(&pid).is_some_and(|p| p.state == State::Running)
 }
 
+/// How a process that ended did end, if it has (it stays until waited for).
+pub(crate) fn exit_code(pid: u32) -> Option<i64> {
+    match PROCS.lock().get(&pid)?.state {
+        State::Exited(c) => Some(c),
+        State::Running => None,
+    }
+}
+
 /// Stops one process (SIGKILL), not the ones it made.
 pub(crate) fn kill_one(pid: u32) {
     if let Some(p) = PROCS.lock().get_mut(&pid) {

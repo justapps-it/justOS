@@ -300,8 +300,9 @@ impl Inputs {
         let sys = fs.lookup("system").map_err(fserr)?;
         fs.set_flags(sys, justfs::FLAG_SYSTEM).map_err(fserr)?;
         // The Linux file tree (from tools/linux/debroot.py) is for Linux
-        // programs; the Files app does not show it.
-        for name in ["bin", "sbin", "lib", "lib64", "usr"] {
+        // programs; the Files app does not show it, nor the settings of
+        // Linux programs in the home folder (.config, from rootfs/home).
+        for name in ["bin", "sbin", "lib", "lib64", "usr", "home/.config"] {
             if let Ok(id) = fs.lookup_link(name) {
                 fs.set_flags(id, justfs::FLAG_HIDDEN).map_err(fserr)?;
             }

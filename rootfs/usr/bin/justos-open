@@ -1,0 +1,19 @@
+#!/bin/sh
+# Hands files (and folders, and web addresses) to the justOS desktop, which
+# opens them as a double click in the Files app does: Windows programs
+# through Wine, documents and images in justOS's apps, folders in Files.
+# GLib's "open with the default application" (Firefox's downloads panel)
+# and xdg-open end here. "--show" shows the file in its folder instead.
+mode=open
+if [ "$1" = "--show" ]; then
+    mode=show
+    shift
+fi
+for f in "$@"; do
+    case "$f" in
+        file://* | http://* | https://* | /*) t=$f ;;
+        mailto:* | tel:* | ftp://* ) continue ;;
+        *) t=$PWD/$f ;;
+    esac
+    echo "$mode $t" > /dev/justos/open
+done

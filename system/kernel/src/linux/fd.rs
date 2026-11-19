@@ -408,6 +408,7 @@ fn virtual_file(text: &str) -> Option<Kind> {
     match text {
         "/dev/null" => Some(Kind::Null),
         "/dev/zero" => Some(Kind::Zero),
+        "/dev/justos/open" => Some(Kind::Virtual { data: Vec::new(), pos: IrqLock::new(0), sink: Some(super::ns::Sink::Open) }),
         "/dev/urandom" | "/dev/random" => Some(Kind::Random),
         "/dev/tty" | "/dev/console" | "/dev/stdin" | "/dev/stdout" | "/dev/stderr" => Some(Kind::Console),
         _ if super::binder::device(text).is_some() => super::binder::device(text).map(|ctx| Kind::Binder(super::binder::open(ctx))),
@@ -1116,16 +1117,49 @@ pub fn sys_statx(dirfd: i32, path_ptr: u64, flags: u64, buf: u64) -> i64 {
     0
 }
 
-pub fn sys_faccessat(dirfd: i32, path_ptr: u64) -> i64 {
+/// access(): whether the file is there; the program may read and write it
+/// (justOS has no owners). Running it (X_OK) only when it is a program, see
+/// [`runnable`]: Firefox asks "Open Executable File?" by this before it
+/// opens a download, which a text file must not get.
+pub fn sys_faccessat(dirfd: i32, path_ptr: u64, mode: u64) -> i64 {
+    const X_OK: u64 = 1;
     let text = super::path_text_at(dirfd, path_ptr).unwrap_or_default();
     if let Some(info) = virtual_stat(&text, true) {
         return info.map_or_else(|e| e, |_| 0);
     }
     match path_arg(dirfd, path_ptr) {
-        Ok((p, _)) if fs::exists(&p) || super::unix::is_bound(&p) => 0,
+        Ok((p, _)) if fs::exists(&p) => {
+            if mode & X_OK != 0 && !runnable(&p) {
+                -err::EACCES
+            } else {
+                0
+            }
+        }
+        Ok((p, _)) if super::unix::is_bound(&p) => 0,
         Ok(_) => -err::ENOENT,
         Err(e) => e,
     }
+}
+
+/// What a double click opens as a program, by its name (as on Windows).
+const PROGRAM_EXTENSIONS: &[&str] = &["exe", "msi", "bat", "cmd", "com", "lnk", "apk", "jar", "dex", "appimage", "desktop"];
+
+/// Whether `p` may be run: a folder, a file with an execute bit (as stat
+/// shows it), or one justOS runs when it is opened (a Windows program or
+/// installer by its name, any ELF or MZ program by its first bytes) even
+/// though it came without the bit, as a download does.
+fn runnable(p: &Path) -> bool {
+    let Ok(st) = stat_of_path(p) else { return true };
+    if st.mode & 0o170000 != 0o100000 || st.mode & 0o111 != 0 {
+        return true;
+    }
+    let name = p.name().to_ascii_lowercase();
+    if name.rsplit_once('.').is_some_and(|(_, ext)| PROGRAM_EXTENSIONS.contains(&ext)) {
+        return true;
+    }
+    let mut head = [0u8; 4];
+    let n = fs::read_at(p, 0, &mut head).unwrap_or(0);
+    head[..n].starts_with(b"\x7fELF") || head[..n].starts_with(b"MZ")
 }
 
 // ----------------------------------------------------------------------------

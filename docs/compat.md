@@ -115,12 +115,74 @@ L'immagine porta **GTK 3** di Debian (`libgtk-3-0t64`, con il caricatore SVG
 delle icone e i programmi di prova `gtk3-widget-factory` e `gtk3-demo` in
 `sys:/usr/bin`). I programmi GTK hanno l'aspetto di justOS: il tema
 **justOS** (`rootfs/usr/share/themes/justOS/gtk-3.0/gtk.css`, scelto da
-`rootfs/etc/gtk-3.0/settings.ini`) lascia trasparente lo sfondo, così dietro
-si vede il vetro della finestra, e usa testo bianco, pulsanti a pillola,
+`rootfs/etc/gtk-3.0/settings.ini`) dà alla finestra il colore del corpo
+delle finestre di justOS, e usa testo bianco, pulsanti a pillola,
 l'arancione di justOS per spunte, interruttori e barre, e il carattere Google
 Sans Flex. Parte da Adwaita scuro (che GTK ha dentro di sé) e copre anche lo
 stato delle finestre che non sono davanti: una finestra GTK resta uguale
 davanti e dietro, come quelle di justOS.
+
+Il tema segue quello della scrivania: con il tema scuro i programmi GTK
+partono con `GTK_THEME=justOS`, con il tema chiaro con `justOS-light`
+(`rootfs/usr/share/themes/justOS-light`, stessa struttura con testo scuro e
+riempimenti neri trasparenti; il kernel imposta la variabile in
+`linux::default_env`, quindi vale per i programmi avviati dopo il cambio).
+Con il solo tema scuro, sul pannello chiaro il testo bianco era invisibile:
+i dialoghi di Firefox erano bianchi, senza testo né etichette sui pulsanti.
+Lo sfondo della finestra GTK è ora pieno (lo stesso colore del corpo delle
+finestre di justOS): Firefox legge da lì i colori dei suoi dialoghi e lo
+"trasparente" lo prendeva per bianco, anche con il tema scuro.
+
+**Aprire un file da un programma Linux.** "Apri" nel pannello dei download di
+Firefox (GLib, `g_app_info_launch_default_for_uri`) e `xdg-open` finiscono
+sullo stesso percorso del doppio clic nell'app File. Non c'è D-Bus, quindi il
+ponte è un file speciale: un programma scrive `open <percorso>` (o
+`show <percorso>`, per mostrare la cartella) in `/dev/justos/open`
+(`linux/opener.rs`); la scrivania legge la coda e chiama `open_file`, cioè
+`apps::for_file`: un `.exe`/`.msi` passa da Wine (la prima volta con la
+finestra di preparazione di justOS), i documenti e le immagini si aprono
+nelle app di justOS, una cartella nell'app File. Il percorso può essere
+Linux, un indirizzo `file://` o `http(s)://`. L'helper è lo script
+`/usr/bin/justos-open` (e `/usr/bin/xdg-open`, identico, con `--show` per la
+cartella), registrato da `justos-open.desktop` come applicazione predefinita
+(`/etc/xdg/mimeapps.list`, `/usr/share/applications/mimeinfo.cache`) per i
+tipi di file più comuni, `application/octet-stream` e `inode/directory`.
+In Firefox il clic su un file scaricato lo apre senza chiedere con quale
+app: `rootfs/etc/firefox-esr/justos.js` imposta
+`browser.download.always_ask_before_handling_new_types=false`, e la
+cartella dei download è `sys:/home/Scaricati`, quella che l'app File mostra
+(anche `rootfs/home/.config/user-dirs.dirs` e `distribution/policies.json`).
+Un documento o un'immagine si aprono subito. Per un programma o un
+installatore Firefox chiede invece una volta "Open Executable File?": è una
+domanda di sicurezza e resta; dopo la conferma il file va a justOS come
+sopra (un `.exe` la prima volta passa dalla finestra di preparazione di
+Wine). Il gestore delle finestre non tiene ancora un dialogo sopra la
+finestra che lo ha aperto (`xdg_toplevel.set_parent`): se la domanda finisce
+dietro Firefox, Firefox sembra fermo finché non la si riporta davanti. Firefox
+riconosce un programma da `access(X_OK)`, che in justOS risponde sì per una
+cartella, per un file con il permesso di esecuzione e per quelli che justOS
+apre come programmi anche senza: `.exe`, `.msi`, `.bat`, `.cmd`, `.com`,
+`.lnk`, `.apk`, `.jar`, `.dex`, AppImage, `.desktop`, e ogni ELF o MZ dai
+primi byte (`runnable` in `linux/fd.rs`). Prima `access` diceva sì per
+tutto, e Firefox avrebbe chiesto anche per un `.txt`. Il tipo di file è
+registrato per `.exe`, `.msi`, `.bat`, `.deb`, AppImage, `.desktop`, script
+ed ELF (e `application/octet-stream` per gli altri).
+
+**Errori dei programmi Windows.** Quando un programma Windows si chiude per
+un errore (eccezione non gestita, stato 0xC0000005 e simili) Wine non apre più
+la console "Wine Debugger" né la finestra "Program Error": `winedbg` è
+spento tra le DLL del prefisso (`tools/linux/winelook.py` aggiunge a
+`wine.inf` l'override `winedbg.exe=""`, che vale anche per i programmi
+avviati dal terminale e arriva ai prefissi già fatti quando wineboot
+rilegge `wine.inf`) e, per i prefissi non ancora aggiornati, da
+`WINEDLLOVERRIDES=winedbg.exe=d` nei programmi avviati dalla scrivania.
+Togliere i valori `AeDebug` non basta: senza di loro Wine avvia
+`winedbg --auto` lo stesso. Al posto del debugger, per un programma avviato
+dalla scrivania (doppio clic, Firefox, `xdg-open`), la scrivania mostra la
+notifica «nome.exe» si è chiuso per un errore (`check_wine` in
+`gui/desktop.rs`, dallo stato di uscita di Wine: un NTSTATUS di errore,
+0xC......., tranne 0xC000013A, la chiusura con Ctrl+C). Un programma chiuso
+normalmente non ne lascia; uno avviato dal terminale scrive l'errore lì.
 
 Non ci sono ancora inotify (GIO ripiega su controlli periodici), D-Bus e
 l'accessibilità; le impostazioni (GSettings) restano in memoria. L'avvio di

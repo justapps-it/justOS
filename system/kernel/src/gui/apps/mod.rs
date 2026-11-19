@@ -98,6 +98,11 @@ pub fn open(id: &str) -> Option<Box<dyn App>> {
     })
 }
 
+/// A Files window showing `folder`.
+pub fn files_at(folder: &str) -> Box<dyn App> {
+    Box::new(Files::new(folder))
+}
+
 /// Does the app have one window at most?
 pub fn single(id: &str) -> bool {
     !matches!(id, "files" | "textedit" | "textedit-new" | "viewer")
@@ -305,7 +310,7 @@ const HOME: &str = "sys:/home";
 /// Wine (in the disk image unless it was built with `make WINE=0`; not on
 /// the live CD), and its C: drive (the
 /// prefix: `$HOME/.wine`, or what `export WINEPREFIX=` set).
-const WINE: &str = "sys:/usr/lib/wine/wine64";
+pub const WINE: &str = "sys:/usr/lib/wine/wine64";
 const FIREFOX: &str = "sys:/usr/bin/firefox-esr";
 /// What a Linux program with a window links: a toolkit or a display
 /// protocol (the names of its DT_NEEDED libraries start like this).
@@ -462,9 +467,10 @@ fn has_wine() -> bool {
 /// What Wine's programs get in their environment: no debugging messages
 /// (they slow a program down and fill the terminal; unless the user chose
 /// them with `export WINEDEBUG=...` in the terminal), and no offer to
-/// download Mono or Gecko (nothing in the system can use them).
+/// download Mono or Gecko (nothing in the system can use them), and no
+/// winedbg (its console and dialog on a crash; the desktop says it).
 fn wine_env() -> Vec<String> {
-    let mut env = alloc::vec![String::from("WINEDLLOVERRIDES=mscoree,mshtml=")];
+    let mut env = alloc::vec![String::from("WINEDLLOVERRIDES=mscoree,mshtml=;winedbg.exe=d")];
     if !crate::linux::extra_env().iter().any(|v| v.starts_with("WINEDEBUG=")) {
         env.push(String::from("WINEDEBUG=-all"));
     }

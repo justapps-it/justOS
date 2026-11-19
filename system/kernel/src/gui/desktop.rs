@@ -676,6 +676,8 @@ struct Desktop {
     bounce: Option<(String, Anim)>,
     /// Programs launched that have no window yet.
     starting: Vec<Starting>,
+    /// Windows programs that crashed in this tick (see check_wine).
+    crashed: Vec<u32>,
     mouse: (i32, i32),
     minute: u64,
     second: u64,
@@ -1772,6 +1774,19 @@ impl Desktop {
         }
     }
 
+    /// A Files window at the folder of `path` (or at `path`, a folder).
+    fn show_in_files(&mut self, l: &mut Looper, path: &str) {
+        let folder = match fs::abs(path) {
+            Ok(p) if fs::is_dir(&p) => format!("{p}"),
+            _ => match path.rsplit_once('/') {
+                Some((dir, _)) if dir.ends_with(':') => format!("{dir}/"),
+                Some((dir, _)) => String::from(dir),
+                None => String::from("sys:/home"),
+            },
+        };
+        self.open(l, apps::files_at(&folder), false);
+    }
+
     /// Starts a program that opens a window of its own.
     fn spawn(&mut self, l: &mut Looper, path: &str) {
         // A Windows program installed in Wine: its shortcut opens like a file
@@ -1813,6 +1828,10 @@ impl Desktop {
         let cwd = fs::abs(&s.cwd).unwrap_or_else(|_| Path::root("sys"));
         match fs::abs(&s.program).map_err(|_| justdk::syscall::Error::NotFound).and_then(|p| crate::user::spawn_env(&p, &s.args, cwd, s.env.clone())) {
             Ok(pid) => {
+                if s.program == apps::WINE {
+                    let file = s.key.rsplit('/').next().unwrap_or(&s.key);
+                    WINE_WATCH.lock().push((pid, String::from(file), s.icon.clone().unwrap_or_else(|| String::from("file-exe"))));
+                }
                 // Its icon waits in the dock, widened into a capsule that
                 // says it is starting, until its first window comes; then
                 // there is no notification. One already open just hops.
@@ -1848,6 +1867,36 @@ impl Desktop {
         }
     }
 
+    /// Windows programs that ended: one that crashed gets a notification (the
+    /// pid goes to `crashed` so that its starting capsule does not say it
+    /// did not start as well).
+    fn check_wine(&mut self, l: &mut Looper) {
+        self.crashed.clear();
+        let done: Vec<(u32, String, String, i64)> = {
+            let mut w = WINE_WATCH.lock();
+            if w.is_empty() {
+                return;
+            }
+            let mut done = Vec::new();
+            w.retain(|(pid, name, icon)| match crate::user::exit_code(*pid) {
+                Some(code) => {
+                    done.push((*pid, name.clone(), icon.clone(), code));
+                    false
+                }
+                None => true,
+            });
+            done
+        };
+        for (pid, name, icon, code) in done {
+            // Wine's loader is not waited for by anyone else.
+            let _ = crate::user::wait(pid);
+            if crashed(code) {
+                self.crashed.push(pid);
+                self.notify(l, name.clone(), format!("«{name}» si è chiuso per un errore."), icon);
+            }
+        }
+    }
+
     /// Programs starting: the icon of one goes when it ended without a
     /// window (saying so) or after [`START_TIMEOUT_MS`] (a slow one
     /// [`SLOW_START_TIMEOUT_MS`]); [`Desktop::open`] takes it when its
@@ -1874,7 +1923,7 @@ impl Desktop {
         l.damage(self.dock_zone());
         for &(i, gone) in ended.iter().rev() {
             let s = self.starting.remove(i);
-            if gone {
+            if gone && !self.crashed.contains(&s.pid) {
                 let text = s.fail.unwrap_or_else(|| String::from("Non si è avviato."));
                 self.notify(l, s.label, text, s.icon);
             }
@@ -3845,6 +3894,20 @@ fn draw_month(c: &mut Canvas, g: Rect, d: &DateTime, fg: u32, dim: u32) {
 }
 use crate::fs::Path;
 
+/// Windows programs Wine runs, to say so when one ends in an error (Wine's
+/// own debugger windows are off, see `wine_env` in apps/mod.rs): the
+/// process id, the file's name and the icon.
+static WINE_WATCH: crate::sync::IrqLock<Vec<(u32, String, String)>> = crate::sync::IrqLock::new(Vec::new());
+
+/// Wine's loader ends with the program's status: an exception's (an error
+/// NTSTATUS, 0xC.......; a page fault is 0xC0000005) when it crashed.
+/// 0xC000013A is Ctrl+C. The status is a 32-bit number that may come
+/// sign-extended; one stopped by a signal (-128 - n) is not a crash.
+fn crashed(code: i64) -> bool {
+    let status = code as u32;
+    (0xC000_0000..=0xCFFF_FFFF).contains(&status) && status != 0xC000_013A
+}
+
 impl View for Desktop {
     fn resized(&mut self, w: i32, h: i32) {
         self.w = w;
@@ -4104,6 +4167,16 @@ impl Desktop {
                 for path in super::apps::winprep::take_ready() {
                     self.open_file(l, &path);
                 }
+                // Files that Linux programs asked to open (Firefox's
+                // downloads, xdg-open): as a double click in Files.
+                for (show, path) in crate::linux::opener::take() {
+                    if show || fs::abs(&path).is_ok_and(|p| fs::is_dir(&p)) {
+                        self.show_in_files(l, &path);
+                    } else {
+                        self.open_file(l, &path);
+                    }
+                }
+                self.check_wine(l);
                 self.check_starting(l);
                 // The apps kept in the dock, changed in the settings.
                 if settings::changes() != self.settings_seen {
@@ -4348,6 +4421,7 @@ pub fn run(d: &mut Display) {
         mag: Glide::new(0),
         bounce: None,
         starting: Vec::new(),
+        crashed: Vec::new(),
         mouse: (-1, -1),
         minute: u64::MAX,
         second: 0,

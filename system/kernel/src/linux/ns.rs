@@ -202,17 +202,23 @@ pub enum Sink {
     UidMap(Arc<UserNs>),
     GidMap(Arc<UserNs>),
     SetGroups(Arc<UserNs>),
+    /// /dev/justos/open: requests for the desktop to open a file.
+    Open,
 }
 
 impl Sink {
     /// A write at `pos`: the whole map (or setgroups word) at once, as
     /// Linux takes it.
     pub fn write(&self, data: &[u8], pos: u64) -> i64 {
+        if let Sink::Open = self {
+            return super::opener::write(data);
+        }
         if pos != 0 || data.len() >= 4096 {
             return -err::EINVAL;
         }
         let me = of(task::current_pid());
         match self {
+            Sink::Open => unreachable!(),
             Sink::SetGroups(ns) => {
                 let word = core::str::from_utf8(data).map(|s| s.trim_end_matches('\n'));
                 let deny = match word {

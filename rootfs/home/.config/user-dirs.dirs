@@ -1,0 +1,7 @@
+# justOS: the folders the Files app shows.
+XDG_DESKTOP_DIR="$HOME/Scrivania"
+XDG_DOWNLOAD_DIR="$HOME/Scaricati"
+XDG_DOCUMENTS_DIR="$HOME/Documenti"
+XDG_MUSIC_DIR="$HOME/Musica"
+XDG_PICTURES_DIR="$HOME/Immagini"
+XDG_VIDEOS_DIR="$HOME/Video"
