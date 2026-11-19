@@ -157,6 +157,22 @@ tutto, e Firefox avrebbe chiesto anche per un `.txt`. Il tipo di file è
 registrato per `.exe`, `.msi`, `.bat`, `.deb`, AppImage, `.desktop`, script
 ed ELF (e `application/octet-stream` per gli altri).
 
+**Errori dei programmi Windows.** Quando un programma Windows si chiude per
+un errore (eccezione non gestita, stato 0xC0000005 e simili) Wine non apre più
+la console "Wine Debugger" né la finestra "Program Error": `winedbg` è
+spento tra le DLL del prefisso (`tools/linux/winelook.py` aggiunge a
+`wine.inf` l'override `winedbg.exe=""`, che vale anche per i programmi
+avviati dal terminale e arriva ai prefissi già fatti quando wineboot
+rilegge `wine.inf`) e, per i prefissi non ancora aggiornati, da
+`WINEDLLOVERRIDES=winedbg.exe=d` nei programmi avviati dalla scrivania.
+Togliere i valori `AeDebug` non basta: senza di loro Wine avvia
+`winedbg --auto` lo stesso. Al posto del debugger, per un programma avviato
+dalla scrivania (doppio clic, Firefox, `xdg-open`), la scrivania mostra la
+notifica «nome.exe» si è chiuso per un errore (`check_wine` in
+`gui/desktop.rs`, dallo stato di uscita di Wine: un NTSTATUS di errore,
+0xC......., tranne 0xC000013A, la chiusura con Ctrl+C). Un programma chiuso
+normalmente non ne lascia; uno avviato dal terminale scrive l'errore lì.
+
 Non ci sono ancora inotify (GIO ripiega su controlli periodici), D-Bus e
 l'accessibilità; le impostazioni (GSettings) restano in memoria. L'avvio di
 un programma GTK prende qualche secondo.

@@ -16,6 +16,11 @@ The title bar colours are markers too: under Wayland Wine draws its own
 frame, and justOS's compositor knows it by them and leaves it out of the
 window, which the desktop frames (windows_frame in
 system/kernel/src/linux/wayland/mod.rs). Change them together.
+
+Windows programs that crash get no winedbg either: it is disabled in the
+prefix's DLL overrides here (also for programs started in the terminal),
+and by WINEDLLOVERRIDES in system/kernel/src/gui/apps/mod.rs for prefixes
+the new wine.inf has not reached yet.
 """
 import re
 import sys
@@ -84,6 +89,12 @@ def section() -> list[str]:
     # than the old System one, unless the user chose another.
     lines += ['HKCU,"Software\\Microsoft\\Notepad","lfFaceName",0x2,"Consolas"',
               'HKCU,"Software\\Microsoft\\Notepad","iPointSize",0x10003,110']
+    # No debugger when a program crashes: winedbg would open a console
+    # window and a "Program Error" dialog of Wine's own; the desktop says so
+    # in its own words instead. Emptying AeDebug would not do: without a
+    # Debugger value Wine starts winedbg all the same. An override of ""
+    # disables the program, so the debugger cannot start.
+    lines += ['HKCU,"Software\\Wine\\DllOverrides","winedbg.exe",,""']
     # Wine's light visual style would paint over these colours.
     lines += ['HKCU,"Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager","ThemeActive",,"0"']
     return lines
