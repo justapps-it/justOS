@@ -142,6 +142,14 @@ Presa a modello da macOS:
   del titolo e il dock compare portando il puntatore in basso.
   **Alt+Tab** passa alla finestra successiva, **Ctrl+Q** chiude quella in
   primo piano.
+- **Dialoghi**, come in macOS e Windows: un dialogo che dice a quale
+  finestra appartiene (un selettore di file o una domanda di un programma
+  Linux, vedi [compat.md](compat.md)) si apre al centro di quella finestra
+  e le resta sempre sopra. Portare davanti la finestra (clic, dock,
+  Alt+Tab, vista d'insieme) porta davanti anche i suoi dialoghi, e il
+  fuoco resta al dialogo; ridurla li riduce, riaprirla li riporta; spostarla
+  su un altro desktop li porta con lei. Nella vista d'insieme un dialogo sta
+  sopra il riquadro della sua finestra, e il menu del dock non lo elenca.
 - **Snap**, come in Windows: una finestra trascinata sul bordo sinistro o
   destro occupa quella metà dello schermo, in un angolo un quarto, sul bordo
   in alto tutto lo schermo; mentre si trascina un riquadro chiaro mostra

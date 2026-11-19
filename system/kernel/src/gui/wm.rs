@@ -150,6 +150,17 @@ pub trait App {
     fn activity(&self) -> Option<Live> {
         None
     }
+    /// A number for the window that no other window has, for
+    /// [`parent`](Self::parent) to name it (0: none).
+    fn ident(&self) -> u64 {
+        0
+    }
+    /// The [`ident`](Self::ident) of the window this one belongs to (a
+    /// dialog's window), or 0. It opens over that window, stays above it,
+    /// and is minimised and brought back with it.
+    fn parent(&self) -> u64 {
+        0
+    }
 }
 
 pub struct Window {

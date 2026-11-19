@@ -1230,22 +1230,140 @@ impl Desktop {
             self.go_to_space(l, space);
         }
         if let Some(i) = self.windows.iter().position(|w| w.id == id) {
+            let before = self.focused();
             let win = self.windows.remove(i);
-            let was_min = win.minimized;
             l.damage(win.bounds());
             self.windows.push(win);
-            if was_min {
-                self.start_fx(l, id, FxKind::Restore);
-                if let Some(w) = self.window_mut(id) {
-                    w.minimized = false;
+            // Its family comes along: the window it belongs to and the
+            // dialogs, which go back above it (and the top one has the
+            // focus: a click on a window with a dialog open is the
+            // dialog's).
+            for m in self.family(id) {
+                if self.window(m).is_some_and(|w| w.minimized) {
+                    self.start_fx(l, m, FxKind::Restore);
+                    if let Some(w) = self.window_mut(m) {
+                        w.minimized = false;
+                    }
                 }
             }
+            self.restack(l);
             // The window that lost focus redraws its title.
-            if let Some(prev) = self.windows.iter().rev().nth(1) {
-                l.damage(prev.bounds());
+            for f in [before, self.focused()].into_iter().flatten() {
+                if let Some(w) = self.window(f) {
+                    l.damage(w.bounds());
+                }
             }
             l.damage(self.clock_zone());
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Dialogs: windows that belong to another (a Linux program's
+    // `xdg_toplevel.set_parent`, see [`App::parent`])
+
+    /// The window each window belongs to, as an index into `windows`
+    /// (None: its own), with loops cut.
+    fn parents(&self) -> Vec<Option<usize>> {
+        let keys: Vec<u64> = self.windows.iter().map(|w| w.app.ident()).collect();
+        let mut up: Vec<Option<usize>> = self
+            .windows
+            .iter()
+            .enumerate()
+            .map(|(i, w)| match w.app.parent() {
+                0 => None,
+                k => keys.iter().position(|&o| o == k).filter(|&j| j != i),
+            })
+            .collect();
+        let n = up.len();
+        for i in 0..n {
+            let mut p = up[i];
+            for _ in 0..n {
+                match p {
+                    Some(j) if j == i => {
+                        up[i] = None;
+                        break;
+                    }
+                    Some(j) => p = up[j],
+                    None => break,
+                }
+            }
+        }
+        up
+    }
+
+    /// Window `id` and its dialogs, theirs too, bottom to top.
+    fn with_dialogs(&self, id: u32) -> Vec<u32> {
+        let up = self.parents();
+        let Some(i) = self.windows.iter().position(|w| w.id == id) else { return Vec::new() };
+        (0..up.len()).filter(|&j| below(&up, j, i)).map(|j| self.windows[j].id).collect()
+    }
+
+    /// The family window `id` is in: the window at its bottom and all its
+    /// dialogs, bottom to top.
+    fn family(&self, id: u32) -> Vec<u32> {
+        let up = self.parents();
+        let Some(i) = self.windows.iter().position(|w| w.id == id) else { return Vec::new() };
+        let r = family_root(&up, i);
+        (0..up.len()).filter(|&j| family_root(&up, j) == r).map(|j| self.windows[j].id).collect()
+    }
+
+    /// Moves window `id` to desktop `n`, with its family.
+    fn family_to_space(&mut self, id: u32, n: usize) {
+        for m in self.family(id) {
+            if let Some(w) = self.window_mut(m) {
+                w.space = n;
+            }
+        }
+    }
+
+    /// Keeps every dialog right above the window it belongs to (its own
+    /// dialogs above it), on that window's desktop. A family stays where
+    /// its top window is, so raising any of them brings them all up.
+    fn restack(&mut self, l: &mut Looper) {
+        let up = self.parents();
+        if up.iter().all(|p| p.is_none()) {
+            return;
+        }
+        let n = up.len();
+        let roots: Vec<usize> = (0..n).map(|i| family_root(&up, i)).collect();
+        let mut top = alloc::vec![0; n];
+        for (i, &r) in roots.iter().enumerate() {
+            top[r] = top[r].max(i);
+        }
+        let mut families: Vec<usize> = (0..n).filter(|&i| roots[i] == i).collect();
+        families.sort_by_key(|&r| top[r]);
+        // Each family: its window, then each dialog (in the order they are
+        // in now) followed by its own.
+        let mut order = Vec::with_capacity(n);
+        for r in families {
+            let mut next = alloc::vec![r];
+            while let Some(i) = next.pop() {
+                order.push(i);
+                next.extend((0..n).rev().filter(|&j| up[j] == Some(i)));
+            }
+        }
+        let spaces: Vec<usize> = roots.iter().map(|&r| self.windows[r].space).collect();
+        let same = order.iter().enumerate().all(|(k, &i)| k == i) && self.windows.iter().zip(&spaces).all(|(w, &s)| w.space == s);
+        if same || order.len() != n {
+            return;
+        }
+        let before = self.focused();
+        let mut old: Vec<Option<Window>> = core::mem::take(&mut self.windows).into_iter().map(Some).collect();
+        for (k, &i) in order.iter().enumerate() {
+            let Some(mut w) = old[i].take() else { continue };
+            if k != i || w.space != spaces[i] {
+                l.damage(w.bounds());
+            }
+            w.space = spaces[i];
+            self.windows.push(w);
+        }
+        self.windows.extend(old.into_iter().flatten());
+        for f in [before, self.focused()].into_iter().flatten() {
+            if let Some(w) = self.window(f) {
+                l.damage(w.bounds());
+            }
+        }
+        l.damage(self.clock_zone());
     }
 
     /// Starts an animation of window `id` (it is drawn as a picture until
@@ -1279,12 +1397,25 @@ impl Desktop {
         // losing its bottom; any other fits in the work area.
         let area = if ah > work.h && !app.resizable() { Rect::new(work.x, 4, work.w, work.bottom() - 4) } else { work };
         let (aw, full_h) = (aw.min(area.w), ah.min(area.h));
-        let (x, y) = self.place_new(aw, full_h, area);
+        // A dialog opens over the middle of the window it belongs to, on
+        // that one's desktop (minimised with it if it is).
+        let parent = match app.parent() {
+            0 => None,
+            k => self.windows.iter().find(|w| w.app.ident() == k).map(|w| (w.rect, w.space, w.minimized)),
+        };
+        let (x, y) = match parent {
+            Some((r, ..)) => place_over(r, aw, full_h, area),
+            None => self.place_new(aw, full_h, area),
+        };
         let id = self.next_id;
         self.next_id += 1;
-        self.last_new = Some(id);
+        if parent.is_none() {
+            self.last_new = Some(id);
+        }
         let mut win = Window::new(id, app, x, y);
-        win.space = self.space;
+        win.space = parent.map_or(self.space, |p| p.1);
+        win.minimized = parent.is_some_and(|p| p.2);
+        let shown = win.shown(self.space);
         win.rect.w = aw;
         win.rect.h = full_h;
         let kind = String::from(win.app.kind());
@@ -1298,7 +1429,11 @@ impl Desktop {
             self.starting.retain(|s| s.kind != kind);
         }
         self.windows.push(win);
-        self.start_fx(l, id, FxKind::Open);
+        if shown {
+            self.start_fx(l, id, FxKind::Open);
+        }
+        // A dialog brings its window up, right below it.
+        self.restack(l);
         l.damage(self.dock_zone());
         l.damage(self.clock_zone());
         self.bounce_icon(&kind);
@@ -1360,8 +1495,14 @@ impl Desktop {
     }
 
     fn minimize(&mut self, l: &mut Looper, id: u32) {
-        self.start_fx(l, id, FxKind::Minimize);
-        if let Some(top) = self.windows.iter().rev().filter(|w| w.id != id && w.shown(self.space)).map(|w| w.bounds()).next() {
+        // Its dialogs go with it (and come back with it when it is raised).
+        let space = self.space;
+        let going: Vec<u32> =
+            self.with_dialogs(id).into_iter().filter(|&m| m == id || self.window(m).is_some_and(|w| w.shown(space))).collect();
+        for &m in &going {
+            self.start_fx(l, m, FxKind::Minimize);
+        }
+        if let Some(top) = self.windows.iter().rev().filter(|w| !going.contains(&w.id) && w.shown(self.space)).map(|w| w.bounds()).next() {
             l.damage(top);
         }
         l.damage(self.clock_zone());
@@ -1462,9 +1603,7 @@ impl Desktop {
     fn go_to_space(&mut self, l: &mut Looper, n: usize) {
         let n = n.min(self.spaces - 1);
         if let Some(Drag::Move(id, ..)) = self.drag {
-            if let Some(w) = self.window_mut(id) {
-                w.space = n;
-            }
+            self.family_to_space(id, n);
         }
         if n != self.space {
             self.space = n;
@@ -1484,9 +1623,10 @@ impl Desktop {
         }
         let n = n.min(self.spaces - 1);
         if let Some(i) = self.windows.iter().position(|w| w.id == id) {
-            let mut w = self.windows.remove(i);
-            w.space = n;
+            let w = self.windows.remove(i);
             self.windows.push(w);
+            self.family_to_space(id, n);
+            self.restack(l);
         }
         self.go_to_space(l, n);
     }
@@ -1567,12 +1707,33 @@ impl Desktop {
     }
 
     /// Each window of this desktop in the overview, side by side below the
-    /// desktops: its id and where its frame goes.
+    /// desktops: its id and where its frame goes. A dialog has no place of
+    /// its own: it rides on its window's, where it is over that one, as
+    /// much smaller.
     fn overview_slots(&self) -> Vec<(u32, Rect)> {
         let Some(o) = &self.overview else { return Vec::new() };
         let wins: Vec<(u32, Rect)> =
             o.snaps.iter().filter(|s| self.window(s.0).is_some_and(|w| w.shown(self.space))).map(|s| (s.0, s.3)).collect();
-        let n = wins.len() as i32;
+        // For each dialog, the bottom window of its family that is here.
+        let up = self.parents();
+        let anchor: Vec<Option<usize>> = wins
+            .iter()
+            .map(|&(id, _)| {
+                let mut found = None;
+                let mut i = self.windows.iter().position(|w| w.id == id);
+                for _ in 0..up.len() {
+                    let Some(p) = i.and_then(|i| up[i]) else { break };
+                    let pid = self.windows[p].id;
+                    if let Some(j) = wins.iter().position(|w| w.0 == pid) {
+                        found = Some(j);
+                    }
+                    i = Some(p);
+                }
+                found
+            })
+            .collect();
+        let own: Vec<usize> = (0..wins.len()).filter(|&i| anchor[i].is_none()).collect();
+        let n = own.len() as i32;
         if n == 0 {
             return Vec::new();
         }
@@ -1581,18 +1742,25 @@ impl Desktop {
         let cols = (1..=n).find(|c| c * c >= n).unwrap_or(1);
         let rows = (n + cols - 1) / cols;
         let (cw, ch) = (area.w / cols, area.h / rows);
-        wins.iter()
-            .enumerate()
-            .map(|(i, &(id, r))| {
-                let (col, row) = (i as i32 % cols, i as i32 / cols);
-                // The last row is centred.
-                let in_row = if row == rows - 1 { n - row * cols } else { cols };
-                let x0 = area.x + (area.w - in_row * cw) / 2;
-                let s = 1000.min((cw - 40) * 1000 / r.w.max(1)).min((ch - 48) * 1000 / r.h.max(1)).max(40);
-                let (w, h) = (r.w * s / 1000, r.h * s / 1000);
-                (id, Rect::new(x0 + col * cw + (cw - w) / 2, area.y + row * ch + (ch - 28 - h) / 2, w, h))
-            })
-            .collect()
+        let mut tiles = alloc::vec![Rect::EMPTY; wins.len()];
+        for (k, &i) in own.iter().enumerate() {
+            let r = wins[i].1;
+            let (col, row) = (k as i32 % cols, k as i32 / cols);
+            // The last row is centred.
+            let in_row = if row == rows - 1 { n - row * cols } else { cols };
+            let x0 = area.x + (area.w - in_row * cw) / 2;
+            let s = 1000.min((cw - 40) * 1000 / r.w.max(1)).min((ch - 48) * 1000 / r.h.max(1)).max(40);
+            let (w, h) = (r.w * s / 1000, r.h * s / 1000);
+            tiles[i] = Rect::new(x0 + col * cw + (cw - w) / 2, area.y + row * ch + (ch - 28 - h) / 2, w, h);
+        }
+        for i in 0..wins.len() {
+            if let Some(a) = anchor[i] {
+                let (ra, ta, r) = (wins[a].1, tiles[a], wins[i].1);
+                let (sw, sh) = (ra.w.max(1), ra.h.max(1));
+                tiles[i] = Rect::new(ta.x + (r.x - ra.x) * ta.w / sw, ta.y + (r.y - ra.y) * ta.h / sh, r.w * ta.w / sw, r.h * ta.h / sh);
+            }
+        }
+        wins.iter().zip(tiles).map(|(&(id, _), t)| (id, t)).collect()
     }
 
     fn overview_press(&mut self, l: &mut Looper, x: i32, y: i32) {
@@ -1643,9 +1811,7 @@ impl Desktop {
             }
             None => return,
         };
-        if let Some(w) = self.window_mut(id) {
-            w.space = to;
-        }
+        self.family_to_space(id, to);
     }
 
     /// Types a command line into the terminal (opening it if needed); a
@@ -2156,7 +2322,15 @@ impl Desktop {
             line(&mut menu);
             menu.push((String::from("Svuota cestino"), Some(MenuAct::TrashEmpty)));
         } else {
-            let wins: Vec<(u32, String)> = self.windows.iter().filter(|w| w.app.kind() == item.kind).map(|w| (w.id, w.app.title())).collect();
+            // Dialogs come with their window: not listed.
+            let up = self.parents();
+            let wins: Vec<(u32, String)> = self
+                .windows
+                .iter()
+                .zip(&up)
+                .filter(|(w, p)| w.app.kind() == item.kind && p.is_none())
+                .map(|(w, _)| (w.id, w.app.title()))
+                .collect();
             if wins.is_empty() {
                 menu.push((String::from("Apri"), Some(MenuAct::DockOpen)));
             } else {
@@ -3759,6 +3933,39 @@ impl Desktop {
     }
 }
 
+/// The window at the bottom of window `i`'s family (`up`: what each window
+/// belongs to, without loops; see [`Desktop::parents`]).
+fn family_root(up: &[Option<usize>], mut i: usize) -> usize {
+    for _ in 0..up.len() {
+        match up[i] {
+            Some(p) => i = p,
+            None => break,
+        }
+    }
+    i
+}
+
+/// Is window `j` window `i`, or one of its dialogs (or theirs)?
+fn below(up: &[Option<usize>], mut j: usize, i: usize) -> bool {
+    for _ in 0..=up.len() {
+        if j == i {
+            return true;
+        }
+        match up[j] {
+            Some(p) => j = p,
+            None => return false,
+        }
+    }
+    false
+}
+
+/// Where a dialog `w` x `h` goes: over the middle of the window it belongs
+/// to (`parent`), inside `area`.
+fn place_over(parent: Rect, w: i32, h: i32, area: Rect) -> (i32, i32) {
+    let (x, y) = (parent.x + (parent.w - w) / 2, parent.y + (parent.h - h) / 2);
+    (x.clamp(area.x, (area.right() - w).max(area.x)), y.clamp(area.y, (area.bottom() - h).max(area.y)))
+}
+
 /// Where a window's picture goes when its frame `r` is drawn at `to` (the
 /// picture covers `at`, shadow included).
 fn place_snap(at: Rect, r: Rect, to: Rect) -> Rect {
@@ -4169,6 +4376,9 @@ impl Desktop {
                 for app in super::apps::prompt::take_new() {
                     self.open(l, app, false);
                 }
+                // A program may say later which window a dialog belongs to,
+                // or change it.
+                self.restack(l);
                 // Windows programs that waited for Wine's preparation.
                 for path in super::apps::winprep::take_ready() {
                     self.open_file(l, &path);

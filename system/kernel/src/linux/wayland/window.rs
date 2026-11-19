@@ -50,10 +50,14 @@ pub struct Win {
     pub focused: bool,
     /// The client let go of it, or went away.
     pub ended: bool,
+    /// Its toplevel's key (see [`App::ident`]), and its parent's
+    /// (`xdg_toplevel.set_parent`; 0: none).
+    pub key: u64,
+    pub parent: u64,
 }
 
 impl Win {
-    pub fn new(title: String, w: i32, h: i32) -> Arc<Mutex<Win>> {
+    pub fn new(title: String, w: i32, h: i32, key: u64, parent: u64) -> Arc<Mutex<Win>> {
         Arc::new(Mutex::new(Win {
             title,
             size: (w, h),
@@ -63,6 +67,8 @@ impl Win {
             area: (w, h),
             focused: false,
             ended: false,
+            key,
+            parent,
         }))
     }
 }
@@ -266,5 +272,13 @@ impl App for WlWindow {
 
     fn alive(&self) -> bool {
         !self.win.lock().ended
+    }
+
+    fn ident(&self) -> u64 {
+        self.win.lock().key
+    }
+
+    fn parent(&self) -> u64 {
+        self.win.lock().parent
     }
 }

@@ -101,10 +101,33 @@ programma disegna.
 | `wl_compositor`, `wl_subcompositor` | superfici, regioni, sottosuperfici (con il loro ordine), callback di frame legati al disegno della scrivania |
 | `wl_shm` | buffer in memoria condivisa (`memfd`), ARGB8888 e XRGB8888; il compositor copia solo la parte cambiata e libera subito il buffer |
 | `wl_output` | lo schermo, con la sua scala: su uno schermo ad alta densità il programma disegna al doppio dei pixel |
-| `xdg_wm_base` | finestre (`xdg_toplevel`: titolo, dimensioni minime e massime, ridimensionamento dalla cornice, stato attivo, chiusura) e popup (`xdg_popup`, posizionati con le regole del loro `xdg_positioner` dentro la finestra; un clic fuori chiude un menu) |
+| `xdg_wm_base` | finestre (`xdg_toplevel`: titolo, dimensioni minime e massime, ridimensionamento dalla cornice, stato attivo, chiusura, la finestra a cui appartiene un dialogo) e popup (`xdg_popup`, posizionati con le regole del loro `xdg_positioner` dentro la finestra; un clic fuori chiude un menu) |
 | `wp_viewporter` | una parte del buffer, mostrata a una dimensione data (Wine disegna in buffer più grandi delle sue finestre) |
 | `wl_seat` | puntatore (movimento, pulsanti, rotellina) e tastiera, con una mappa XKB di justOS: i tasti arrivano già tradotti dal layout scelto, anche le lettere accentate |
 | `wl_data_device_manager` | presente, ma gli appunti non passano ancora tra i programmi Linux e justOS |
+
+**Dialoghi.** Un programma dice a quale finestra appartiene un dialogo con
+`xdg_toplevel.set_parent` (GTK lo fa per ogni finestra con
+`gtk_window_set_transient_for`: il selettore di file, le domande, le
+preferenze; Firefox per il selettore di Ctrl+O, non per "About Mozilla
+Firefox", che resta una finestra come le altre). Il
+compositor passa il legame alla scrivania (`App::ident` e `App::parent` in
+`gui/wm.rs`), che tratta il dialogo come su macOS e Windows: si apre al
+centro della sua finestra (dentro lo spazio delle finestre, non nella
+posizione a cascata), resta sempre sopra di lei e sul suo desktop; quando la
+finestra viene portata davanti (un clic, il dock, Alt+Tab, la vista
+d'insieme) i dialoghi salgono subito sopra e quello più in alto ha il fuoco,
+così un clic sulla finestra lascia la tastiera al dialogo e il programma non
+sembra fermo dietro una domanda nascosta. Ridurre la finestra riduce anche i
+suoi dialoghi, riaprirla li riporta; un dialogo che si apre mentre la
+finestra è ridotta aspetta ridotto con lei. I dialoghi non hanno un riquadro
+loro nella vista d'insieme (stanno sopra quello della finestra, nello stesso
+punto) né una voce nel menu del dock. Il legame può arrivare prima o dopo il primo
+disegno e cambiare o sparire (`set_parent` con null); se la finestra a cui
+apparteneva un dialogo si chiude, il dialogo passa a quella a cui apparteneva
+lei, o a nessuna, come dice xdg-shell, e resta aperto finché il programma
+non lo chiude. Una domanda aperta senza dire di chi è resta una finestra
+come le altre.
 
 `make test-wayland` lo prova con un piccolo client (`scripts/linux/wl-test.c`)
 compilato al volo contro la `libwayland-client` e la `libxkbcommon` di Debian.
@@ -156,9 +179,11 @@ Un documento o un'immagine si aprono subito. Per un programma o un
 installatore Firefox chiede invece una volta "Open Executable File?": è una
 domanda di sicurezza e resta; dopo la conferma il file va a justOS come
 sopra (un `.exe` la prima volta passa dalla finestra di preparazione di
-Wine). Il gestore delle finestre non tiene ancora un dialogo sopra la
-finestra che lo ha aperto (`xdg_toplevel.set_parent`): se la domanda finisce
-dietro Firefox, Firefox sembra fermo finché non la si riporta davanti. Firefox
+Wine). Firefox apre la domanda come finestra modale della sua finestra
+attiva (`Services.ww.activeWindow` in `Prompter.sys.mjs`), quindi come
+dialogo di quella finestra: la scrivania la tiene sopra Firefox (vedi
+*Dialoghi* sopra) e un clic su Firefox non dovrebbe più nasconderla (provato
+con il selettore di Ctrl+O, non ancora con questa domanda). Firefox
 riconosce un programma da `access(X_OK)`, che in justOS risponde sì per una
 cartella, per un file con il permesso di esecuzione e per quelli che justOS
 apre come programmi anche senza: `.exe`, `.msi`, `.bat`, `.cmd`, `.com`,

@@ -17,7 +17,8 @@
 //! drawing), `wl_seat` with pointer and keyboard, `xdg_wm_base` with
 //! toplevels and popups (placed with their positioner inside the window),
 //! `wp_viewporter` (surfaces cropped and scaled: Wine's windows), and the
-//! data device (no clipboard yet).
+//! data device (no clipboard yet). A toplevel's parent (`set_parent`: a
+//! dialog's window) goes to the desktop, which keeps the dialog above it.
 
 mod keymap;
 mod window;
@@ -231,6 +232,18 @@ struct Top {
     /// The frame a Windows program drew around its content (left, top,
     /// right, bottom, units): left out, as the desktop frames the window.
     nc: Option<[i32; 4]>,
+    /// A number of its own, for the desktop (see [`next_key`]).
+    key: u64,
+    /// The toplevel it belongs to (`set_parent`: a dialog's window; its
+    /// wl_surface, 0 for none).
+    parent: u32,
+}
+
+/// Keys for toplevels: never the same twice, across clients, so that the
+/// desktop can tell which window a dialog belongs to.
+fn next_key() -> u64 {
+    static NEXT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
 }
 
 struct Pop {
@@ -950,7 +963,20 @@ impl Client {
                     Role::Xdg(x) => x,
                     _ => Xdg { id: obj, ..Xdg::default() },
                 };
-                s.role = Role::Top(Top { xdg, id, win: None, title: String::new(), app_id: String::new(), min: (0, 0), max: (0, 0), popups: Vec::new(), asked: (0, 0), nc: None });
+                s.role = Role::Top(Top {
+                    xdg,
+                    id,
+                    win: None,
+                    title: String::new(),
+                    app_id: String::new(),
+                    min: (0, 0),
+                    max: (0, 0),
+                    popups: Vec::new(),
+                    asked: (0, 0),
+                    nc: None,
+                    key: next_key(),
+                    parent: 0,
+                });
             }
             2 => {
                 let (id, parent_xdg, positioner) = (a.uint(), a.uint(), a.uint());
@@ -1005,10 +1031,12 @@ impl Client {
                 if let Some(w) = t.win.take() {
                     w.lock().ended = true;
                 }
+                let up = t.parent;
                 let xdg = core::mem::take(&mut t.xdg);
                 if let Some(s) = self.surfs.get_mut(&surf) {
                     s.role = Role::Xdg(xdg);
                 }
+                self.orphan(surf, up);
                 if self.keyboard == Some(surf) {
                     self.keyboard = None;
                 }
@@ -1016,6 +1044,14 @@ impl Client {
                     self.pointer = None;
                 }
                 self.destroyed(obj);
+            }
+            1 => {
+                let p = a.uint();
+                let parent = match self.objs.get(&p) {
+                    Some(Obj { iface: Iface::Toplevel, data: Data::Surface(s), .. }) => *s,
+                    _ => 0,
+                };
+                self.set_parent(surf, parent);
             }
             2 => {
                 t.title = a.text();
@@ -1035,6 +1071,47 @@ impl Client {
             // move, resize, maximize, fullscreen, minimize: the desktop's
             // frame does these.
             _ => {}
+        }
+    }
+
+    /// Toplevel `surf` belongs to toplevel `parent` now (0: to none), here
+    /// and on the desktop, which keeps it above that one. A loop is not
+    /// made: a toplevel cannot belong to one of its own.
+    fn set_parent(&mut self, surf: u32, parent: u32) {
+        let mut key = match self.surfs.get(&parent).map(|s| &s.role) {
+            Some(Role::Top(t)) => t.key,
+            _ => 0,
+        };
+        let mut up = parent;
+        for _ in 0..64 {
+            match self.surfs.get(&up).map(|s| &s.role) {
+                _ if up == surf => {
+                    key = 0;
+                    break;
+                }
+                Some(Role::Top(t)) => up = t.parent,
+                _ => break,
+            }
+        }
+        let parent = if key == 0 { 0 } else { parent };
+        if let Some(Surface { role: Role::Top(t), .. }) = self.surfs.get_mut(&surf) {
+            if t.parent != parent {
+                crate::debug!("wayland", "toplevel {surf} belongs to {parent}");
+            }
+            t.parent = parent;
+            if let Some(w) = &t.win {
+                w.lock().parent = key;
+            }
+        }
+    }
+
+    /// Toplevel `surf` went, and `up` was its parent: the toplevels that
+    /// belonged to it belong to that one now, as xdg-shell says.
+    fn orphan(&mut self, surf: u32, up: u32) {
+        let kids: Vec<u32> =
+            self.surfs.iter().filter(|(_, s)| matches!(&s.role, Role::Top(t) if t.parent == surf)).map(|(&id, _)| id).collect();
+        for k in kids {
+            self.set_parent(k, up);
         }
     }
 
@@ -1115,10 +1192,12 @@ impl Client {
 
     fn destroy_surface(&mut self, id: u32) {
         let root = self.root(id);
+        let mut up = None;
         if let Some(Surface { role: Role::Top(t), .. }) = self.surfs.get(&id) {
             if let Some(w) = &t.win {
                 w.lock().ended = true;
             }
+            up = Some(t.parent);
         }
         if matches!(self.surfs.get(&id).map(|s| &s.role), Some(Role::Popup(_))) {
             self.close_popup(id);
@@ -1135,6 +1214,9 @@ impl Client {
             for cb in s.frames.into_iter().chain(s.pend.frames) {
                 self.objs.remove(&cb);
             }
+        }
+        if let Some(up) = up {
+            self.orphan(id, up);
         }
         if self.keyboard == Some(id) {
             self.keyboard = None;
@@ -1274,13 +1356,17 @@ impl Client {
     /// Shows a toplevel on the desktop, the first time it has content.
     fn map_window(&mut self, id: u32) {
         let (w, h) = self.window_size(id);
-        let (title, app_id) = match self.surfs.get(&id).map(|s| &s.role) {
-            Some(Role::Top(t)) => (t.title.clone(), t.app_id.clone()),
+        let (title, app_id, key, parent) = match self.surfs.get(&id).map(|s| &s.role) {
+            Some(Role::Top(t)) => (t.title.clone(), t.app_id.clone(), t.key, t.parent),
             _ => return,
+        };
+        let parent = match self.surfs.get(&parent).map(|s| &s.role) {
+            Some(Role::Top(t)) => t.key,
+            _ => 0,
         };
         // A Windows program installed from the launcher has its own icon.
         let icon = if self.windows { crate::gui::window::icon_for_class(&app_id).unwrap_or_else(|| self.icon.clone()) } else { self.icon.clone() };
-        let win = Win::new(title.clone(), w, h);
+        let win = Win::new(title.clone(), w, h, key, parent);
         if let Some(Surface { role: Role::Top(t), .. }) = self.surfs.get_mut(&id) {
             t.win = Some(win.clone());
         }
@@ -1585,8 +1671,15 @@ impl Client {
             }
             Input::Key(k) => self.key(t, k, time),
             Input::Focus(on) => {
-                let target = if on { Some(self.keyboard_target(t)) } else { None };
-                self.focus_keyboard(target);
+                // Losing the focus takes the keys away only from this
+                // window: they may have gone to another of the client's
+                // already (its dialog, raised over it).
+                if on {
+                    let target = self.keyboard_target(t);
+                    self.focus_keyboard(Some(target));
+                } else if self.keyboard.is_some_and(|k| self.root(k).is_none_or(|r| r == t)) {
+                    self.focus_keyboard(None);
+                }
                 if let Some(Surface { role: Role::Top(top), .. }) = self.surfs.get(&t) {
                     if top.xdg.sent {
                         self.reconfigure(t);
