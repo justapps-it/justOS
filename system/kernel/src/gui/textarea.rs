@@ -10,7 +10,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 const PAD: i32 = 14;
-const SELECTION: u32 = 0x660A_84FF;
+const SELECTION: u32 = ui::TEXT_SELECTION;
 
 pub struct TextArea {
     text: Vec<char>,
@@ -71,6 +71,12 @@ impl TextArea {
 
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
+    }
+
+    /// The caret after the last character, where writing goes on.
+    pub fn caret_to_end(&mut self) {
+        self.anchor = None;
+        self.cursor = self.text.len();
     }
 
     pub fn mark_saved(&mut self) {

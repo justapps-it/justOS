@@ -137,7 +137,11 @@ impl App for TextEdit {
         ui::well_pane(c, tr, 14);
         self.area.draw(c, tr, focused && self.picker.is_none());
         let (words, chars) = self.area.counts();
-        let status = format!("{words} parole · {chars} caratteri");
+        let status = format!(
+            "{words} {} · {chars} {}",
+            if words == 1 { "parola" } else { "parole" },
+            if chars == 1 { "carattere" } else { "caratteri" }
+        );
         text::draw(c, Font::Small, area.x + 20, area.bottom() - 24, &status, ui::text_dim());
         if let Some(p) = &self.path {
             text::draw_right(c, Font::Small, area.right() - 20, area.bottom() - 24, &text::fit(Font::Small, p, area.w / 2), ui::text_faint());

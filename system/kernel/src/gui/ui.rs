@@ -615,6 +615,204 @@ pub fn edit_text(value: &mut alloc::string::String, ev: &KeyEvent, max: usize) -
     }
 }
 
+/// Selected text, in every field and text area (translucent blue, as on
+/// macOS).
+pub const TEXT_SELECTION: u32 = 0x660A_84FF;
+
+/// A line of text being edited, for the fields that need more than
+/// [`edit_text`]: a caret, a selection (from `anchor` to `caret`) and the
+/// keys of a text field everywhere (arrows, Home, End, Backspace, Delete,
+/// Shift to select, Ctrl+A, C, X and V).
+pub struct LineEdit {
+    pub text: alloc::string::String,
+    /// Byte offsets into `text`, on character boundaries.
+    caret: usize,
+    anchor: usize,
+    max: usize,
+}
+
+impl LineEdit {
+    /// `text` with the caret at its end; at most `max` characters.
+    pub fn new(text: &str, max: usize) -> LineEdit {
+        LineEdit { text: text.into(), caret: text.len(), anchor: text.len(), max }
+    }
+
+    /// Replaces the text, caret at the end.
+    pub fn set(&mut self, text: &str) {
+        self.text = text.into();
+        self.caret = self.text.len();
+        self.anchor = self.caret;
+    }
+
+    /// Selects the name before the extension ("Senza titolo" of "Senza
+    /// titolo.txt"), so what is typed replaces it and keeps the type.
+    pub fn select_stem(&mut self) {
+        self.anchor = 0;
+        self.caret = self.text.rfind('.').filter(|&i| i > 0).unwrap_or(self.text.len());
+    }
+
+    pub fn select_all(&mut self) {
+        self.anchor = 0;
+        self.caret = self.text.len();
+    }
+
+    fn range(&self) -> (usize, usize) {
+        (self.anchor.min(self.caret), self.anchor.max(self.caret))
+    }
+
+    fn delete_selection(&mut self) -> bool {
+        let (a, b) = self.range();
+        if a == b {
+            return false;
+        }
+        self.text.replace_range(a..b, "");
+        self.caret = a;
+        self.anchor = a;
+        true
+    }
+
+    fn insert(&mut self, s: &str) -> bool {
+        let deleted = self.delete_selection();
+        let room = self.max.saturating_sub(self.text.chars().count());
+        let s: alloc::string::String = s.chars().filter(|c| !c.is_control()).take(room).collect();
+        if s.is_empty() {
+            return deleted;
+        }
+        self.text.insert_str(self.caret, &s);
+        self.caret += s.len();
+        self.anchor = self.caret;
+        true
+    }
+
+    fn prev(&self, i: usize) -> usize {
+        self.text[..i].char_indices().next_back().map_or(0, |(j, _)| j)
+    }
+
+    fn next(&self, i: usize) -> usize {
+        self.text[i..].chars().next().map_or(i, |c| i + c.len_utf8())
+    }
+
+    fn go(&mut self, to: usize, extend: bool) {
+        self.caret = to;
+        if !extend {
+            self.anchor = to;
+        }
+    }
+
+    /// Applies a key; whether the text, the caret or the selection changed.
+    pub fn key(&mut self, ev: &KeyEvent) -> bool {
+        use crate::dev::input::Key;
+        let before = (self.caret, self.anchor);
+        let (a, b) = self.range();
+        match ev.key {
+            Key::Char(ch) if ev.ctrl => match ch.to_ascii_lowercase() {
+                'a' => self.select_all(),
+                'c' if a < b => copy(&self.text[a..b]),
+                'x' if a < b => {
+                    copy(&self.text[a..b]);
+                    return self.delete_selection();
+                }
+                'v' => {
+                    let p = paste();
+                    return self.insert(p.lines().next().unwrap_or(""));
+                }
+                _ => return false,
+            },
+            Key::Char(ch) if !ch.is_control() => {
+                let mut buf = [0u8; 4];
+                return self.insert(ch.encode_utf8(&mut buf));
+            }
+            Key::Backspace => {
+                if self.delete_selection() {
+                    return true;
+                }
+                if self.caret == 0 {
+                    return false;
+                }
+                let p = self.prev(self.caret);
+                self.text.replace_range(p..self.caret, "");
+                self.go(p, false);
+                return true;
+            }
+            Key::Delete => {
+                if self.delete_selection() {
+                    return true;
+                }
+                if self.caret >= self.text.len() {
+                    return false;
+                }
+                let n = self.next(self.caret);
+                self.text.replace_range(self.caret..n, "");
+                return true;
+            }
+            // Without Shift an arrow ends a selection at its side.
+            Key::Left => {
+                let to = if a < b && !ev.shift { a } else { self.prev(self.caret) };
+                self.go(to, ev.shift);
+            }
+            Key::Right => {
+                let to = if a < b && !ev.shift { b } else { self.next(self.caret) };
+                self.go(to, ev.shift);
+            }
+            Key::Home => self.go(0, ev.shift),
+            Key::End => self.go(self.text.len(), ev.shift),
+            _ => return false,
+        }
+        (self.caret, self.anchor) != before
+    }
+
+    /// Where the text starts in `r`: scrolled left when the caret would
+    /// be past the end.
+    fn origin(&self, r: Rect) -> i32 {
+        let cx = text::width(Font::Heading, &self.text[..self.caret]);
+        r.x + 16 - (cx - (r.w - 36)).max(0)
+    }
+
+    /// A click at `x` in the field `r`: the caret goes to the nearest
+    /// character boundary (`double`: the whole text is selected).
+    pub fn press(&mut self, r: Rect, x: i32, double: bool) {
+        if double {
+            self.select_all();
+            return;
+        }
+        let x0 = self.origin(r);
+        let mut best = (i32::MAX, 0);
+        for i in self.text.char_indices().map(|(i, _)| i).chain(core::iter::once(self.text.len())) {
+            let d = (x0 + text::width(Font::Heading, &self.text[..i]) - x).abs();
+            if d < best.0 {
+                best = (d, i);
+            }
+        }
+        self.go(best.1, false);
+    }
+
+    /// Draws it as a [`text_field`], with the selection and the caret.
+    pub fn draw(&self, c: &mut Canvas, r: Rect, placeholder: &str, focused: bool) {
+        c.fill_round(r, 14, well());
+        c.stroke_round(r, 14, 1, field_edge(focused));
+        let (lh, _) = text::metrics(Font::Heading);
+        let ty = r.y + (r.h - lh) / 2;
+        if self.text.is_empty() {
+            text::draw(c, Font::Heading, r.x + 16, ty, placeholder, text_faint());
+        }
+        let x0 = self.origin(r);
+        let saved = c.clip();
+        c.set_clip(saved.intersect(&Rect::new(r.x + 10, r.y, r.w - 20, r.h)));
+        let (a, b) = self.range();
+        if focused && a < b {
+            let xa = x0 + text::width(Font::Heading, &self.text[..a]);
+            let xb = x0 + text::width(Font::Heading, &self.text[..b]);
+            c.fill_round(Rect::new(xa, ty, xb - xa + 2, lh), 4, TEXT_SELECTION);
+        }
+        text::draw(c, Font::Heading, x0, ty, &self.text, text());
+        if focused {
+            let cx = x0 + text::width(Font::Heading, &self.text[..self.caret]);
+            c.fill(Rect::new(cx + 1, ty + 2, 2, lh - 4), ACCENT);
+        }
+        c.set_clip(saved);
+    }
+}
+
 /// What the event loop hands to a screen.
 #[derive(Clone, Copy, Debug)]
 pub enum Event {

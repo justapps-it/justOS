@@ -36,7 +36,7 @@ pub struct Picker {
     items: Vec<(String, bool)>,
     filter: &'static [&'static str],
     selected: Option<usize>,
-    name: String,
+    name: ui::LineEdit,
     scroll: i32,
     hover: Option<Rect>,
 }
@@ -50,7 +50,9 @@ impl Picker {
 
     pub fn save(dir: &str, name: &str) -> Picker {
         let mut p = Picker::new(dir, &[], true);
-        p.name = String::from(name);
+        p.name = ui::LineEdit::new(name, 60);
+        // As macOS does: what is typed replaces the name, not the type.
+        p.name.select_stem();
         p.reload();
         p
     }
@@ -60,7 +62,7 @@ impl Picker {
         if !fs::exists(&dir) {
             let _ = fs::make_dir(&dir);
         }
-        Picker { saving, dir, items: Vec::new(), filter, selected: None, name: String::new(), scroll: 0, hover: None }
+        Picker { saving, dir, items: Vec::new(), filter, selected: None, name: ui::LineEdit::new("", 60), scroll: 0, hover: None }
     }
 
     fn reload(&mut self) {
@@ -127,7 +129,7 @@ impl Picker {
         }
         if self.saving {
             text::draw(c, Font::Small, s.x + 160, s.y + 34, "Salva come", ui::text_dim());
-            ui::text_field(c, Self::field(s), &self.name, "Nome del file", true);
+            self.name.draw(c, Self::field(s), "Nome del file", true);
         }
         let list = Self::list(s, self.saving);
         ui::well_pane(c, list, 10);
@@ -156,7 +158,7 @@ impl Picker {
 
     fn confirm(&mut self) -> Picked {
         if self.saving {
-            let name = self.name.trim();
+            let name = self.name.text.trim();
             if name.is_empty() || name.contains('/') || name.contains(':') {
                 return Picked::Nothing;
             }
@@ -186,6 +188,10 @@ impl Picker {
         if ok.contains(x, y) {
             return self.confirm();
         }
+        if self.saving && Self::field(s).contains(x, y) {
+            self.name.press(Self::field(s), x, double);
+            return Picked::Nothing;
+        }
         if Self::back(s).contains(x, y) {
             if let Ok(parent) = Path::parse("..", &self.dir) {
                 self.dir = parent;
@@ -212,7 +218,8 @@ impl Picker {
                 self.selected = Some(i);
                 let (name, dir) = self.items[i].clone();
                 if self.saving && !dir {
-                    self.name = name;
+                    self.name.set(&name);
+                    self.name.select_stem();
                 } else if double {
                     return self.confirm();
                 }
@@ -252,7 +259,7 @@ impl Picker {
             }
             _ => {
                 if self.saving {
-                    ui::edit_text(&mut self.name, &ev, 60);
+                    self.name.key(&ev);
                 }
                 Picked::Nothing
             }

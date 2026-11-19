@@ -2391,6 +2391,7 @@ impl Desktop {
     fn control_press(&mut self, l: &mut Looper, hit: ControlHit, x: i32) {
         let [vol, bri] = self.control_sliders();
         match hit {
+            ControlHit::Volume if !crate::dev::audio::available() => {}
             ControlHit::Volume if self.on_slider_foot(vol, x) => {
                 // The speaker: the sound off, or back on.
                 let v = if crate::dev::audio::volume() == 0 { 60 } else { 0 };
@@ -3248,8 +3249,10 @@ impl Desktop {
             c.fill_round(sp, rad, ui::sel());
         }
         let net = if crate::net::online() { ui::text() } else { ui::text_faint() };
-        let sound: &[&str] = if crate::dev::audio::volume() == 0 { &G_MUTE } else { &G_VOLUME };
-        let sound_col = if self.quiet { ui::text_dim() } else { ui::text() };
+        // No sound card: the speaker is off and faint, as the network is offline.
+        let audio = crate::dev::audio::available();
+        let sound: &[&str] = if !audio || crate::dev::audio::volume() == 0 { &G_MUTE } else { &G_VOLUME };
+        let sound_col = if !audio { ui::text_faint() } else if self.quiet { ui::text_dim() } else { ui::text() };
         let battery = self.battery.map(|(pct, _)| battery_rows(pct));
         let battery: Option<Vec<&str>> = battery.as_ref().map(|rows| rows.iter().map(|s| s.as_str()).collect());
         let mut symbols: Vec<(&[&str], u32)> = alloc::vec![(&G_WIFI[..], net), (sound, sound_col)];
@@ -3546,13 +3549,16 @@ impl Desktop {
         }
 
         // Brightness and volume: a row of cells each, a symbol at the left
-        // (the speaker turns the sound off and on).
-        let vol = crate::dev::audio::volume();
+        // (the speaker turns the sound off and on). Without a sound card the
+        // volume is off and grey, and does not move (Impostazioni → Suono
+        // says why).
+        let audio = crate::dev::audio::available();
+        let vol = if audio { crate::dev::audio::volume() } else { 0 };
         let [vs, bs] = self.control_sliders();
         let glyph_cell = self.cc(3000);
         for (s, value, symbol, accent, hit) in [
             (bs, super::brightness(), &G_SUN[..], false, ControlHit::Brightness),
-            (vs, vol, if vol == 0 { &G_MUTE[..] } else { &G_VOLUME[..] }, true, ControlHit::Volume),
+            (vs, vol, if vol == 0 { &G_MUTE[..] } else { &G_VOLUME[..] }, audio, ControlHit::Volume),
         ] {
             card(c, s, false);
             let bar = self.slider_bar(s);

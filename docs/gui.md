@@ -401,7 +401,7 @@ puntatore quasi niente.
 | App | Cosa fa |
 |---|---|
 | File | sfoglia i volumi: risorse a sinistra, cartelle e file a destra; doppio clic apre una cartella o il file con l'app giusta; **schede** (Ctrl+T o il **+**, Ctrl+W chiude, Ctrl+Tab passa alla successiva, *Apri in una nuova scheda* sulle cartelle); tasto destro per aprire, rinominare (anche F2), spostare nel Cestino (Canc), creare una cartella; nel Cestino eliminare o svuotare; **selezione multipla** (Ctrl+clic, Maiusc+clic, Ctrl+A) e **trascinamento** tra cartelle, schede e finestre |
-| Editor di testo | file di testo con selezione, copia e incolla, scorrimento; Nuovo, Apri, Salva (Ctrl+N, Ctrl+O, Ctrl+S) con la scelta del file; alla chiusura salva da solo |
+| Editor di testo | file di testo con selezione, copia e incolla, scorrimento; Nuovo, Apri, Salva (Ctrl+N, Ctrl+O, Ctrl+S) con la scelta del file (salvando, il nome arriva con «Senza titolo» già selezionato: si scrive il nome e l'estensione resta); alla chiusura salva da solo |
 | Note | note in `sys:/home/Note`, la prima riga è il titolo, ricerca, si salvano mentre si scrive |
 | Promemoria | cose da fare, spuntate con un clic (`sys:/home/Promemoria.txt`) |
 | Calendario | un mese alla volta con le feste italiane (anche Pasqua e Pasquetta) e i propri eventi («9:30 Riunione»), salvati in `sys:/home/Calendario.txt` |
@@ -459,7 +459,9 @@ nelle impostazioni.
 Con una scheda audio (`hda`, `ac97`) la scrivania suona una breve melodia
 quando compare (si può spegnere), il volume si regola dal centro di
 controllo e dalle Impostazioni, e Musica e Orologio suonano. Dal Terminale:
-`play file.wav`, `tone 440 500`, `volume 60`.
+`play file.wav`, `tone 440 500`, `volume 60`. Senza scheda audio il volume
+nel centro di controllo è spento e grigio e non si sposta, l'altoparlante
+nella barra è sbiadito e *Impostazioni → Suono* dice che manca la scheda.
 
 ## Com'è fatta
 

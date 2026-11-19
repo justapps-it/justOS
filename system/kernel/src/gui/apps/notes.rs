@@ -137,6 +137,8 @@ impl Notes {
         let Some(n) = self.list.get(i) else { return };
         let text = fs::abs(&n.path).and_then(|p| fs::read_file(&p)).map(|b| String::from(String::from_utf8_lossy(&b))).unwrap_or_default();
         self.area.set_text(&text);
+        // What is typed goes on after the note, not before its title.
+        self.area.caret_to_end();
         self.current = Some(i);
     }
 
