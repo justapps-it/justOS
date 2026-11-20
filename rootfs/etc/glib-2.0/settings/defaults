@@ -1,0 +1,10 @@
+# GSettings defaults of justOS for GTK programs. GLib's keyfile backend
+# (GSETTINGS_BACKEND=keyfile, set by the kernel for Linux programs) reads
+# them; what the user changes goes to ~/.config/glib-2.0/settings/keyfile
+# and wins over these. Groups are the schemas' paths.
+
+[org/gtk/settings/file-chooser]
+# The file chooser opens in the program's folder (the home folder for one
+# started from the desktop) instead of on "Recent", which is empty until
+# files have been opened through it.
+startup-mode='cwd'
