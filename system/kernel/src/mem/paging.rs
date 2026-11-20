@@ -21,6 +21,10 @@ pub const HUGE: u64 = 1 << 7;
 /// [`WRITE`] it is a page of a mapped file that the mapping has not
 /// written to (see `linux::mm::copy_on_write`).
 pub const SHARED: u64 = 1 << 9;
+/// Another bit of our own: fork left the page's frame to both processes,
+/// without [`WRITE`], until one of them writes (see [`unshare_in`]). The
+/// frame's share count says how many others still map it.
+pub const COPY: u64 = 1 << 10;
 pub const ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 
 static KERNEL_PML4: AtomicU64 = AtomicU64::new(0);
@@ -236,29 +240,30 @@ pub fn new_address_space() -> Option<u64> {
     Some(pml4)
 }
 
-/// A new address space with a private copy of every user page of `src`
-/// (what `fork` gives the child), except shared pages, which both map.
-/// None when memory runs out.
+/// A new address space with the user pages of `src` (what `fork` gives the
+/// child). Both map the same frames: shared pages as they are, the others
+/// without [`WRITE`] and marked [`COPY`], so that the first write of either
+/// process gives it a copy of its own. Only the page tables are new. None
+/// when memory runs out.
 pub fn copy_address_space(src: u64) -> Option<u64> {
     fn copy_level(src: u64, dst: u64, level: u32) -> bool {
         let count = if level == 3 { 256 } else { 512 };
         for i in 0..count {
-            let e = table(src)[i];
-            if e & PRESENT == 0 || (level > 0 && e & HUGE != 0) {
+            let e = &mut table(src)[i];
+            if *e & PRESENT == 0 || (level > 0 && *e & HUGE != 0) {
                 continue; // user memory is never mapped with huge pages
             }
-            if level == 0 && e & SHARED != 0 {
-                table(dst)[i] = e;
+            if level == 0 {
+                if *e & SHARED == 0 {
+                    frame::share(*e & ADDR_MASK);
+                    *e = (*e & !WRITE) | COPY;
+                }
+                table(dst)[i] = *e;
                 continue;
             }
             let Some(phys) = frame::alloc() else { return false };
-            table(dst)[i] = phys | (e & !ADDR_MASK);
-            if level == 0 {
-                // SAFETY: both frames are RAM reachable through the direct map.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(phys_to_virt(e & ADDR_MASK) as *const u8, phys_to_virt(phys) as *mut u8, PAGE_SIZE as usize);
-                }
-            } else if !copy_level(e & ADDR_MASK, phys, level - 1) {
+            table(dst)[i] = phys | (*e & !ADDR_MASK);
+            if !copy_level(*e & ADDR_MASK, phys, level - 1) {
                 return false;
             }
         }
@@ -269,6 +274,13 @@ pub fn copy_address_space(src: u64) -> Option<u64> {
         let _guard = MAP_LOCK.lock();
         copy_level(src, dst, 3)
     };
+    // The pages of `src` are not writable any more: no processor may keep
+    // writing to them through what its TLB remembers.
+    if cpu::read_cr3() == src {
+        // SAFETY: reloading CR3 with itself only empties the TLB.
+        unsafe { cpu::write_cr3(src) };
+    }
+    crate::arch::smp::shootdown_user(src);
     if !ok {
         free_address_space(dst);
         return None;
@@ -276,9 +288,47 @@ pub fn copy_address_space(src: u64) -> Option<u64> {
     Some(dst)
 }
 
+/// A write to a page that fork left to two processes ([`COPY`]): this
+/// address space gets the page for itself, writable: the same frame when
+/// no other maps it any more, else a copy. None when the page is not one
+/// of those (or not there), Some(false) when memory ran out.
+pub fn unshare_in(pml4: u64, virt: u64) -> Option<bool> {
+    let old = {
+        let _guard = MAP_LOCK.lock();
+        let (e, size) = walk(pml4, virt)?;
+        if size != PAGE_SIZE {
+            return None;
+        }
+        if *e & WRITE != 0 {
+            return Some(true); // another thread was first
+        }
+        if *e & COPY == 0 {
+            return None;
+        }
+        let old = *e & ADDR_MASK;
+        if frame::sharers(old) == 0 {
+            *e = (*e & !COPY) | WRITE;
+            cpu::invlpg(virt);
+            return Some(true);
+        }
+        let Some(new) = frame::alloc() else { return Some(false) };
+        // SAFETY: both frames are RAM reachable through the direct map; the
+        // new one is not mapped anywhere yet.
+        unsafe { core::ptr::copy_nonoverlapping(phys_to_virt(old) as *const u8, phys_to_virt(new) as *mut u8, PAGE_SIZE as usize) };
+        *e = new | (*e & !ADDR_MASK & !COPY) | WRITE;
+        cpu::invlpg(virt);
+        old
+    };
+    // Other processors running this address space may still read the old
+    // frame through their TLBs; they forget it before it is let go.
+    crate::arch::smp::shootdown_user(pml4);
+    frame::free(old);
+    Some(true)
+}
+
 /// Frees the user half of an address space: page tables and mapped frames
-/// (not the frames of shared pages). Waits until no other processor has
-/// it loaded.
+/// (not the frames of shared pages; a frame fork left to another process
+/// too stays with that one). Waits until no other processor has it loaded.
 pub fn free_address_space(pml4: u64) {
     crate::arch::smp::wait_unloaded(pml4);
     fn free_level(t: u64, level: u32) {

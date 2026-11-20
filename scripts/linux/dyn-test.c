@@ -40,6 +40,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <sys/un.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -331,6 +332,54 @@ int main(int argc, char **argv) {
     ssize_t got = read(p[0], buf, sizeof buf - 1);
     close(p[0]);
     printf("dt: fork pipe=%s exit=%d global=%d\n", got > 0 ? buf : "-", reap(c), global);
+
+    /* fork leaves the pages to both processes until one of them writes:
+       five children of a process holding a quarter of the memory there is
+       live at once (copies would not fit), and each, as the parent, sees
+       only its own writes, its own and the kernel's (a read into the
+       block). glibc's thread id in the child is the kernel's write too
+       (CLONE_CHILD_SETTID): an error-checking mutex records it. */
+    {
+        struct sysinfo si;
+        size_t big = 64 << 20;
+        if (sysinfo(&si) == 0 && (size_t)si.totalram * si.mem_unit / 4 > big)
+            big = (size_t)si.totalram * si.mem_unit / 4;
+        unsigned char *m = mmap(NULL, big, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        int go[2], made = 0, good = 0, own = 0;
+        if (m != MAP_FAILED && pipe(go) == 0) {
+            memset(m, 'p', big);
+            pid_t kids[5];
+            for (int i = 0; i < 5; i++) {
+                fflush(stdout);
+                kids[i] = fork();
+                if (kids[i] == 0) {
+                    close(go[1]);
+                    m[i * 4096] = 'a' + i;
+                    if (read(go[0], m + big - 4096 + i, 1) != 1)
+                        _exit(20);
+                    pthread_mutex_t mx = PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP;
+                    pthread_mutex_lock(&mx);
+                    int bad = (m[i * 4096] != 'a' + i) + (m[1] != 'p') + (m[big - 4096 + i] != 'g') + (m[big / 2] != 'p') +
+                              (m[((i + 1) % 5) * 4096] != 'p') + (mx.__data.__owner != syscall(SYS_gettid));
+                    _exit(bad);
+                }
+                if (kids[i] > 0)
+                    made++;
+            }
+            m[1] = 'P';
+            for (int i = 0; i < made; i++)
+                if (write(go[1], "g", 1) != 1)
+                    break;
+            for (int i = 0; i < 5; i++)
+                if (kids[i] > 0 && reap(kids[i]) == 0)
+                    good++;
+            own = m[0] == 'p' && m[1] == 'P' && m[4096] == 'p' && m[big - 4096] == 'p' && m[big - 1] == 'p';
+            close(go[0]);
+            close(go[1]);
+            munmap(m, big);
+        }
+        printf("dt: fork shares children=%d ok=%d parent=%d\n", made, good, own);
+    }
 
     char self[256];
     ssize_t k = readlink("/proc/self/exe", self, sizeof self - 1);

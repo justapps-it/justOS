@@ -88,7 +88,8 @@ fi
     [ $R = 1 ] && printf '%s\n' 'rt: threads total=4999999' 'rt: file rust file' 'rt: http hello from the host' 'rt: slept true'
     [ $G = 1 ] && printf '%s\n' 'gt: goroutines sum 3599982' 'gt: slept true' 'gt: http 200 hello from the host'
     [ $D = 1 ] && printf '%s\n' 'dt: glibc 2.' 'dt: threads 400000' 'dt: dlopen cos(0)=1.0' 'dt: argv0 dt' \
-        'dt: fork pipe=hello exit=7 global=1' 'dt: child says vforked home=/home' 'dt: vfork exit=3' \
+        'dt: fork pipe=hello exit=7 global=1' 'dt: fork shares children=5 ok=5 parent=1' \
+        'dt: child says vforked home=/home' 'dt: vfork exit=3' \
         'dt: child says spawned home=/home' 'dt: spawn err=0 exit=3' 'dt: spawn missing=2' \
         'dt: shebang ./dt-script' 'dt: script err=0 exit=4' 'dt: no children -1 errno=10' \
         'dt: signal usr1=1' 'dt: siginfo pid=1' 'dt: blocked 0 pending 1 after 1' 'dt: sigtimedwait 12 handler 1' \
