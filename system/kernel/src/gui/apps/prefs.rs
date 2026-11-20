@@ -107,6 +107,12 @@ const L_NAME: &str = "Il tuo nome";
 const L_DEVICE: &str = "Nome del dispositivo";
 const L_SETUP: &str = "Configurazione iniziale";
 const L_MODES: &str = "Risoluzione";
+const L_MONITORS: &str = "Monitor";
+const L_SWAP: &str = "Disposizione";
+const L_MIRROR: &str = "Duplica";
+
+/// The height of a monitor's picture.
+const MON_H: i32 = 96;
 const L_SCALE: &str = "Dimensione interfaccia";
 const L_LAYOUT: &str = "Disposizione dei tasti";
 const L_PASSWORD: &str = "Password";
@@ -204,6 +210,13 @@ enum Ctl {
     Wallpapers,
     /// The resolutions the display offers.
     Modes,
+    /// Several monitors: a picture of each, left to right as they stand; a
+    /// click makes one the primary.
+    Monitors,
+    /// The monitors left and right swapped.
+    Swap,
+    /// Every monitor showing the same ("Duplica").
+    Mirror,
     /// The size of the interface.
     Scale,
     /// The volume: cells that fill up.
@@ -234,7 +247,7 @@ enum Ctl {
 impl Ctl {
     /// Laid out under its label, the whole width of the card.
     fn block(&self) -> bool {
-        matches!(self, Ctl::Wallpapers | Ctl::Modes)
+        matches!(self, Ctl::Wallpapers | Ctl::Modes | Ctl::Monitors)
     }
 }
 
@@ -322,6 +335,8 @@ pub struct Prefs {
     /// themes (which one, and the picture).
     thumbs: Vec<Canvas>,
     backdrop: Option<(String, Canvas)>,
+    /// The wallpaper in the pictures of the monitors.
+    screens: Option<(String, Canvas)>,
     /// Resolutions the display driver offers (empty without one).
     modes: Vec<DisplayMode>,
     /// The volume is being dragged.
@@ -395,6 +410,24 @@ fn thumb_grid(inner: i32) -> (i32, i32, i32) {
 fn mode_grid(inner: i32) -> (i32, i32) {
     let cols = ((inner + 8) / (112 + 8)).clamp(1, 4);
     (cols, ((inner - (cols - 1) * 8) / cols).min(150))
+}
+
+/// The pictures of the monitors in a control at `r`, left to right as they
+/// stand: each one's output and place. Same-sized monitors, in their shape,
+/// as big as fits.
+fn monitor_tiles(r: Rect) -> Vec<(u32, Rect)> {
+    let order = crate::dev::display::order();
+    let (mw, mh) = crate::dev::display::monitor_size().unwrap_or((16, 10));
+    let n = order.len().max(1) as i32;
+    let gap = 16;
+    let (mut tw, mut th) = (MON_H * mw as i32 / (mh as i32).max(1), MON_H);
+    let room = (r.w - (n - 1) * gap) / n;
+    if tw > room {
+        th = th * room / tw.max(1);
+        tw = room;
+    }
+    let x0 = r.x + (r.w - n * tw - (n - 1) * gap) / 2;
+    order.iter().enumerate().map(|(i, &o)| (o, Rect::new(x0 + i as i32 * (tw + gap), r.y, tw, th))).collect()
 }
 
 /// A text field with its button at the right.
@@ -481,6 +514,7 @@ impl Prefs {
             note: ("", ""),
             thumbs: Vec::new(),
             backdrop: None,
+            screens: None,
             modes,
             sliding: false,
             grants: crate::sandbox::all(),
@@ -521,7 +555,7 @@ impl Prefs {
             }
             Section::Screen => {
                 let modes = if self.modes.is_empty() {
-                    let (w, h) = crate::console::pixel_size().unwrap_or((0, 0));
+                    let (w, h) = crate::dev::display::monitor_size().unwrap_or((0, 0));
                     row(L_MODES, "Scelta dal firmware: nessun driver video la può cambiare.", Ctl::Info(format!("{w} × {h}")))
                 } else {
                     row(L_MODES, &crate::dev::display::controller().unwrap_or_default(), Ctl::Modes)
@@ -534,7 +568,21 @@ impl Prefs {
                 // The display does not say its refresh rate: automatic is 60.
                 let auto = crate::gui::pace::display_hz().unwrap_or(60);
                 let fluid = row("Fluidità", &format!("Fotogrammi al secondo al massimo (Automatica: {auto} Hz)"), Ctl::Fluidity);
-                vec![card(vec![modes]), card(vec![scale]), card(vec![fluid])]
+                let mut cards = vec![card(vec![modes]), card(vec![scale]), card(vec![fluid])];
+                if crate::dev::display::outputs().len() > 1 {
+                    let mirror = crate::gui::monitor_choice().2;
+                    let mut rows = vec![if mirror {
+                        row(L_MONITORS, "Tutti mostrano la stessa scrivania", Ctl::Monitors)
+                    } else {
+                        row(L_MONITORS, "Tocca un monitor per renderlo principale: lì stanno orologio e dock", Ctl::Monitors)
+                    }];
+                    if !mirror {
+                        rows.push(row(L_SWAP, "Il monitor a sinistra passa a destra", Ctl::Swap));
+                    }
+                    rows.push(row(L_MIRROR, "Tutti i monitor mostrano la stessa cosa", Ctl::Mirror));
+                    cards.insert(1, card(rows));
+                }
+                cards
             }
             Section::Sound => {
                 if crate::dev::audio::available() {
@@ -647,7 +695,12 @@ impl Prefs {
             Ctl::Setup => (button_w("Ripeti"), 34),
             Ctl::Test => (button_w("Prova"), 34),
             Ctl::Forget(_) => (button_w("Chiedi di nuovo"), 34),
-            Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify => (52, 30),
+            Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify | Ctl::Mirror => (52, 30),
+            Ctl::Swap => (button_w("Scambia"), 34),
+            Ctl::Monitors => {
+                let th = monitor_tiles(Rect::new(0, 0, inner, 0)).first().map_or(MON_H, |t| t.1.h);
+                (inner, th + 10 + bh)
+            }
             Ctl::Volume => (inner.min(290), 26),
             Ctl::Scale | Ctl::Layout | Ctl::LockAfter | Ctl::Fluidity => (segmented_w(&Self::choices(ctl).0).min(inner), 32),
             Ctl::Go(..) => (text::width(Font::Heading, "›"), bh),
@@ -753,6 +806,10 @@ impl Prefs {
                 vec![f, b]
             }
             Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify => vec![r],
+            Ctl::Swap | Ctl::Mirror => vec![r],
+            // Mirrored, no monitor is the primary: nothing to click.
+            Ctl::Monitors if crate::gui::monitor_choice().2 => Vec::new(),
+            Ctl::Monitors => monitor_tiles(r).iter().map(|t| t.1).collect(),
             Ctl::Volume => vec![volume_bar(r).grow(8)],
             Ctl::Scale | Ctl::Layout | Ctl::LockAfter | Ctl::Fluidity => ui::segments(r, Self::choices(&p.row.ctl).0.len()),
             Ctl::Themes => {
@@ -937,8 +994,11 @@ impl Prefs {
                     text::draw_centered(c, Font::Small, t.x + t.w / 2, t.bottom() + 6, label, color);
                 }
             }
+            Ctl::Swap => ui::button(c, r, "Scambia", false, hot(0)),
+            Ctl::Mirror => ui::toggle(c, r, crate::gui::monitor_choice().2),
+            Ctl::Monitors => self.draw_monitors(c, r, i),
             Ctl::Modes => {
-                let (w, h) = crate::console::pixel_size().unwrap_or((0, 0));
+                let (w, h) = crate::dev::display::monitor_size().unwrap_or((0, 0));
                 let current = DisplayMode { width: w as u32, height: h as u32 };
                 for (k, b) in self.parts(p).iter().enumerate() {
                     let m = self.modes[k];
@@ -946,6 +1006,63 @@ impl Prefs {
                 }
             }
         }
+    }
+
+    /// The pictures of the monitors (the control of placed row `i` at `r`):
+    /// the wallpaper on each, the clock and the dock on the primary, and
+    /// its number.
+    fn draw_monitors(&mut self, c: &mut Canvas, r: Rect, i: usize) {
+        let tiles = monitor_tiles(r);
+        let Some(&(_, first)) = tiles.first() else { return };
+        let wallpaper = settings::get().wallpaper;
+        let stale = match &self.screens {
+            Some((n, b)) => *n != wallpaper || b.w != first.w || b.h != first.h || b.scale() != c.scale(),
+            None => true,
+        };
+        if stale {
+            let pic = res::wallpaper_thumb(&wallpaper, first.w, first.h);
+            self.screens = Some((wallpaper, pic));
+        }
+        let mirror = crate::gui::monitor_choice().2;
+        let main = crate::gui::monitors().get(crate::gui::primary()).map(|m| m.0);
+        let (hh, _) = text::metrics(Font::Heading);
+        for (k, &(output, t)) in tiles.iter().enumerate() {
+            let primary = mirror || Some(output) == main;
+            if primary && !mirror {
+                c.stroke_round(t.grow(4), 15, 2, ui::ORANGE);
+            } else if self.hot == Some(Target::Ctl(i, k)) {
+                c.stroke_round(t.grow(4), 15, 2, ui::line());
+            }
+            match &self.screens {
+                Some((_, pic)) => c.blit_round_from(pic, 0, 0, t, 11, 0),
+                None => c.fill_round_grad(t, 11, 0xFF3B_2E5A, 0xFFE0_8F6E),
+            }
+            let cx = t.x + t.w / 2;
+            if primary {
+                // The clock at the top and the dock at the bottom.
+                c.fill_round(Rect::new(cx - t.w / 10, t.y + 7, t.w / 5, 6), 3, 0xB3FF_FFFF);
+                c.fill_round(Rect::new(cx - t.w / 4, t.bottom() - 14, t.w / 2, 8), 4, 0x8CFF_FFFF);
+            }
+            // Its number on a dark badge, clear over any wallpaper.
+            let number = format!("{}", output + 1);
+            c.fill_circle(cx, t.y + t.h / 2, hh * 3 / 4, 0x9910_0C0A);
+            text::draw_centered(c, Font::Heading, cx, t.y + (t.h - hh) / 2, &number, ui::WHITE);
+            c.stroke_round(t, 11, 1, ui::line());
+            if primary && !mirror {
+                text::draw_centered(c, Font::Strong, cx, t.bottom() + 10, "Principale", ui::text());
+            } else {
+                text::draw_centered(c, Font::Body, cx, t.bottom() + 10, &format!("Monitor {}", output + 1), ui::text_dim());
+            }
+        }
+    }
+
+    /// The monitors arranged anew (`order` left to right, the primary's
+    /// output, all the same or not); the row `label` says if it cannot be.
+    fn arrange(&mut self, order: Vec<u32>, primary: u32, mirror: bool, label: &'static str, done: &'static str) {
+        self.note = match crate::gui::change_monitors(order, primary, mirror) {
+            Ok(()) => (label, done),
+            Err(_) => (label, "Non si può cambiare ora"),
+        };
     }
 
     // ------------------------------------------------------------------
@@ -1050,6 +1167,22 @@ impl Prefs {
             Ctl::Wallpapers => {
                 settings::update(|s| s.wallpaper = String::from(res::WALLPAPERS[k].0));
                 return Action::Wallpaper;
+            }
+            Ctl::Monitors | Ctl::Swap | Ctl::Mirror => {
+                let mut order = crate::dev::display::order();
+                let (_, chosen, mirror) = crate::gui::monitor_choice();
+                let primary = crate::gui::monitors().get(crate::gui::primary()).map(|m| m.0).or(chosen).unwrap_or(0);
+                match &p.row.ctl {
+                    Ctl::Monitors => {
+                        let Some(&(output, _)) = monitor_tiles(p.ctl_r).get(k) else { return Action::None };
+                        self.arrange(order, output, mirror, L_MONITORS, "Monitor principale cambiato");
+                    }
+                    Ctl::Swap => {
+                        order.rotate_right(1);
+                        self.arrange(order, primary, mirror, L_SWAP, "Monitor scambiati");
+                    }
+                    _ => self.arrange(order, primary, !mirror, L_MIRROR, if mirror { "Monitor affiancati" } else { "Monitor duplicati" }),
+                }
             }
             Ctl::Modes => {
                 if crate::gui::change_resolution(self.modes[k]).is_err() {
@@ -1249,7 +1382,7 @@ impl App for Prefs {
                 Target::Side(_) | Target::Result(_) => true,
                 Target::Ctl(i, k) => match page.rows[i].row.ctl {
                     Ctl::Name | Ctl::Device | Ctl::Password => k == 1,
-                    Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Modes => true,
+                    Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Modes | Ctl::Swap | Ctl::Monitors => true,
                     _ => false,
                 },
                 Target::Search => false,

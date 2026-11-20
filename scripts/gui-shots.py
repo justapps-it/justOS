@@ -8,7 +8,9 @@ A script is a list of steps, one per line:
     wait <seconds>
     until <seconds> <text>      wait until the serial log has that text (colours
                                 left out), at most that long
-    shot <name>                 save <out>/<name>.png
+    shot <name>                 save <out>/<name>.png (with HEADS=n, each
+                                head in <out>/<name>-h<i>.png too, and all
+                                of them side by side in <name>.png)
     click <x> <y>               left click at a screen position
     double <x> <y>              double click
     right <x> <y>               right click
@@ -30,12 +32,20 @@ A script is a list of steps, one per line:
                                 ("click @20 @40"). Stops the script if the
                                 colour is nowhere.
     qmp <command> [json]        a QMP command, e.g. qmp device_del {"id": "t"}
+    plug <head> [<w>x<h>]       a monitor attached at that head (HEADS=n)
+    unplug <head>               ...and taken away
 
 Usage: scripts/gui-shots.py <image> <script> <out folder> [qemu options...]
 Environment: QEMU (default qemu-system-x86_64), UEFI=1 for OVMF, CDROM=1 to
 boot the image as a CD, USB=1 as a USB stick (xHCI), KEEP=<file> to keep the
 disk as the session left it, SCREEN=<w>x<h> when the screen is not 1024x768,
-MEMORY (default 512M).
+MEMORY (default 512M). HEADS=<n> for a display with several heads (the
+monitors of "-device virtio-gpu-pci,max_outputs=2,id=gpu"): screenshots
+take every head of the device named by GPU (default gpu), and SCREEN is
+then the whole desktop the pointer moves over (two 1280x800 monitors side
+by side: 2560x800). Without a window of its own QEMU shows only the first
+head as a monitor, so each other one gets a VNC server and a small client
+that tells QEMU its size (MONITOR, default 1280x800), as a window would.
 """
 import json
 import os
@@ -99,6 +109,47 @@ class Qmp:
         self.cmd("input-send-event", events=[{"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": name}}}])
 
 
+class Vnc:
+    """A VNC client of one head that only says how big its window is: QEMU
+    then shows the guest a monitor attached there (none for 0 x 0)."""
+
+    def __init__(self, path):
+        for _ in range(100):
+            try:
+                self.s = socket.socket(socket.AF_UNIX)
+                self.s.connect(path)
+                break
+            except OSError:
+                time.sleep(0.1)
+        self.recv(12)
+        self.s.sendall(b"RFB 003.008\n")
+        types = self.recv(self.recv(1)[0])
+        if 1 not in types:
+            raise SystemExit("vnc: the server wants a password")
+        self.s.sendall(b"\x01")
+        self.recv(4)
+        # Shared; then the server's size, pixel format and name.
+        self.s.sendall(b"\x01")
+        self.recv(20)
+        self.recv(struct.unpack(">I", self.recv(4))[0])
+        # Encodings: raw, and the extended desktop size that resizing needs.
+        self.s.sendall(struct.pack(">BxHii", 2, 2, 0, -308))
+        threading.Thread(target=drain, args=(self.s,), daemon=True).start()
+
+    def recv(self, n):
+        data = b""
+        while len(data) < n:
+            part = self.s.recv(n - len(data))
+            if not part:
+                raise SystemExit("vnc: the server went away")
+            data += part
+        return data
+
+    def size(self, w, h):
+        """SetDesktopSize with one screen of w x h."""
+        self.s.sendall(struct.pack(">BxHHBx", 251, w, h, 1) + struct.pack(">IHHHHI", 0, 0, 0, w, h, 0))
+
+
 def read_ppm(src):
     """QEMU's binary PPM screendump: (width, height, RGB bytes)."""
     with open(src, "rb") as f:
@@ -125,7 +176,23 @@ def read_ppm(src):
 
 def ppm_to_png(src, dst):
     """Converts QEMU's binary PPM screendump to PNG with the standard library."""
-    w, h, pixels = read_ppm(src)
+    write_png(dst, *read_ppm(src))
+
+
+def side_by_side(shots):
+    """Several (width, height, RGB bytes) next to each other, tops aligned;
+    black under the shorter ones."""
+    w = sum(s[0] for s in shots)
+    h = max(s[1] for s in shots)
+    rows = []
+    for y in range(h):
+        for sw, sh, px in shots:
+            rows.append(px[y * sw * 3:(y + 1) * sw * 3] if y < sh else b"\0" * (sw * 3))
+    return w, h, b"".join(rows)
+
+
+def write_png(dst, w, h, pixels):
+    """Saves RGB bytes as a PNG, with the standard library."""
     stride = w * 3
     raw = b"".join(b"\0" + pixels[y * stride:(y + 1) * stride] for y in range(h))
 
@@ -181,9 +248,18 @@ def main():
         shutil.copy("/usr/share/OVMF/OVMF_VARS_4M.fd", vars_)
         args += ["-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
                  "-drive", f"if=pflash,format=raw,file={vars_}"]
+    heads = int(os.environ.get("HEADS", "1"))
+    gpu = os.environ.get("GPU", "gpu")
+    monitor = tuple(map(int, os.environ.get("MONITOR", "1280x800").split("x")))
+    for head in range(1, heads):
+        args += ["-vnc", f"unix:{work}/vnc{head}.sock,id=vnc{head},display={gpu},head={head}"]
     proc = subprocess.Popen(args + extra)
     try:
         q = Qmp(sock)
+        # The other monitors are there from the start, as the first one.
+        vnc = {head: Vnc(f"{work}/vnc{head}.sock") for head in range(1, heads)}
+        for v in vnc.values():
+            v.size(*monitor)
         at = (W // 2, H // 2)
         console = None
         origin = (0, 0)
@@ -215,9 +291,18 @@ def main():
                     time.sleep(0.5)
             elif op == "shot":
                 ppm = os.path.join(work, "shot.ppm")
-                q.cmd("screendump", filename=ppm)
-                time.sleep(0.3)
-                ppm_to_png(ppm, os.path.join(out, a[0] + ".png"))
+                if heads == 1:
+                    q.cmd("screendump", filename=ppm)
+                    time.sleep(0.3)
+                    ppm_to_png(ppm, os.path.join(out, a[0] + ".png"))
+                else:
+                    shots = []
+                    for head in range(heads):
+                        q.cmd("screendump", filename=ppm, device=gpu, head=head)
+                        time.sleep(0.3)
+                        shots.append(read_ppm(ppm))
+                        write_png(os.path.join(out, f"{a[0]}-h{head}.png"), *shots[-1])
+                    write_png(os.path.join(out, a[0] + ".png"), *side_by_side(shots))
                 print("shot", a[0], flush=True)
             elif op in ("click", "double", "right"):
                 x, y = int(a[0]), int(a[1])
@@ -300,6 +385,10 @@ def main():
             elif op == "qmp":
                 name, _, body = rest.partition(" ")
                 print("qmp", name, q.cmd(name, **(json.loads(body) if body.strip() else {})), flush=True)
+            elif op in ("plug", "unplug"):
+                size = tuple(map(int, a[1].split("x"))) if len(a) > 1 else monitor
+                vnc[int(a[0])].size(*(size if op == "plug" else (0, 0)))
+                print(op, a[0], flush=True)
             else:
                 raise SystemExit(f"unknown step: {line}")
             if op in ("click", "double", "right", "move", "press", "glide", "release"):

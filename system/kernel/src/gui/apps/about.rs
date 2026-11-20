@@ -118,13 +118,14 @@ impl App for About {
                 };
                 let (free, total) = crate::mem::frame::stats();
                 let up = crate::time::uptime_ms() / 1000;
-                let (sw, sh) = crate::console::pixel_size().unwrap_or((0, 0));
+                let (sw, sh) = crate::dev::display::monitor_size().unwrap_or((0, 0));
+                let screens = crate::dev::display::shown_outputs().len();
                 let video = crate::dev::display::controller().unwrap_or_else(|| String::from("Framebuffer del firmware"));
                 let sound = crate::dev::audio::list().first().map(|o| o.name.clone()).unwrap_or_else(|| String::from("Nessuna"));
                 let mut rows = alloc::vec![
                     ("Processore", cpu),
                     ("Memoria", format!("{} ({} libera)", Size(total), Size(free))),
-                    ("Schermo", format!("{sw} × {sh}")),
+                    ("Schermo", if screens > 1 { format!("{sw} × {sh} · {screens} monitor") } else { format!("{sw} × {sh}") }),
                     ("Grafica", video),
                     ("Audio", sound),
                 ];

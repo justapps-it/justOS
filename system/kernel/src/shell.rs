@@ -102,7 +102,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("volume", "[0-100]", "show or set the sound volume"),
     ("hostname", "[name | check]", "the computer's name: show it, change it, or check the DHCP packet that sends it"),
     ("setup", "[skip]", "first-start setup: its state, or mark it done without asking (for automation)"),
-    ("display", "[WxH | scale auto|1|2]", "screen resolutions, switch to one, or the interface size"),
+    ("display", "[WxH | scale auto|1|2 | primary N | mirror on|off | order N,N...]", "screen resolutions, switch to one, the interface size, or how monitors are arranged"),
     ("fps", "[auto|60|120|144|240]", "frames the interface drew in the last second; or set the most a second"),
 ];
 
@@ -1478,10 +1478,11 @@ impl Shell {
 
     fn display(&self, arg: Option<&str>, value: Option<&str>) {
         let Some(arg) = arg else {
-            match crate::console::pixel_size() {
+            match crate::dev::display::monitor_size() {
                 Some((w, h)) => println!("screen {w}x{h}"),
                 None => println!("text screen"),
             }
+            self.monitors();
             if crate::gui::active() {
                 let choice = match crate::gui::scale_choice() {
                     0 => "auto",
@@ -1523,13 +1524,67 @@ impl Shell {
             }
             return;
         }
+        if matches!(arg, "primary" | "mirror" | "order") {
+            return self.arrange(arg, value);
+        }
         let mode = arg.split_once('x').and_then(|(w, h)| Some(justdk::DisplayMode { width: w.parse().ok()?, height: h.parse().ok()? }));
         let Some(mode) = mode else {
-            println!("{ERR}usage: display [WxH | scale auto|1|2]{RESET}");
+            println!("{ERR}usage: display [WxH | scale auto|1|2 | primary N | mirror on|off | order N,N...]{RESET}");
             return;
         };
         match crate::gui::change_resolution(mode) {
             Ok(()) => println!("screen {}x{}", mode.width, mode.height),
+            Err(e) => println!("{ERR}{e}{RESET}"),
+        }
+    }
+
+    /// The monitors, when there are several: where each shows the screen,
+    /// and which is the primary.
+    fn monitors(&self) {
+        let shown = crate::dev::display::shown_outputs();
+        if shown.len() < 2 {
+            return;
+        }
+        let a = crate::dev::display::arrangement();
+        if a.mirror {
+            let list: Vec<String> = shown.iter().map(|o| alloc::format!("{o}")).collect();
+            println!("monitors: {} mirrored (outputs {})", shown.len(), list.join(" "));
+            return;
+        }
+        let main = crate::gui::monitors().get(crate::gui::primary()).map(|m| m.0);
+        for (i, m) in crate::dev::display::monitors().iter().enumerate() {
+            let tag = if Some(m.output) == main { " (primary)" } else { "" };
+            println!("monitor {i}: output {} {}x{} at {},{}{tag}", m.output, m.w, m.h, m.x, m.y);
+        }
+    }
+
+    /// `display primary N`, `display mirror on|off`, `display order N,N...`:
+    /// the monitors arranged anew (outputs by number).
+    fn arrange(&self, what: &str, value: Option<&str>) {
+        let outputs: Vec<u32> = crate::dev::display::outputs().iter().map(|o| o.0).collect();
+        if outputs.len() < 2 {
+            println!("{ERR}there is one monitor{RESET}");
+            return;
+        }
+        let (mut order, primary, mut mirror) = crate::gui::monitor_choice();
+        let mut primary = primary.unwrap_or(outputs[0]);
+        match (what, value) {
+            ("primary", Some(v)) if v.parse().is_ok_and(|o| outputs.contains(&o)) => primary = v.parse().unwrap_or(primary),
+            ("mirror", Some(v @ ("on" | "off"))) => mirror = v == "on",
+            ("order", Some(v)) => {
+                order = v.split(',').filter_map(|o| o.trim().parse().ok()).collect();
+                if order.is_empty() || order.iter().any(|o| !outputs.contains(o)) {
+                    println!("{ERR}outputs with a monitor: {outputs:?}{RESET}");
+                    return;
+                }
+            }
+            _ => {
+                println!("{ERR}usage: display primary N | mirror on|off | order N,N... (outputs {outputs:?}){RESET}");
+                return;
+            }
+        }
+        match crate::gui::change_monitors(order, primary, mirror) {
+            Ok(()) => println!("monitors: primary {primary}, {}", if mirror { "mirrored" } else { "side by side" }),
             Err(e) => println!("{ERR}{e}{RESET}"),
         }
     }

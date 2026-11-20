@@ -487,8 +487,9 @@ impl Desktop {
         if a.kind.level() {
             return self.level_rect();
         }
-        let w = (2 * ISL_PAD + ISL_ICON + ISL_GAP + isl_content_w(a)).min(self.w - 24);
-        Rect::new((self.w - w) / 2, self.h - 12 - ISL_H, w, ISL_H)
+        let m = self.main_mon();
+        let w = (2 * ISL_PAD + ISL_ICON + ISL_GAP + isl_content_w(a)).min(m.w - 24);
+        Rect::new(m.x + (m.w - w) / 2, m.bottom() - 12 - ISL_H, w, ISL_H)
     }
 
     /// Where the island is all the way out, while the bar is one (or is
@@ -596,7 +597,8 @@ impl Desktop {
     /// The level, at the bottom in the middle.
     fn level_rect(&self) -> Rect {
         let w = level_w();
-        Rect::new((self.w - w) / 2, self.h - 12 - LEVEL_H, w, LEVEL_H)
+        let m = self.main_mon();
+        Rect::new(m.x + (m.w - w) / 2, m.bottom() - 12 - LEVEL_H, w, LEVEL_H)
     }
 
     /// The level's symbol, cells and digits.
@@ -628,7 +630,8 @@ impl Desktop {
         let i = self.primary()?;
         let (clock, _) = clock_strings();
         let w = 2 * PILL_PAD + digits_w(&clock, PILL_CELL) + 21 + pill_ind_w(&self.acts[i]);
-        Some((Rect::new((self.w - w) / 2, self.h - 8 - PILL_H, w, PILL_H), i))
+        let m = self.main_mon();
+        Some((Rect::new(m.x + (m.w - w) / 2, m.bottom() - 8 - PILL_H, w, PILL_H), i))
     }
 
     /// What the pill `r` shows after the time and a thin line.

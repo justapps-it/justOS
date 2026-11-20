@@ -254,6 +254,18 @@ unsafe extern "C" fn api_power_hooks(device: u32, hooks: *const PowerHooks) -> S
     dev::pm::register(device, unsafe { *hooks })
 }
 
+unsafe extern "C" fn api_display_heads(display: u32, heads: *const DisplayHeads) -> Status {
+    if heads.is_null() {
+        return E_INVAL;
+    }
+    // SAFETY: the module passes valid functions for the call's duration.
+    dev::display::register_heads(display, unsafe { *heads })
+}
+
+unsafe extern "C" fn api_display_changed(display: u32) {
+    dev::display::outputs_changed(display);
+}
+
 pub static KERNEL_API: KernelApi = KernelApi {
     abi_version: ABI_VERSION,
     size: core::mem::size_of::<KernelApi>() as u32,
@@ -288,4 +300,6 @@ pub static KERNEL_API: KernelApi = KernelApi {
     map_framebuffer: api_map_framebuffer,
     boot_framebuffer: api_boot_framebuffer,
     power_hooks: api_power_hooks,
+    display_heads: api_display_heads,
+    display_changed: api_display_changed,
 };

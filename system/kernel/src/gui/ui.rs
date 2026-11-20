@@ -1034,6 +1034,11 @@ impl Looper {
                 d.follow_framebuffer();
                 self.damage_all(d);
             }
+            if crate::dev::display::take_changed() {
+                // A monitor came or went: the same resolution, laid out on
+                // the monitors there are now.
+                super::request_mode(d.mode());
+            }
             if let Some(mode) = super::take_mode_request() {
                 self.cursor.hide(d);
                 match d.set_mode(mode) {

@@ -351,6 +351,57 @@ pub struct DisplayDesc {
     pub name: [u8; 40],
 }
 
+/// [`DisplayOutput::flags`]: a monitor is attached to the output.
+pub const OUTPUT_CONNECTED: u32 = 1;
+
+/// One of a controller's outputs: a connector a monitor can be attached to.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DisplayOutput {
+    /// The size the monitor prefers, or 0 x 0 when it does not say.
+    pub width: u32,
+    pub height: u32,
+    /// [`OUTPUT_CONNECTED`].
+    pub flags: u32,
+    pub _pad: u32,
+}
+
+/// What one output shows: a rectangle of the framebuffer, in pixels.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DisplayHead {
+    /// The output, as numbered by [`DisplayOutputs`].
+    pub output: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Fills `out` with up to `max` outputs; returns how many the controller
+/// has (connected or not).
+pub type DisplayOutputs = unsafe extern "C" fn(ctx: *mut c_void, out: *mut DisplayOutput, max: usize) -> usize;
+/// Makes one framebuffer of `size` and shows the `count` heads in `heads`
+/// on their outputs (two heads may show the same rectangle: a mirror);
+/// outputs without a head go dark. Describes the framebuffer in `fb`.
+pub type DisplaySetHeads =
+    unsafe extern "C" fn(ctx: *mut c_void, size: DisplayMode, heads: *const DisplayHead, count: usize, fb: *mut Framebuffer) -> Status;
+
+/// A display controller that drives several monitors (see
+/// `KernelApi::display_heads`). Without it a controller has one monitor,
+/// which shows all of the framebuffer of `DisplayDesc::set_mode`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DisplayHeads {
+    pub ctx: *mut c_void,
+    pub outputs: DisplayOutputs,
+    pub set_heads: DisplaySetHeads,
+}
+
+// SAFETY: the context belongs to the driver, which only uses it from its
+// own functions.
+unsafe impl Send for DisplayHeads {}
+
 // ----------------------------------------------------------------------------
 // Logging
 
@@ -452,6 +503,15 @@ pub struct KernelApi {
     /// up (see [`PowerHooks`]). The kernel copies `hooks`. A device with a
     /// driver but without hooks keeps the machine from sleeping.
     pub power_hooks: unsafe extern "C" fn(device: u32, hooks: *const PowerHooks) -> Status,
+
+    // Several monitors
+    /// Display `display` (the number `display_register` returned) drives
+    /// several monitors (see [`DisplayHeads`]). The kernel copies `heads`.
+    pub display_heads: unsafe extern "C" fn(display: u32, heads: *const DisplayHeads) -> Status,
+    /// A monitor was attached to display `display` or taken away: the
+    /// kernel asks for its outputs again and lays the screen out anew.
+    /// Safe from any thread (not from interrupt handlers).
+    pub display_changed: unsafe extern "C" fn(display: u32),
 }
 
 // ----------------------------------------------------------------------------

@@ -375,11 +375,12 @@ struct Popup {
 }
 
 impl Popup {
-    fn menu<S: Into<String>>(x: i32, y: i32, items: Vec<(S, Option<MenuAct>)>, screen_w: i32) -> Popup {
+    /// A menu at (`x`, `y`), kept inside the monitor `area`.
+    fn menu<S: Into<String>>(x: i32, y: i32, items: Vec<(S, Option<MenuAct>)>, area: Rect) -> Popup {
         let items: Vec<(String, Option<MenuAct>)> = items.into_iter().map(|(s, a)| (s.into(), a)).collect();
         let w = 230;
         let h = items.iter().map(|(_, a)| if a.is_some() { 34 } else { 11 }).sum::<i32>() + 12;
-        let rect = Rect::new(x.min(screen_w - w - 10).max(10), y, w, h);
+        let rect = Rect::new(x.min(area.right() - w - 10).max(area.x + 10), y, w, h);
         Popup { kind: PopupKind::Menu, rect, items, anim: Anim::new(140), up: false, settled: false }
     }
 
@@ -659,8 +660,13 @@ const SLOW_START_TIMEOUT_MS: u64 = 420_000;
 const CASCADE: i32 = 28;
 
 struct Desktop {
+    /// The whole screen, every monitor.
     w: i32,
     h: i32,
+    /// The monitors, left to right, side by side with their tops at 0, and
+    /// which one is the primary (see [`Desktop::main_mon`]).
+    mons: Vec<Rect>,
+    main_at: usize,
     sharp: Canvas,
     blur: Canvas,
     windows: Vec<Window>,
@@ -772,13 +778,14 @@ impl Desktop {
     /// notifications.
     fn clock_btn(&self) -> Rect {
         let (clock, date) = clock_strings();
+        let m = self.main_mon();
         if self.full_screen() {
             let w = text::width(Font::Strong, &clock) + 12 + text::width(Font::Strong, &date) + 28;
-            return Rect::new((self.w - w) / 2, (wm::TITLE_H - 32) / 2, w, 32);
+            return Rect::new(m.x + (m.w - w) / 2, m.y + (wm::TITLE_H - 32) / 2, w, 32);
         }
         let (cw, _) = clock_size(&clock);
         let w = cw.max(text::width(Font::Strong, &date)) + 40;
-        Rect::new((self.w - w) / 2, 10, w, clock_height())
+        Rect::new(m.x + (m.w - w) / 2, m.y + 10, w, clock_height())
     }
 
     /// A dot for each desktop under the clock, when there is more than one:
@@ -786,7 +793,7 @@ impl Desktop {
     fn spaces_btn(&self) -> Option<Rect> {
         let cb = self.clock_btn();
         let w = self.spaces as i32 * 14 + 18;
-        (self.spaces > 1 && !self.full_screen()).then(|| Rect::new(self.w / 2 - w / 2, cb.bottom() + 2, w, 20))
+        (self.spaces > 1 && !self.full_screen()).then(|| Rect::new(cb.x + cb.w / 2 - w / 2, cb.bottom() + 2, w, 20))
     }
 
     /// Is a window over the clock (one taller than the work area, or moved
@@ -816,16 +823,16 @@ impl Desktop {
 
     fn widgets(&self) -> [Rect; 3] {
         let w = 300;
-        let y = 16;
-        [Rect::new(16, y, w, 132), Rect::new(16, y + 144, w, 222), Rect::new(16, y + 378, w, 120)]
+        let (x, y) = (self.main_mon().x + 16, 16);
+        [Rect::new(x, y, w, 132), Rect::new(x, y + 144, w, 222), Rect::new(x, y + 378, w, 120)]
     }
 
     fn show_widgets(&self) -> usize {
         if !settings::get().widgets {
             0
-        } else if self.h >= 700 {
+        } else if self.main_mon().h >= 700 {
             3
-        } else if self.h >= 560 {
+        } else if self.main_mon().h >= 560 {
             2
         } else {
             0
@@ -913,7 +920,7 @@ impl Desktop {
     fn dock_icon(&self, items: &[DockItem]) -> i32 {
         let d = Dims::at(ICON, 1000);
         let (_, total) = Self::dock_base(items, self.status_w(&d), &d, &self.cap_extras(items, 1000));
-        let room = self.w - 24 - self.bubble_room(d.h());
+        let room = self.main_mon().w - 24 - self.bubble_room(d.h());
         if total <= room || items.is_empty() {
             return ICON;
         }
@@ -1004,8 +1011,9 @@ impl Desktop {
         let dock_h = d.h();
         // The bubble beside the dock takes room at its right.
         let bubble = self.bubble_room(dock_h);
-        let x0 = (self.w - total - bubble) / 2;
-        let bottom = self.h - 12 - d.pad - 4;
+        let m = self.main_mon();
+        let x0 = m.x + (m.w - total - bubble) / 2;
+        let bottom = m.bottom() - 12 - d.pad - 4;
         // The background stays where it is: the icons near the pointer grow
         // in place, into the gaps beside them (MAGNIFY is less than a gap,
         // so neighbours never touch), and rise by half as much. None moves
@@ -1030,7 +1038,7 @@ impl Desktop {
                 Rect::new(left + (icon - s) / 2, bottom - s - grow / 2, s, s)
             })
             .collect();
-        let bg = Rect::new(x0, self.h - dock_h - 12, total, dock_h);
+        let bg = Rect::new(x0, m.bottom() - dock_h - 12, total, dock_h);
         let mark = rects.remove(0);
         (mark, rects, bg)
     }
@@ -1095,7 +1103,7 @@ impl Desktop {
         let d = self.dims_at(&items, self.dock_size());
         // Above the full-size dock, the room its icons grow into.
         let lift = if self.dock_size() >= 1000 && settings::dock_magnify() { MAGNIFY + 10 } else { 10 };
-        let mut near = Rect::new(bg.x - 20, bg.y - lift, bg.w + 40, self.h - (bg.y - lift));
+        let mut near = Rect::new(bg.x - 20, bg.y - lift, bg.w + 40, self.main_mon().bottom() - (bg.y - lift));
         if self.bubble.value() > 0 {
             near = near.union(&self.bubble_rect(bg).grow(10));
         }
@@ -1131,25 +1139,57 @@ impl Desktop {
         items.iter().position(|d| d.kind == kind).map(|i| rects[i]).unwrap_or(Rect::new(bg.x + bg.w / 2 - 20, bg.y, 40, 40))
     }
 
-    /// Where windows go: under the clock, above the dock.
+    /// Where windows go on the primary monitor: under the clock, above the
+    /// dock.
     fn work_area(&self) -> Rect {
-        let top = 10 + clock_height() + 8;
-        let dock_top = self.h - (ICON + 2 * DOCK_PAD + 4) - 12;
-        Rect::new(8, top, self.w - 16, dock_top - top - 8)
+        self.work_area_on(self.main_mon())
     }
 
+    /// Where windows go on monitor `m`: on the primary under the clock and
+    /// above the dock, on the others all of it but a margin.
+    fn work_area_on(&self, m: Rect) -> Rect {
+        if m != self.main_mon() {
+            return m.grow(-8);
+        }
+        let top = m.y + 10 + clock_height() + 8;
+        let dock_top = m.bottom() - (ICON + 2 * DOCK_PAD + 4) - 12;
+        Rect::new(m.x + 8, top, m.w - 16, dock_top - top - 8)
+    }
+
+    /// The whole screen: every monitor.
     fn screen(&self) -> Rect {
         Rect::new(0, 0, self.w, self.h)
     }
 
-    /// Where a maximised window goes: the whole screen.
-    fn full_area(&self) -> Rect {
-        self.screen()
+    /// The primary monitor: the clock, the dock and the bar are there, and
+    /// the launcher, the overview and the notifications.
+    fn main_mon(&self) -> Rect {
+        self.mons.get(self.main_at).copied().unwrap_or(self.screen())
     }
 
-    /// Is a full-screen window in front? Then the dock hides.
+    /// The monitor with (`x`, `y`) on it (the primary for a point on none).
+    fn monitor_at(&self, x: i32, y: i32) -> Rect {
+        self.mons.iter().copied().find(|m| m.contains(x, y)).unwrap_or(self.main_mon())
+    }
+
+    /// The monitor a window with the frame `r` is on: the one with its
+    /// centre, or the nearest when the centre is on none.
+    fn monitor_of(&self, r: Rect) -> Rect {
+        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+        let away = |m: &Rect| (cx - cx.clamp(m.x, m.right() - 1)).abs() + (cy - cy.clamp(m.y, m.bottom() - 1)).abs();
+        self.mons.iter().copied().min_by_key(away).unwrap_or(self.main_mon())
+    }
+
+    /// Where a window with the frame `r` goes maximised: all of its monitor.
+    fn full_area(&self, r: Rect) -> Rect {
+        self.monitor_of(r)
+    }
+
+    /// Is a full-screen window in front on the primary monitor? Then the
+    /// dock hides (one on another monitor leaves the dock and the clock be).
     fn full_screen(&self) -> bool {
-        self.launcher.is_none() && self.focused().and_then(|id| self.window(id)).is_some_and(|w| w.full())
+        self.launcher.is_none()
+            && self.focused().and_then(|id| self.window(id)).is_some_and(|w| w.full() && self.monitor_of(w.rect) == self.main_mon())
     }
 
     /// Is the dock on the screen?
@@ -1387,19 +1427,25 @@ impl Desktop {
                 return id;
             }
         }
-        let work = self.work_area();
-        let (aw, ah) = Window::outer_size(app.size().0, app.size().1);
-        // A window taller than that that cannot be made smaller (a Windows
-        // dialog on a small screen) covers the clock too, rather than
-        // losing its bottom; any other fits in the work area.
-        let area = if ah > work.h && !app.resizable() { Rect::new(work.x, 4, work.w, work.bottom() - 4) } else { work };
-        let (aw, full_h) = (aw.min(area.w), ah.min(area.h));
         // A dialog opens over the middle of the window it belongs to, on
         // that one's desktop (minimised with it if it is).
         let parent = match app.parent() {
             0 => None,
             k => self.windows.iter().find(|w| w.app.ident() == k).map(|w| (w.rect, w.space, w.minimized)),
         };
+        // On that window's monitor; any other on the pointer's, where the
+        // user asked for it.
+        let mon = match parent {
+            Some((r, ..)) => self.monitor_of(r),
+            None => self.monitor_at(self.mouse.0, self.mouse.1),
+        };
+        let work = self.work_area_on(mon);
+        let (aw, ah) = Window::outer_size(app.size().0, app.size().1);
+        // A window taller than that that cannot be made smaller (a Windows
+        // dialog on a small screen) covers the clock too, rather than
+        // losing its bottom; any other fits in the work area.
+        let area = if ah > work.h && !app.resizable() { Rect::new(work.x, mon.y + 4, work.w, work.bottom() - mon.y - 4) } else { work };
+        let (aw, full_h) = (aw.min(area.w), ah.min(area.h));
         let (x, y) = match parent {
             Some((r, ..)) => place_over(r, aw, full_h, area),
             None => self.place_new(aw, full_h, area),
@@ -1506,7 +1552,7 @@ impl Desktop {
     }
 
     fn zoom(&mut self, l: &mut Looper, id: u32) {
-        let screen = self.full_area();
+        let Some(screen) = self.window(id).map(|w| self.full_area(w.rect)) else { return };
         let Some(win) = self.window_mut(id) else { return };
         let before = win.bounds();
         win.toggle_maximize(screen);
@@ -1517,46 +1563,59 @@ impl Desktop {
     }
 
     /// Where a window dropped at (`x`, `y`) snaps: a half at the left or
-    /// right edge, a quarter near a corner, the whole screen at the top.
+    /// right edge of a monitor, a quarter near a corner, the whole monitor
+    /// at the top. An edge between two monitors does not snap: the pointer
+    /// goes through it to the other one.
     fn snap_zone(&self, x: i32, y: i32) -> Option<Rect> {
-        let a = self.work_area();
         const EDGE: i32 = 4;
-        const CORNER: i32 = 90;
-        let (left, right) = (x <= EDGE, x >= self.w - 1 - EDGE);
+        let m = self.monitor_at(x, y);
+        let outer = |at: i32| !self.mons.iter().any(|o| *o != m && o.contains(at, y));
+        let left = x <= m.x + EDGE && outer(m.x - 1);
+        let right = x >= m.right() - 1 - EDGE && outer(m.right());
         if !left && !right {
-            return (y <= EDGE).then(|| self.full_area());
+            return (y <= m.y + EDGE).then_some(m);
         }
+        Some(self.snap_half(m, left, y))
+    }
+
+    /// The left (or right) half of monitor `m`'s work area, or a quarter of
+    /// it when `y` is near a corner.
+    fn snap_half(&self, m: Rect, left: bool, y: i32) -> Rect {
+        const CORNER: i32 = 90;
+        let a = self.work_area_on(m);
         let (hw, hh) = (a.w / 2 - 4, a.h / 2 - 4);
         let x0 = if left { a.x } else { a.right() - hw };
-        Some(if y < a.y + CORNER {
+        if y < a.y + CORNER {
             Rect::new(x0, a.y, hw, hh)
         } else if y > a.bottom() - CORNER {
             Rect::new(x0, a.bottom() - hh, hw, hh)
         } else {
             Rect::new(x0, a.y, hw, a.h)
-        })
-    }
-
-    /// One of the snap zones by name, for the keyboard (Ctrl+Alt with the
-    /// arrows or U, I, J, K, as Rectangle does on the Mac).
-    fn snap_named(&self, key: Key) -> Option<Rect> {
-        let a = self.work_area();
-        let (top, mid, bottom) = (a.y + 1, a.y + a.h / 2, a.bottom() - 2);
-        let right = self.w - 1;
-        match key {
-            Key::Left => self.snap_zone(0, mid),
-            Key::Right => self.snap_zone(right, mid),
-            Key::Char('u') | Key::Char('U') => self.snap_zone(0, top),
-            Key::Char('i') | Key::Char('I') => self.snap_zone(right, top),
-            Key::Char('j') | Key::Char('J') => self.snap_zone(0, bottom),
-            Key::Char('k') | Key::Char('K') => self.snap_zone(right, bottom),
-            _ => None,
         }
     }
 
-    /// Fits window `id` into `zone` (the whole screen means maximised).
+    /// One of the snap zones by name, for the keyboard (Ctrl+Alt with the
+    /// arrows or U, I, J, K, as Rectangle does on the Mac), on the monitor
+    /// of window `id`.
+    fn snap_named(&self, id: u32, key: Key) -> Option<Rect> {
+        let m = self.window(id).map_or(self.main_mon(), |w| self.monitor_of(w.rect));
+        let a = self.work_area_on(m);
+        let (top, mid, bottom) = (a.y + 1, a.y + a.h / 2, a.bottom() - 2);
+        let (left, y) = match key {
+            Key::Left => (true, mid),
+            Key::Right => (false, mid),
+            Key::Char('u') | Key::Char('U') => (true, top),
+            Key::Char('i') | Key::Char('I') => (false, top),
+            Key::Char('j') | Key::Char('J') => (true, bottom),
+            Key::Char('k') | Key::Char('K') => (false, bottom),
+            _ => return None,
+        };
+        Some(self.snap_half(m, left, y))
+    }
+
+    /// Fits window `id` into `zone` (a whole monitor means maximised).
     fn snap(&mut self, l: &mut Looper, id: u32, zone: Rect) {
-        if zone == self.full_area() {
+        if self.mons.contains(&zone) {
             if self.window(id).is_some_and(|w| !w.full()) {
                 self.zoom(l, id);
             }
@@ -1648,7 +1707,8 @@ impl Desktop {
     }
 
     fn space_hud_rect(&self) -> Rect {
-        Rect::new((self.w - 220) / 2, (self.h - 96) / 2, 220, 96)
+        let m = self.main_mon();
+        Rect::new(m.x + (m.w - 220) / 2, m.y + (m.h - 96) / 2, 220, 96)
     }
 
     /// Opens the overview: every window is drawn once into a picture, at
@@ -1663,10 +1723,11 @@ impl Desktop {
         self.snap_preview = None;
         self.space_hud = None;
         let focused = self.focused();
+        let half = self.main_mon().w / 2;
         let mut snaps = Vec::new();
         for w in self.windows.iter_mut().filter(|w| !w.minimized) {
             let (pic, at) = w.snapshot(&self.blur, Some(w.id) == focused);
-            snaps.push((w.id, shrink(pic, self.w / 2), at, w.rect));
+            snaps.push((w.id, shrink(pic, half), at, w.rect));
         }
         self.overview = Some(Overview { anim: Anim::new(300), closing: false, settled: false, snaps, held: None });
         l.damage(self.screen());
@@ -1689,11 +1750,14 @@ impl Desktop {
         let n = self.spaces as i32;
         let more = self.spaces < MAX_SPACES;
         let gap = 20;
-        let tw = 180.min((self.w - 60) / (n + 1) - gap);
+        let m = self.main_mon();
+        let tw = 180.min((m.w - 60) / (n + 1) - gap);
+        // A desktop is every monitor: its picture has the whole screen's
+        // shape.
         let th = tw * self.h / self.w.max(1);
         let pw = if more { th.min(56) } else { 0 };
         let total = n * tw + (n - 1) * gap + if more { gap + pw } else { 0 };
-        let mut x = (self.w - total) / 2;
+        let mut x = m.x + (m.w - total) / 2;
         let y = 24;
         let mut v = Vec::new();
         for _ in 0..n {
@@ -1735,7 +1799,8 @@ impl Desktop {
             return Vec::new();
         }
         let top = self.space_thumbs().0.first().map_or(24, |t| t.bottom()) + 50;
-        let area = Rect::new(40, top, self.w - 80, self.h - top - 50);
+        let m = self.main_mon();
+        let area = Rect::new(m.x + 40, top, m.w - 80, m.bottom() - top - 50);
         let cols = (1..=n).find(|c| c * c >= n).unwrap_or(1);
         let rows = (n + cols - 1) / cols;
         let (cw, ch) = (area.w / cols, area.h / rows);
@@ -1859,12 +1924,13 @@ impl Desktop {
     }
 
     fn notes_zone(&self) -> Rect {
-        Rect::new(self.w - NOTE_W - 60, self.notes_top(), NOTE_W + 60, 3 * (NOTE_H + 10) + 30)
+        Rect::new(self.main_mon().right() - NOTE_W - 60, self.notes_top(), NOTE_W + 60, 3 * (NOTE_H + 10) + 30)
     }
 
     fn note_rect(&self, i: usize, slide: u32) -> Rect {
-        let x_in = self.w - NOTE_W - 18;
-        let x = ui::lerp(self.w + 20, x_in, slide);
+        let right = self.main_mon().right();
+        let x_in = right - NOTE_W - 18;
+        let x = ui::lerp(right + 20, x_in, slide);
         Rect::new(x, self.notes_top() + 12 + i as i32 * (NOTE_H + 10), NOTE_W, NOTE_H)
     }
 
@@ -1898,7 +1964,7 @@ impl Desktop {
                 self.notify(l, title, body, String::from(icon));
             }
             Action::Wallpaper => {
-                let (s, b) = res::wallpaper(&settings::get().wallpaper, self.w, self.h);
+                let (s, b) = wallpapers(&settings::get().wallpaper, self.w, self.h, &self.mons);
                 self.sharp = s;
                 self.blur = b;
                 l.damage(self.screen());
@@ -2145,21 +2211,24 @@ impl Desktop {
     }
 
     fn launcher_tiles(&self, count: usize, scroll: i32) -> Vec<Rect> {
-        let cols = 7.min(((self.w - 80) / 128) as usize).max(1);
+        let m = self.main_mon();
+        let cols = 7.min(((m.w - 80) / 128) as usize).max(1);
         let (tw, th) = (128, 120);
         let total_w = cols as i32 * tw;
-        let x0 = (self.w - total_w) / 2;
+        let x0 = m.x + (m.w - total_w) / 2;
         (0..count).map(|i| Rect::new(x0 + (i % cols) as i32 * tw, 150 + (i / cols) as i32 * th - scroll, tw, th)).collect()
     }
 
     fn search_rect(&self) -> Rect {
-        Rect::new(self.w / 2 - 200, 74, 400, 40)
+        let m = self.main_mon();
+        Rect::new(m.x + m.w / 2 - 200, 74, 400, 40)
     }
 
     /// The rows of search results, under the search field.
     fn found_rows(&self, n: usize) -> Vec<Rect> {
-        let w = 560.min(self.w - 32);
-        (0..n.min(FOUND_ROWS)).map(|i| Rect::new(self.w / 2 - w / 2 + 6, 134 + i as i32 * 44, w - 12, 42)).collect()
+        let m = self.main_mon();
+        let w = 560.min(m.w - 32);
+        (0..n.min(FOUND_ROWS)).map(|i| Rect::new(m.x + m.w / 2 - w / 2 + 6, 134 + i as i32 * 44, w - 12, 42)).collect()
     }
 
     /// Does what a search result is for: copies a result, opens the rest.
@@ -2357,7 +2426,7 @@ impl Desktop {
         }
         let (_, rest, bg) = self.dock_geometry_at(items, 1000, false);
         let r = rest[i];
-        let p = Popup::menu(r.x + r.w / 2 - 115, 0, menu, self.w).above(bg.y, 12);
+        let p = Popup::menu(r.x + r.w / 2 - 115, 0, menu, self.main_mon()).above(bg.y, 12);
         self.show_popup(l, p);
         self.dock_menu = Some(item);
     }
@@ -2442,7 +2511,8 @@ impl Desktop {
     /// A length of the design, in units: the design's frame (1024 x 768)
     /// fitted to the screen, at 0.6 to 1 times its size.
     fn cc(&self, px: i32) -> i32 {
-        let k = (self.w * 1000 / 1024).min(self.h * 1000 / 768).clamp(600, 1000);
+        let m = self.main_mon();
+        let k = (m.w * 1000 / 1024).min(m.h * 1000 / 768).clamp(600, 1000);
         (px * k + 500) / 1000
     }
 
@@ -2456,7 +2526,8 @@ impl Desktop {
         let h = 2 * self.cc(CC_PAD) + CC_ROWS.iter().map(|&r| self.cc(r)).sum::<i32>() + (CC_ROWS.len() as i32 - 1) * self.cc(CC_GAP);
         let rest = self.dock_rest();
         let status = self.status_pill(rest, &Dims::at(ICON, 1000));
-        let x = (status.x + status.w / 2 - w / 2).min(self.w - 16 - w).max(16);
+        let m = self.main_mon();
+        let x = (status.x + status.w / 2 - w / 2).min(m.right() - 16 - w).max(m.x + 16);
         Rect::new(x, rest.y - self.cc(CC_ABOVE) - h, w, h)
     }
 
@@ -2621,8 +2692,9 @@ impl Desktop {
 
     fn notices_rect(&self) -> Rect {
         let top = self.clock_btn().bottom() + 10;
-        let w = 640.min(self.w - 32);
-        Rect::new((self.w - w) / 2, top, w, 450.min(self.h - top - 110))
+        let m = self.main_mon();
+        let w = 640.min(m.w - 32);
+        Rect::new(m.x + (m.w - w) / 2, top, w, 450.min(m.bottom() - top - 110))
     }
 
     fn notices_parts(&self) -> (Rect, Rect) {
@@ -2724,7 +2796,7 @@ impl Desktop {
             items.push(("Riavvia…", Some(MenuAct::Restart)));
             items.push(("Spegni…", Some(MenuAct::PowerOff)));
             let rest = self.mark_rest();
-            let p = Popup::menu(rest.x, 0, items, self.w).above(rest.y - DOCK_PAD, 12);
+            let p = Popup::menu(rest.x, 0, items, self.main_mon()).above(rest.y - DOCK_PAD, 12);
             self.show_popup(l, p);
             return;
         }
@@ -2922,10 +2994,13 @@ impl Desktop {
             // Down puts the window back.
             if k.ctrl && k.alt && self.window(id).is_some_and(|w| w.app.resizable()) {
                 match k.key {
-                    Key::Up => return self.snap(l, id, self.full_area()),
+                    Key::Up => {
+                        let full = self.window(id).map_or(self.main_mon(), |w| self.full_area(w.rect));
+                        return self.snap(l, id, full);
+                    }
                     Key::Down => return self.unsnap(l, id),
                     key => {
-                        if let Some(zone) = self.snap_named(key) {
+                        if let Some(zone) = self.snap_named(id, key) {
                             return self.snap(l, id, zone);
                         }
                     }
@@ -3064,7 +3139,8 @@ impl Desktop {
         let speed = self.throw_speed(y, time::uptime_ms());
         if self.full_screen() {
             let fast = speed >= REVEAL_SPEED;
-            if y >= self.h - REVEAL_EDGE || (y >= self.h - REVEAL_BAND && fast) {
+            let m = self.main_mon();
+            if m.contains(x, y) && (y >= m.bottom() - REVEAL_EDGE || (y >= m.bottom() - REVEAL_BAND && fast)) {
                 self.dock_reveal = true;
                 self.reveal_left = 0;
             }
@@ -3519,6 +3595,7 @@ impl Desktop {
         let t = la.shown();
         let full = t >= 1000;
         let screen = self.screen();
+        let m = self.main_mon();
         if full {
             c.blit(&self.blur, 0, 0, screen);
         } else {
@@ -3543,7 +3620,7 @@ impl Desktop {
         let top = la.found_h();
         if visible.is_empty() && la.found.is_empty() {
             let note = if apps::search::searching(&la.index) { "Cerco nel contenuto dei file…" } else { "Nessun risultato" };
-            text::draw_centered(c, Font::Body, self.w / 2, 190, note, alpha(ui::WHITE_DIM));
+            text::draw_centered(c, Font::Body, m.x + m.w / 2, 190, note, alpha(ui::WHITE_DIM));
         }
         // Calculations, settings and files, in a glass list; a thin line
         // where a section ends and the next begins.
@@ -3583,9 +3660,9 @@ impl Desktop {
         }
         // Tiles zoom in from a little larger, as in Launchpad.
         let zoom = ui::lerp(1120, 1000, t);
-        let cx = self.w / 2;
+        let cx = m.x + m.w / 2;
         let saved = c.clip();
-        c.set_clip(saved.intersect(&Rect::new(0, 128 + top, self.w, self.h - 128 - top)));
+        c.set_clip(saved.intersect(&Rect::new(m.x, 128 + top, m.w, m.h - 128 - top)));
         for (e, tile) in visible.iter().zip(self.launcher_tiles(visible.len(), la.scroll - top)) {
             let tile = Rect::new(cx + (tile.x - cx) * zoom / 1000, 150 + (tile.y - 150) * zoom / 1000, tile.w, tile.h);
             if tile.bottom() < 128 || tile.y > self.h {
@@ -3600,7 +3677,7 @@ impl Desktop {
             text::draw_centered(c, Font::Body, tile.x + tile.w / 2, tile.y + 86, &label, alpha(ui::WHITE));
         }
         c.set_clip(saved);
-        text::draw_centered(c, Font::Small, self.w / 2, self.h - 36, "Ctrl+Spazio apre e chiude · Esc per uscire", alpha(ui::WHITE_FAINT));
+        text::draw_centered(c, Font::Small, m.x + m.w / 2, m.bottom() - 36, "Ctrl+Spazio apre e chiude · Esc per uscire", alpha(ui::WHITE_FAINT));
     }
 
     fn draw_popup(&self, c: &mut Canvas, p: &Popup) {
@@ -3874,8 +3951,9 @@ impl Desktop {
         }
         // This desktop's windows glide from their places to the grid.
         let slots = self.overview_slots();
+        let m = self.main_mon();
         if slots.is_empty() {
-            text::draw_centered(c, Font::Body, self.w / 2, self.h / 2, "Nessuna finestra su questo desktop", alpha(ui::WHITE_DIM));
+            text::draw_centered(c, Font::Body, m.x + m.w / 2, m.y + m.h / 2, "Nessuna finestra su questo desktop", alpha(ui::WHITE_DIM));
         }
         let mut lifted = None;
         for &(id, to) in &slots {
@@ -3902,7 +3980,7 @@ impl Desktop {
             c.draw_scaled(pic, place_snap(at, r, frame), 220);
         }
         let hint = "Clic su una finestra per sceglierla · trascinala su un desktop per spostarla · Esc per uscire";
-        text::draw_centered(c, Font::Small, self.w / 2, self.h - 30, hint, alpha(ui::WHITE_FAINT));
+        text::draw_centered(c, Font::Small, m.x + m.w / 2, m.bottom() - 30, hint, alpha(ui::WHITE_FAINT));
     }
 
     /// "Desktop 2" and a dot for each desktop, for a moment after a switch.
@@ -3923,9 +4001,14 @@ impl Desktop {
     }
 
     fn draw_notes(&self, c: &mut Canvas) {
+        // They slide in from the primary monitor's edge, not over the
+        // monitor beyond it.
+        let m = self.main_mon();
+        let saved = c.clip();
+        c.set_clip(saved.intersect(&m));
         for (i, n) in self.notes.iter().enumerate() {
             let r = self.note_rect(i, n.slide());
-            if r.x >= self.w {
+            if r.x >= m.right() {
                 continue;
             }
             ui::drop_shadow(c, r, 22, 18, 80);
@@ -3937,6 +4020,7 @@ impl Desktop {
                 text::draw(c, Font::Small, r.x + 66, r.y + 36 + k as i32 * 17, line, ui::text_dim());
             }
         }
+        c.set_clip(saved);
     }
 
     fn draw_ending(&self, c: &mut Canvas, a: &Anim) {
@@ -3944,7 +4028,8 @@ impl Desktop {
         c.fill(c.clip(), (t * 255 / 1000) << 24);
         if t > 300 {
             let o = (t - 300) * 255 / 700;
-            draw_logo(c, self.w / 2, self.h / 2 - 20, 35, (o << 24) | (CREAM & 0xFF_FFFF));
+            let m = self.main_mon();
+            draw_logo(c, m.x + m.w / 2, m.y + m.h / 2 - 20, 35, (o << 24) | (CREAM & 0xFF_FFFF));
         }
     }
 }
@@ -4159,22 +4244,29 @@ impl View for Desktop {
     fn resized(&mut self, w: i32, h: i32) {
         self.w = w;
         self.h = h;
-        let (sharp, blur) = res::wallpaper(&settings::get().wallpaper, w, h);
+        (self.mons, self.main_at) = screens(w, h);
+        let (sharp, blur) = wallpapers(&settings::get().wallpaper, w, h, &self.mons);
         self.sharp = sharp;
         self.blur = blur;
         self.popup = None;
         self.overview = None;
         self.fx.clear();
-        let area = self.work_area();
-        let full = self.full_area();
-        for win in self.windows.iter_mut() {
-            if win.restore.is_some() {
-                win.rect = full; // maximised: fill the new screen
+        // Each window stays on its monitor (the nearest one, if its monitor
+        // went away), fitted into it.
+        let places: Vec<(Rect, Rect)> = self
+            .windows
+            .iter()
+            .map(|win| {
+                let m = self.monitor_of(win.rect);
+                (m, self.work_area_on(m))
+            })
+            .collect();
+        for (win, (full, area)) in self.windows.iter_mut().zip(places) {
+            if let Some(r) = win.restore.as_mut() {
+                win.rect = full; // maximised: fill its monitor
+                *r = fit_into(*r, area);
             } else {
-                win.rect.w = win.rect.w.min(area.w);
-                win.rect.h = win.rect.h.min(area.h);
-                win.rect.x = win.rect.x.clamp(area.x, (area.right() - win.rect.w).max(area.x));
-                win.rect.y = win.rect.y.clamp(area.y, (area.bottom() - win.rect.h).max(area.y));
+                win.rect = fit_into(win.rect, area);
             }
         }
     }
@@ -4331,7 +4423,7 @@ impl Desktop {
                         ("", None),
                         ("Info su justOS", Some(MenuAct::About)),
                     ],
-                    self.w,
+                    self.monitor_at(x, y),
                 );
                 self.show_popup(l, p);
             }
@@ -4339,11 +4431,12 @@ impl Desktop {
             Event::Move { x, y, held } => self.moved(l, x, y, held),
             Event::Wheel { lines } => {
                 let (x, y) = self.mouse;
+                let m = self.main_mon();
                 if let Some(la) = &mut self.launcher {
                     let n = la.visible().len() as i32;
-                    let cols = 7.min((self.w - 80) / 128).max(1);
+                    let cols = 7.min((m.w - 80) / 128).max(1);
                     let rows = (n + cols - 1) / cols;
-                    let max = (rows * 120 + 170 + la.found_h() - (self.h - 70)).max(0);
+                    let max = (rows * 120 + 170 + la.found_h() - (m.h - 70)).max(0);
                     la.scroll = (la.scroll + lines * 60).clamp(0, max);
                     l.damage(self.screen());
                     return false;
@@ -4571,13 +4664,13 @@ impl Desktop {
         if let Some(lock) = &self.lock {
             let covered = lock.anim.done() && lock.leaving.is_none();
             if covered {
-                lock.draw(c, &self.blur, r, &now());
+                lock.draw(c, &self.blur, r, &now(), self.main_mon());
                 return;
             }
         }
         self.paint_desktop(c, r);
         if let Some(lock) = &self.lock {
-            lock.draw(c, &self.blur, r, &now());
+            lock.draw(c, &self.blur, r, &now(), self.main_mon());
         }
     }
 
@@ -4666,13 +4759,59 @@ impl Desktop {
     }
 }
 
+/// The monitors of a screen of `w` x `h` units, left to right, and which
+/// one is the primary (see [`super::monitors`]).
+fn screens(w: i32, h: i32) -> (Vec<Rect>, usize) {
+    let all = Rect::new(0, 0, w, h);
+    let list: Vec<Rect> = super::monitors().iter().map(|m| m.1.intersect(&all)).filter(|r| !r.is_empty()).collect();
+    if list.is_empty() {
+        return (alloc::vec![all], 0);
+    }
+    let main = super::primary().min(list.len() - 1);
+    (list, main)
+}
+
+/// The wallpaper `name` on a screen of `w` x `h` with the monitors `mons`,
+/// scaled to cover each of them: sharp, and blurred for glass.
+fn wallpapers(name: &str, w: i32, h: i32, mons: &[Rect]) -> (Canvas, Canvas) {
+    if mons.len() <= 1 {
+        return res::wallpaper(name, w, h);
+    }
+    let k = super::scale();
+    let (mut sharp, mut blur) = (Canvas::new_at(w, h, 0xFF00_0000, k), Canvas::new_at(w, h, 0xFF00_0000, k));
+    // Monitors of the same size share one picture.
+    let mut made: Option<(i32, i32, Canvas, Canvas)> = None;
+    for m in mons {
+        if made.as_ref().is_none_or(|p| (p.0, p.1) != (m.w, m.h)) {
+            let (s, b) = res::wallpaper(name, m.w, m.h);
+            made = Some((m.w, m.h, s, b));
+        }
+        if let Some((_, _, s, b)) = &made {
+            sharp.blit(s, 0, 0, *m);
+            blur.blit(b, 0, 0, *m);
+        }
+    }
+    (sharp, blur)
+}
+
+/// `r` moved (and made smaller if it must) to lie inside `area`.
+fn fit_into(r: Rect, area: Rect) -> Rect {
+    let (w, h) = (r.w.min(area.w), r.h.min(area.h));
+    let x = r.x.clamp(area.x, (area.right() - w).max(area.x));
+    let y = r.y.clamp(area.y, (area.bottom() - h).max(area.y));
+    Rect::new(x, y, w, h)
+}
+
 pub fn run(d: &mut Display) {
     let (w, h) = (d.width(), d.height());
-    let (sharp, blur) = res::wallpaper(&settings::get().wallpaper, w, h);
+    let (mons, main_at) = screens(w, h);
+    let (sharp, blur) = wallpapers(&settings::get().wallpaper, w, h, &mons);
     let pins = settings::get().dock;
     let mut desk = Desktop {
         w,
         h,
+        mons,
+        main_at,
         sharp,
         blur,
         windows: Vec::new(),
