@@ -172,9 +172,15 @@ spinbutton:not(.vertical) button, spinbutton:not(.vertical) button:backdrop {
 spinbutton:not(.vertical) button:hover { background-color: rgba(255, 255, 255, 0.10); }
 spinbutton:not(.vertical) button:disabled, spinbutton:not(.vertical) button:backdrop:disabled { color: #6d6a73; }
 entry:focus, spinbutton:focus { border-color: @just_accent; box-shadow: none; }
+/* Adwaita has rules of its own, more specific, for a selection in a list
+ * or view that has the focus: they are named too, or the row turns blue. */
 entry selection, label selection, textview text selection,
 *:selected, *:selected:backdrop, row:selected, row:selected:backdrop, treeview.view:selected,
-iconview:selected, flowboxchild:selected {
+iconview:selected, flowboxchild:selected,
+row:selected:focus, row:selected:hover, row:selected:backdrop:focus, .view:selected, .view:selected:focus,
+.view:selected:backdrop, treeview.view:selected:focus, treeview.view:selected:backdrop,
+treeview.view:selected:backdrop:focus, iconview:selected:focus, iconview:selected:backdrop,
+flowboxchild:selected:focus, placessidebar row:selected, placessidebar row:selected:focus {
     background-color: alpha(@just_accent, 0.85);
     color: #ffffff;
 }
