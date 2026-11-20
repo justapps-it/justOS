@@ -278,6 +278,14 @@ int main(int argc, char **argv) {
         printf("dt: child says %s home=%s\n", argv[2], getenv("HOME") ? getenv("HOME") : "-");
         return 3;
     }
+    if (argc > 2 && strcmp(argv[1], "exe") == 0) {
+        /* Started by a link: /proc/self/exe names the file itself. */
+        char me[256];
+        ssize_t n = readlink("/proc/self/exe", me, sizeof me - 1);
+        me[n > 0 ? n : 0] = 0;
+        printf("dt: link exe real=%d\n", strcmp(me, argv[2]) == 0);
+        return 0;
+    }
     if (argc > 2 && strcmp(argv[1], "fdcheck") == 0) {
         /* The descriptor dup2'd into place before exec is still open, still
            the socket, and not close-on-exec. */
@@ -416,6 +424,17 @@ int main(int argc, char **argv) {
     e = posix_spawn(&sp, "./dt-script", NULL, NULL, xargs, environ);
     printf("dt: script err=%d exit=%d\n", e, e ? -3 : reap(sp));
     unlink("dt-script");
+
+    /* Started by a symbolic link, a program sees its real file as
+       /proc/self/exe, as on Linux: Firefox finds its libraries that way. */
+    unlink("dt-link");
+    char *largs[] = {"dt-link", "exe", self, NULL};
+    if (symlink(self, "dt-link") == 0) {
+        fflush(stdout);
+        if (posix_spawn(&sp, "./dt-link", NULL, NULL, largs, environ) == 0)
+            reap(sp);
+        unlink("dt-link");
+    }
 
     errno = 0;
     pid_t none = waitpid(-1, NULL, WNOHANG);

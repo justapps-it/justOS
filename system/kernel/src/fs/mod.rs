@@ -637,6 +637,44 @@ pub fn read_link(path: &Path) -> Result<String> {
     fs.read_link(id)
 }
 
+/// The path with every symbolic link in it replaced by where it leads, as
+/// Linux's realpath does: the same file, under the name it really has. A
+/// link that leads nowhere readable, or more than 40 links in a row (a
+/// loop), give back `path` as it was.
+pub fn real_path(path: &Path) -> Path {
+    let at = |done: &[String]| Path { volume: path.volume.clone(), inner: alloc::format!("/{}", done.join("/")) };
+    let names = |text: &str| text.split('/').filter(|c| !c.is_empty()).rev().map(String::from).collect::<Vec<_>>();
+    let mut done: Vec<String> = Vec::new();
+    // The names still to walk, the next one last.
+    let mut todo = names(&path.inner);
+    let mut links = 0;
+    while let Some(name) = todo.pop() {
+        match name.as_str() {
+            "." => continue,
+            ".." => {
+                done.pop();
+                continue;
+            }
+            _ => done.push(name),
+        }
+        let here = at(&done);
+        if !lstat(&here).is_ok_and(|s| s.kind == Kind::Link) {
+            continue;
+        }
+        links += 1;
+        let Ok(target) = read_link(&here) else { return path.clone() };
+        if links > 40 {
+            return path.clone();
+        }
+        done.pop();
+        if target.starts_with('/') {
+            done.clear();
+        }
+        todo.extend(names(&target));
+    }
+    at(&done)
+}
+
 pub fn exists(path: &Path) -> bool {
     stat(path).is_ok()
 }

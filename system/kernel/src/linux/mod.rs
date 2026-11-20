@@ -448,14 +448,21 @@ pub fn load(elf: &[u8], name: &str, args: &str, exe: &str, env: &[String]) -> Re
 
 /// Maps a program (and the dynamic loader it names) into the current,
 /// empty address space and builds its stack with `argv` and `envp`.
+///
+/// The program's file goes into /proc/self/exe and /proc/self/maps under
+/// its real name, with links resolved, as Linux does: Firefox started as
+/// /usr/bin/firefox-esr (a link) looks for libxul.so beside
+/// /proc/self/exe, which must then be /usr/lib/firefox-esr. The auxiliary
+/// vector keeps the name the program was started by.
 fn load_program(elf: &[u8], name: &str, argv: &[String], envp: &[String], exe_linux: &str) -> Result<(u64, u64), JustError> {
-    let info = map_segments(elf, PIE_BASE, exe_linux).map_err(|_| JustError::BadProgram)?;
+    let real = linux_path(exe_linux).map_or_else(|_| exe_linux.to_string(), |p| show_path(&crate::fs::real_path(&p)));
+    let info = map_segments(elf, PIE_BASE, &real).map_err(|_| JustError::BadProgram)?;
     let interp = match interpreter(elf) {
         Some(path) => Some(load_interpreter(name, &path)?),
         None => None,
     };
     with_state(|st| {
-        st.exe = exe_linux.to_string();
+        st.exe = real;
         st.brk_start = info.brk;
         st.brk_cur = info.brk;
     });
