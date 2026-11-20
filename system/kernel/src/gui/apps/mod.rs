@@ -43,7 +43,7 @@ pub fn open_with(kind: &str, path: &str) -> Option<Box<dyn App>> {
         "files" if dir => Box::new(Files::new(path)),
         "files" => Box::new(Files::new(&alloc::format!("{}", p.parent()))),
         "textedit" if !dir => Box::new(textedit::TextEdit::new(Some(path))),
-        "photos" | "viewer" if ext == "qoi" => Box::new(Viewer::new(path)),
+        "photos" | "viewer" if matches!(ext.as_str(), "qoi" | "png" | "jpg" | "jpeg" | "gif") => Box::new(Viewer::new(path)),
         "music" if ext == "wav" => Box::new(music::Music::with_file(path)),
         _ => return None,
     })
@@ -917,7 +917,7 @@ pub fn for_file(path: &str) -> Opener {
         }
     }
     match ext {
-        "qoi" => Opener::App(Box::new(Viewer::new(path))),
+        "qoi" | "png" | "jpg" | "jpeg" | "gif" => Opener::App(Box::new(Viewer::new(path))),
         "wav" => Opener::App(Box::new(music::Music::with_file(path))),
         "txt" | "md" | "toml" | "json" | "rs" | "c" | "h" | "sh" | "py" | "ini" | "cfg" | "log" | "csv" | "html" | "htm" | "xhtml" | "css" | "js" => {
             Opener::App(Box::new(textedit::TextEdit::new(Some(path))))

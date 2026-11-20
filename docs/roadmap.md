@@ -215,7 +215,7 @@ PCI che il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
 | Cosa | Stato |
 |---|---|
 | File: risorse, cartelle, apertura con l'app giusta, rinomina, Cestino | ✅ |
-| Anteprime (miniature di immagini) | 🟡 nelle Foto; in File icone per tipo |
+| Anteprime (miniature di immagini) | ✅ nelle Foto e in File (QOI, PNG, JPEG, GIF), fatte da un thread a parte |
 | Schede | ✅ Ctrl+T, Ctrl+W, Ctrl+Tab |
 | Trascinamento tra finestre | ✅ File, Terminale, Editor, dock (Cestino e app), programmi con `WIN_DROPS` |
 | Selezione multipla | ✅ Ctrl+clic, Maiusc+clic, Ctrl+A |
@@ -225,9 +225,11 @@ PCI che il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
 **Passi.**
 
 1. ~~**Schede in File**~~ fatto.
-2. **Anteprime** (2 settimane): miniature QOI già decodificate dalle Foto
-   (`gui/res.rs`), prima pagina dei testi, *Quick Look* con la barra
-   spaziatrice.
+2. ~~**Anteprime**~~ fatto per le immagini: in File le miniature le fa un
+   thread (`gui/thumbs.rs`) che legge il file a pezzi, lo decodifica e lo
+   rimpicciolisce per media delle aree; una cache di 8 MiB le tiene per
+   percorso, dimensione e data. Manca: la prima pagina dei testi, *Quick
+   Look* con la barra spaziatrice.
 3. ~~**Trascinamento**~~ fatto: i file trascinati fuori da File li porta il
    desktop (`gui/dnd.rs`), con l'icona sotto il puntatore; la finestra sotto
    li riceve (`App::drop_files`) e illumina dove andrebbero. Dentro un
