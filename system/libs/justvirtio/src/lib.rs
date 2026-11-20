@@ -332,6 +332,19 @@ impl Virtio {
             Regs::Modern { device, .. } => device.as_ref().map(|d| d.read32(off)).unwrap_or(0),
         }
     }
+
+    /// Writes a word of the device's own configuration (a GPU's
+    /// `events_clear`, for one).
+    pub fn set_config32(&self, off: usize, v: u32) {
+        match &self.regs {
+            Regs::Legacy { io } => port::outl(io + L_CONFIG + off as u16, v),
+            Regs::Modern { device, .. } => {
+                if let Some(d) = device {
+                    d.write32(off, v);
+                }
+            }
+        }
+    }
 }
 
 /// A split virtqueue.

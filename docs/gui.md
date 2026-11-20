@@ -488,6 +488,40 @@ alla nuova misura: stessa disposizione, il doppio dei dettagli. *Impostazioni
 *100%* e *200%*; dal Terminale `display scale auto|1|2`. La scelta resta
 nelle impostazioni.
 
+### Più monitor
+
+Con più monitor (oggi `virtiogpu`, in QEMU `-device
+virtio-gpu-pci,max_outputs=2`) lo schermo è uno solo, diviso fra i monitor
+messi uno accanto all'altro, tutti alla stessa risoluzione e alla stessa
+scala (la risoluzione scelta è quella di ogni monitor). Uno è il
+*principale*: lì stanno l'orologio, il dock e la barra dinamica, e lì si
+aprono Applicazioni, la vista d'insieme, le notifiche, i menu del dock e
+del centro di controllo. Lo sfondo copre ogni monitor, scalato alla sua
+misura; il blocco schermo li copre tutti (l'ora e l'account sul
+principale).
+
+Una finestra appartiene al monitor che ha il suo centro: lì si massimizza
+(e a tutto schermo riempie quel monitor soltanto; il dock si nasconde solo
+se il monitor è il principale), lì si aggancia a metà o a un quarto, e il
+bordo fra due monitor non aggancia: il puntatore lo attraversa e la
+finestra trascinata passa all'altro. Una finestra nuova si apre sul
+monitor del puntatore, un dialogo su quello della sua finestra.
+
+*Impostazioni → Schermo → Monitor* (solo con più monitor collegati) li
+disegna come stanno, con lo sfondo e un numero, l'orologio e il dock sul
+principale: un clic su un monitor lo rende principale, *Scambia* inverte
+destra e sinistra, *Duplica* fa mostrare a tutti la stessa scrivania. Le
+scelte restano nelle impostazioni (`monitors=`, `primary=`, `mirror=`).
+Dal Terminale: `display` elenca i monitor, `display primary N`,
+`display order N,N` e `display mirror on|off` (N è il numero
+dell'uscita). Un monitor collegato o staccato mentre justOS gira fa
+ridisporre lo schermo da sé: le finestre restano sul loro monitor, o vanno
+sul più vicino se il loro se n'è andato.
+
+Fino alla scrivania (avvio e configurazione iniziale) i monitor mostrano
+tutti la stessa immagine. Wayland annuncia un `wl_output` per monitor, il
+principale per primo.
+
 Con una scheda audio (`hda`, `ac97`) la scrivania suona una breve melodia
 quando compare (si può spegnere), il volume si regola dal centro di
 controllo e dalle Impostazioni, e Musica e Orologio suonano. Dal Terminale:
@@ -563,4 +597,7 @@ schermo, lo guida con mouse e tastiera (`scripts/gui-shots.py`, attraverso
 QMP) lungo `scripts/gui/tour.txt` (i dieci passi della configurazione iniziale, ogni app, il Negozio che
 installa e avvia un gioco) e salva le schermate in `build/shots/`; con
 `SCREEN=1920x1080` le coordinate del giro si riferiscono a uno schermo di
-quella misura.
+quella misura. Con `HEADS=2` (e `-vga none -device
+virtio-gpu-pci,max_outputs=2,id=gpu`) ogni schermata salva anche ogni
+monitor a parte, e i passi `plug`/`unplug` collegano e staccano il secondo
+monitor; `SCREEN` è allora tutto lo schermo (due 1280×800: `2560x800`).

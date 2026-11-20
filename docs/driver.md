@@ -231,7 +231,7 @@ funzioni sicure:
 | input | `input_event` (tasti come usage HID, movimenti, pulsanti) |
 | rete | `net_register` con un `NetDesc`, `net_receive` per i frame in arrivo |
 | suono | `audio_register` con un `AudioDesc` (scrittura di campioni a 16 bit, svuotamento); `pcm::PcmRing` gestisce il buffer circolare che quasi ogni scheda audio legge in loop |
-| schermo | `display_register` con un `DisplayDesc` (modi, cambio di modo, aggiornamento di un rettangolo); `map_framebuffer` mappa la memoria video in write-combining |
+| schermo | `display_register` con un `DisplayDesc` (modi, cambio di modo, aggiornamento di un rettangolo); `map_framebuffer` mappa la memoria video in write-combining; `display_heads` e `display_changed` per più monitor (vedi sotto) |
 | sospensione | `power_hooks`: come il dispositivo si ferma prima della sospensione e riparte al risveglio (vedi sotto) |
 
 Il driver dichiara la versione dell'ABI per cui è compilato
@@ -248,6 +248,42 @@ il guadagno dell'hardware fisso. Un driver video descrive il framebuffer
 di ogni modo; se il dispositivo non legge da solo la memoria che justOS
 disegna (virtio-gpu, VMware SVGA), fornisce anche `flush`, che il kernel
 chiama per ogni rettangolo cambiato.
+
+### Più monitor
+
+Un driver video con più uscite si registra come sempre con
+`display_register` (un monitor, quello dell'uscita 0: i driver che non
+sanno altro restano così) e poi dichiara le uscite:
+
+```rust
+justdrv::display_heads(n as u32, ctx, outputs, set_heads);
+```
+
+- `outputs(ctx, out, max) -> usize` scrive un `DisplayOutput` per uscita
+  (`width` e `height` preferiti dal monitor, `flags` con `OUTPUT_CONNECTED`
+  se ce n'è uno collegato) e dice quante sono;
+- `set_heads(ctx, size, heads, count, fb) -> Status` prepara un solo
+  framebuffer di `size` e lo divide fra le uscite: ogni `DisplayHead` dice
+  quale uscita (`output`) mostra quale rettangolo (`x`, `y`, `width`,
+  `height`). Le uscite che non sono nella lista si spengono. Il kernel
+  passa sempre monitor della stessa misura, in fila con `y = 0` o tutti a
+  `0,0` (*Duplica*); `flush` riceve rettangoli dell'intero framebuffer;
+- `display_changed(n)` avvisa che un monitor è stato collegato o staccato.
+  Il kernel non richiama il driver da lì: è la scrivania, dal suo thread,
+  a rileggere le uscite e a chiedere di nuovo `set_heads`.
+
+`display_heads` e `display_changed` sono in fondo alla `KernelApi`
+(l'ABI resta la 2): un driver che le usa chiede un kernel che le abbia, e
+`justdrv::init` lo rifiuta su uno più vecchio, come per gli altri servizi
+aggiunti. `virtiogpu` 1.2 le implementa: `GET_DISPLAY_INFO` per le uscite,
+una risorsa larga quanto tutti i monitor e un `SET_SCANOUT` per ognuno, e
+un thread che legge `events_read` due volte al secondo per
+`VIRTIO_GPU_EVENT_DISPLAY`. La linea di interruzione del dispositivo è
+spenta (bit *interrupt disable* del registro di comando PCI): l'evento
+alza l'interruzione di configurazione, e una linea che nessuno conferma
+tiene il processore nelle interruzioni.
+`make test-display` ha il caso `virtio2`: due monitor, prima duplicati, poi
+affiancati con `display mirror off`, ognuno con la sua metà dello schermo.
 
 ### Più dispositivi, interruzioni e polling
 
@@ -420,7 +456,7 @@ della scheda non funzionano.
 | `ac97` | audio AC'97 Intel ICH, SiS, nVidia, AMD | provato (82801AA) |
 | `bochsvga` | schermo di QEMU (VGA standard, bochs-display), Bochs, VirtualBox VBoxVGA, QXL | provato in QEMU |
 | `vmsvga` | VMware SVGA II: VMware, VirtualBox VMSVGA | provato in QEMU |
-| `virtiogpu` | virtio GPU (2D) | provato |
+| `virtiogpu` | virtio GPU (2D), fino a 16 monitor | provato |
 | `cirrus` | Cirrus Logic GD5446 (QEMU `-vga cirrus`), 640x480 e 800x600 | provato in QEMU |
 | `fbgeneric` | qualunque altra scheda (Intel, AMD, NVIDIA, Hyper-V, ATI di QEMU…): usa il framebuffer del firmware (GOP o VESA) | provato in QEMU (`ati-vga`) |
 

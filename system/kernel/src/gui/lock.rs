@@ -45,8 +45,9 @@ impl Lock {
         self.leaving.as_ref().is_some_and(|a| a.done())
     }
 
-    fn field(w: i32, h: i32) -> Rect {
-        Rect::new(w / 2 - 150, h / 2 + 96, 300, 50)
+    /// The password field, on monitor `m`.
+    fn field(m: Rect) -> Rect {
+        Rect::new(m.x + m.w / 2 - 150, m.y + m.h / 2 + 96, 300, 50)
     }
 
     fn try_unlock(&mut self) -> Outcome {
@@ -94,8 +95,10 @@ impl Lock {
         Outcome::Stay
     }
 
-    /// Draws the lock screen over the whole screen.
-    pub fn draw(&self, c: &mut Canvas, blur: &Canvas, r: Rect, now: &DateTime) {
+    /// Draws the lock screen over the whole screen, every monitor: the
+    /// blurred wallpaper, and the time and the account on the primary
+    /// monitor `main`.
+    pub fn draw(&self, c: &mut Canvas, blur: &Canvas, r: Rect, now: &DateTime, main: Rect) {
         let (w, h) = (blur.w, blur.h);
         let shown = match &self.leaving {
             Some(a) => 1000 - a.out(),
@@ -104,18 +107,18 @@ impl Lock {
         if shown < 1000 {
             // Fading: the desktop underneath shows through.
             let mut layer = Canvas::new_at(w, h, 0, blur.scale());
-            self.paint(&mut layer, blur, Rect::new(0, 0, w, h), now);
+            self.paint(&mut layer, blur, Rect::new(0, 0, w, h), now, main);
             c.draw_scaled(&layer, Rect::new(0, 0, w, h), shown * 255 / 1000);
         } else {
-            self.paint(c, blur, r, now);
+            self.paint(c, blur, r, now, main);
         }
     }
 
-    fn paint(&self, c: &mut Canvas, blur: &Canvas, r: Rect, now: &DateTime) {
+    fn paint(&self, c: &mut Canvas, blur: &Canvas, r: Rect, now: &DateTime, main: Rect) {
         c.blit(blur, r.x, r.y, r);
         c.fill(r, 0x4D00_0000);
-        let (w, h) = (blur.w, blur.h);
-        let cx = w / 2;
+        let h = main.h;
+        let cx = main.x + main.w / 2;
         let date = format!("{} {} {}", WEEKDAYS[now.weekday as usize % 7], now.day, super::desktop::MONTHS[(now.month as usize + 11) % 12]);
         text::draw_centered(c, Font::Heading, cx, h / 2 - 210, &date, ui::WHITE_DIM);
         text::draw_centered(c, Font::Clock, cx, h / 2 - 176, &format!("{:02}:{:02}", now.hour, now.min), ui::WHITE);
@@ -130,7 +133,7 @@ impl Lock {
         text::draw_centered(c, Font::Title, cx, ay - lh / 2, &initial, 0xFFFF_FFFF);
         text::draw_centered(c, Font::Heading, cx, ay + 54, &name, ui::WHITE);
 
-        let mut field = Self::field(w, h);
+        let mut field = Self::field(main);
         if let Some(a) = &self.wrong {
             if !a.done() {
                 // A short shake, dying out.

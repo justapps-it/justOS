@@ -93,7 +93,7 @@ framebuffer UEFI, tutti senza accelerazione 3D.
 | 60 fps nelle animazioni | 🟡 sì a risoluzioni normali; non garantito in 4K |
 | 120 Hz, VRR | ⬜ |
 | HiDPI (scala 2×) | ✅ automatica da 2560×1440, o scelta nelle Impostazioni |
-| Più monitor | ⬜ |
+| Più monitor | ✅ con `virtiogpu`: principale, disposizione, *Duplica*, collegamento a caldo |
 | Dock con menu di sistema e stato, Applicazioni (Launchpad), centro di controllo | ✅ |
 | Centro notifiche con cronologia e *Non disturbare* | ✅ |
 | Ricerca globale (app, file, impostazioni, calcoli) con Ctrl+Spazio | ✅ |
@@ -114,9 +114,16 @@ chiamate `WIN_CREATE`/`WIN_PRESENT`/`WIN_EVENT`.
    e sfondi sono ridotti dagli originali; i programmi chiedono la scala con
    `WIN_SCALE` e `WIN_PRESENT` riceve buffer a 2×. Restano scale frazionarie
    (125%, 150%) e una scala per ogni schermo.
-3. **Più monitor** (1–2 mesi): `dev::display` con più uscite (virtio-gpu ne
-   ha fino a 16, il driver Intel le avrebbe); il desktop diventa una lista
-   di schermi con l'ora e il dock su ognuno.
+3. ~~**Più monitor**~~ fatto: un driver con più uscite le dichiara con
+   `display_heads` (le uscite e lo schermo diviso fra loro) e
+   `display_changed` (un monitor collegato o staccato); `virtiogpu` lo fa
+   con `GET_DISPLAY_INFO`, una sola risorsa per tutti i monitor e un
+   `SET_SCANOUT` per ognuno. `dev::display` mette i monitor uno accanto
+   all'altro o li duplica; la scrivania ha una lista di monitor, uno
+   principale con l'orologio e il dock, e massimizza, aggancia e apre le
+   finestre sul loro monitor. Restano monitor di risoluzioni diverse (e una
+   scala per ognuno), disposizioni non in fila (uno sopra l'altro) e un
+   driver nativo con più uscite.
 4. **Accelerazione** (molti mesi): prima `virtio-gpu` con *virgl* (OpenGL
    tramite l'host, buona per le macchine virtuali), poi un driver nativo.
    Su hardware vero l'unica strada realistica è portare i driver DRM di

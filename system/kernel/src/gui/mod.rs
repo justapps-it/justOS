@@ -19,6 +19,11 @@
 //! 2560 x 1440, unless the user chose otherwise) a unit is two pixels: the
 //! interface keeps its size and is drawn with twice the detail, text from
 //! fonts rendered at twice the size ([`scale`]).
+//!
+//! With several monitors side by side the back buffer spans all of them
+//! and [`monitors`] says where each one is; one of them is the primary
+//! (the clock and the dock are there). They share one scale, chosen by
+//! the size of one monitor.
 
 pub mod gfx;
 pub use justgfx::qoi;
@@ -45,6 +50,7 @@ pub mod wm;
 
 use crate::console::FbInfo;
 use crate::sync::IrqLock;
+use alloc::vec::Vec;
 use gfx::{Canvas, Rect};
 
 /// The framebuffer and the back buffer shown on it.
@@ -55,6 +61,46 @@ pub struct Display {
 
 /// Pixels per unit on the screen: 1, or 2 on a high-density screen.
 static SCALE: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(1);
+
+/// The monitors (their outputs and where they are on the screen, in units,
+/// left to right) and which of them is the primary.
+static MONITORS: IrqLock<(Vec<(u32, Rect)>, usize)> = IrqLock::new((Vec::new(), 0));
+/// The primary monitor's left edge and width, in pixels: the fatal error
+/// screen puts its message there, with no lock to take.
+static PRIMARY_X: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+static PRIMARY_W: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+
+/// The monitors, left to right: each one's output and where it is on the
+/// screen, in units. One when there is one, or when they mirror.
+pub fn monitors() -> Vec<(u32, Rect)> {
+    MONITORS.lock().0.clone()
+}
+
+/// Which of [`monitors`] is the primary.
+pub fn primary() -> usize {
+    MONITORS.lock().1
+}
+
+/// Takes note of the monitors of the screen just set up at `scale`, and of
+/// the primary the user chose (the first output's monitor, if none).
+fn note_monitors(scale: i32, chosen: Option<u32>) {
+    let list: Vec<(u32, Rect)> = crate::dev::display::monitors()
+        .iter()
+        .map(|m| (m.output, Rect::new(m.x / scale, m.y / scale, m.w / scale, m.h / scale)))
+        .collect();
+    let at = |o: u32| list.iter().position(|m| m.0 == o);
+    let primary = chosen.and_then(at).or_else(|| at(0)).unwrap_or(0);
+    if let Some(&(_, r)) = list.get(primary) {
+        PRIMARY_X.store(r.x * scale, core::sync::atomic::Ordering::Relaxed);
+        PRIMARY_W.store(r.w * scale, core::sync::atomic::Ordering::Relaxed);
+    }
+    *MONITORS.lock() = (list, primary);
+}
+
+/// The size of one monitor, in pixels (they all have the same).
+fn monitor_pixels(fb: &FbInfo) -> (usize, usize) {
+    crate::dev::display::monitor_size().unwrap_or((fb.width, fb.height))
+}
 
 /// Pixels per unit on the screen now. Canvases for the screen are made at
 /// this scale.
@@ -138,7 +184,8 @@ impl Display {
     /// driver). The back buffer starts black at the new size.
     pub fn set_mode(&mut self, mode: justdk::DisplayMode) -> Result<(), &'static str> {
         let fb = crate::dev::display::set_mode(mode)?;
-        let scale = scale_for(fb.width, fb.height, settings::get().scale);
+        let (w, h) = monitor_pixels(&fb);
+        let scale = scale_for(w, h, settings::get().scale);
         self.adopt(fb, scale);
         Ok(())
     }
@@ -146,7 +193,8 @@ impl Display {
     /// Draws at the scale the settings ask for on this screen; true if it
     /// changed (the back buffer then starts black, like after a new mode).
     pub fn apply_scale(&mut self) -> bool {
-        let scale = scale_for(self.fb.width, self.fb.height, settings::get().scale);
+        let (w, h) = monitor_pixels(&self.fb);
+        let scale = scale_for(w, h, settings::get().scale);
         if scale == self.scene.scale() {
             return false;
         }
@@ -164,6 +212,7 @@ impl Display {
         self.scene = Canvas::new(0, 0, 0);
         self.scene = Display::scene_for(&fb, scale);
         SCALE.store(scale, core::sync::atomic::Ordering::Relaxed);
+        note_monitors(scale, settings::get().primary);
         let mut panic = Canvas::new_at(PANIC_W, PANIC_H, 0, scale);
         if let Some(p) = PANIC.lock().as_mut() {
             p.0 = fb;
@@ -185,9 +234,10 @@ impl Display {
         }
     }
 
-    /// The current resolution (in pixels).
+    /// The current resolution of each monitor (in pixels).
     pub fn mode(&self) -> justdk::DisplayMode {
-        justdk::DisplayMode { width: self.fb.width as u32, height: self.fb.height as u32 }
+        let (w, h) = monitor_pixels(&self.fb);
+        justdk::DisplayMode { width: w as u32, height: h as u32 }
     }
 
     fn convert(&self, p: u32) -> u32 {
@@ -238,6 +288,7 @@ pub fn boot_start() {
     let panic = Canvas::new_at(PANIC_W, PANIC_H, 0, scale);
     *DISPLAY.lock() = Some(Display { fb, scene });
     *PANIC.lock() = Some((fb, panic));
+    note_monitors(scale, None);
     ACTIVE.store(true, core::sync::atomic::Ordering::Relaxed);
     splash::show(0);
 }
@@ -277,10 +328,15 @@ pub fn panic_screen() -> bool {
             unsafe { at.write_volatile(row) };
         }
     }
-    // The message, drawn on the same gradient, in the middle.
+    // The message, drawn on the same gradient, in the middle of the
+    // primary monitor.
     let k = c.scale();
     let (cw, ch) = (c.pixel_width(), c.pixel_height());
-    let (ox, oy) = ((w - cw) / 2, (h - ch) / 2);
+    let (px, pw) = match PRIMARY_W.load(core::sync::atomic::Ordering::Relaxed) {
+        0 => (0, w),
+        pw => (PRIMARY_X.load(core::sync::atomic::Ordering::Relaxed), pw),
+    };
+    let (ox, oy) = (px + (pw - cw) / 2, (h - ch) / 2);
     c.reset_clip();
     for y in 0..PANIC_H {
         let t = ((oy + y * k).clamp(0, h) * 255 / h.max(1)) as u32;
@@ -405,6 +461,31 @@ pub fn change_resolution(mode: justdk::DisplayMode) -> Result<(), &'static str> 
     Ok(())
 }
 
+/// Arranges several monitors: `order` the outputs from left to right,
+/// `primary` the output of the one with the clock and the dock, `mirror`
+/// all showing the same. Remembers it and applies it.
+pub fn change_monitors(order: Vec<u32>, primary: u32, mirror: bool) -> Result<(), &'static str> {
+    if !active() {
+        return Err("monitors can be arranged only with the graphical interface");
+    }
+    let Some((w, h)) = crate::dev::display::monitor_size() else { return Err("no screen") };
+    settings::update(|s| {
+        s.monitors = Some(order.clone());
+        s.primary = Some(primary);
+        s.mirror = mirror;
+    });
+    crate::dev::display::arrange(crate::dev::display::Arrangement { order, mirror });
+    request_mode(justdk::DisplayMode { width: w as u32, height: h as u32 });
+    Ok(())
+}
+
+/// How the user arranged the monitors: the outputs from left to right, the
+/// primary's output (None: the first output's monitor) and the mirror.
+pub fn monitor_choice() -> (Vec<u32>, Option<u32>, bool) {
+    let s = settings::get();
+    (s.monitors.unwrap_or_default(), s.primary, s.mirror)
+}
+
 /// The screen's brightness, 20..=100 (applied in software).
 static BRIGHTNESS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(100);
 
@@ -469,7 +550,7 @@ pub fn set_fluidity(hz: u32) -> Result<(), &'static str> {
 /// Whether the screen is big enough for the double size (800 x 600 units
 /// or more).
 pub fn can_double() -> bool {
-    crate::console::pixel_size().is_some_and(|(w, h)| scale_for(w, h, 2) == 2)
+    crate::dev::display::monitor_size().is_some_and(|(w, h)| scale_for(w, h, 2) == 2)
 }
 
 fn take_scale_request() -> bool {
@@ -484,6 +565,23 @@ fn apply_saved_mode(d: &mut Display) {
     if crate::dev::display::controller().is_some() && d.mode() != mode {
         if let Err(e) = d.set_mode(mode) {
             crate::warn!("gui", "{w}x{h}: {e}");
+        }
+    }
+}
+
+/// The desktop spreads over the monitors as the user arranged them (until
+/// then, the splash and the setup showed the same picture on all).
+fn arrange_monitors(d: &mut Display) {
+    let s = settings::get();
+    let a = crate::dev::display::Arrangement { order: s.monitors.clone().unwrap_or_default(), mirror: s.mirror };
+    if crate::dev::display::arrangement() == a {
+        return;
+    }
+    crate::dev::display::arrange(a);
+    if crate::dev::display::outputs().len() > 1 {
+        let mode = d.mode();
+        if let Err(e) = d.set_mode(mode) {
+            crate::warn!("gui", "monitors: {e}");
         }
     }
 }
@@ -534,5 +632,6 @@ fn run() {
     if !settings::get().setup_done {
         setup::run(&mut d);
     }
+    arrange_monitors(&mut d);
     desktop::run(&mut d);
 }

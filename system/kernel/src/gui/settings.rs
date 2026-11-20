@@ -47,6 +47,14 @@ pub struct Settings {
     /// The computer's name, as the user wrote it (empty: the default);
     /// [`crate::host`] makes the host name from it.
     pub device_name: String,
+    /// Several monitors: their outputs from left to right (None: in the
+    /// controller's order).
+    pub monitors: Option<alloc::vec::Vec<u32>>,
+    /// The output of the primary monitor, with the clock and the dock
+    /// (None: the first output's).
+    pub primary: Option<u32>,
+    /// Every monitor shows the same picture ("Duplica").
+    pub mirror: bool,
 }
 
 impl Default for Settings {
@@ -69,6 +77,9 @@ impl Default for Settings {
             dock: None,
             fluidity: 0,
             device_name: String::new(),
+            monitors: None,
+            primary: None,
+            mirror: false,
         }
     }
 }
@@ -132,6 +143,9 @@ fn load() -> Settings {
             "dock" => s.dock = Some(v.split(';').filter(|e| !e.is_empty()).map(String::from).collect()),
             "fluidity" => s.fluidity = v.parse().unwrap_or(0),
             "device-name" => s.device_name = String::from(v),
+            "monitors" => s.monitors = Some(v.split(',').filter_map(|o| o.trim().parse().ok()).collect()),
+            "primary" => s.primary = v.parse().ok(),
+            "mirror" => s.mirror = v == "on",
             _ => {}
         }
     }
@@ -198,6 +212,16 @@ pub fn update(f: impl FnOnce(&mut Settings)) {
     }
     if !s.device_name.is_empty() {
         text.push_str(&format!("device-name={}\n", s.device_name));
+    }
+    if let Some(order) = &s.monitors {
+        let list: alloc::vec::Vec<String> = order.iter().map(|o| format!("{o}")).collect();
+        text.push_str(&format!("monitors={}\n", list.join(",")));
+    }
+    if let Some(p) = s.primary {
+        text.push_str(&format!("primary={p}\n"));
+    }
+    if s.mirror {
+        text.push_str("mirror=on\n");
     }
     if let Ok(p) = fs::abs(FILE) {
         if let Err(e) = fs::write_file(&p, text.as_bytes()) {

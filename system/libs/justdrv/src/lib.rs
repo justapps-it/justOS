@@ -839,6 +839,21 @@ pub fn power_hooks(device: u32, ctx: *mut c_void, suspend: Option<PowerHook>, re
     unsafe { (api().power_hooks)(device, &hooks) }
 }
 
+/// Display `display` drives several monitors: `outputs` lists its
+/// connectors, `set_heads` shows a framebuffer on them (see
+/// [`DisplayHeads`]).
+pub fn display_heads(display: u32, ctx: *mut c_void, outputs: DisplayOutputs, set_heads: DisplaySetHeads) -> Status {
+    let heads = DisplayHeads { ctx, outputs, set_heads };
+    // SAFETY: kernel call; the kernel copies the functions.
+    unsafe { (api().display_heads)(display, &heads) }
+}
+
+/// A monitor was attached to display `display` or taken away.
+pub fn display_changed(display: u32) {
+    // SAFETY: kernel call.
+    unsafe { (api().display_changed)(display) }
+}
+
 /// Copies an ASCII model name into the fixed field of [`BlockDesc`].
 pub fn model_name(name: &str) -> [u8; 40] {
     let mut out = [0u8; 40];

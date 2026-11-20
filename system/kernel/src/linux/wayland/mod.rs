@@ -13,8 +13,8 @@
 //! through an XKB keymap of our own ([`keymap`]).
 //!
 //! What is there: `wl_compositor`, `wl_subcompositor`, `wl_shm` (ARGB8888,
-//! XRGB8888), `wl_output` (with the screen's scale, for sharp HiDPI
-//! drawing), `wl_seat` with pointer and keyboard, `xdg_wm_base` with
+//! XRGB8888), `wl_output` (one for each monitor, the primary first, with
+//! the screen's scale, for sharp HiDPI drawing), `wl_seat` with pointer and keyboard, `xdg_wm_base` with
 //! toplevels and popups (placed with their positioner inside the window),
 //! `wp_viewporter` (surfaces cropped and scaled: Wine's windows), and the
 //! data device (no clipboard yet). A toplevel's parent (`set_parent`: a
@@ -127,6 +127,17 @@ const GLOBALS: &[(&str, u32, Iface)] = &[
     ("org_kde_kwin_server_decoration_manager", 1, Iface::KdeManager),
     ("wp_viewporter", 1, Iface::Viewporter),
 ];
+
+/// The monitors in units, the primary first (see [`crate::gui::monitors`]).
+fn screens() -> Vec<Rect> {
+    let mut list: Vec<Rect> = crate::gui::monitors().iter().map(|m| m.1).collect();
+    let main = crate::gui::primary();
+    if main < list.len() {
+        let first = list.remove(main);
+        list.insert(0, first);
+    }
+    list
+}
 
 /// A region: rectangles added and taken away, in order.
 #[derive(Clone, Default)]
@@ -582,6 +593,11 @@ impl Client {
                 for (i, (name, v, _)) in GLOBALS.iter().enumerate() {
                     self.out.event(id, 0).uint(i as u32 + 1).string(name).uint(*v);
                 }
+                // A wl_output more for each monitor after the primary, named
+                // after the fixed globals.
+                for i in 1..screens().len() {
+                    self.out.event(id, 0).uint((GLOBALS.len() + i) as u32).string("wl_output").uint(4);
+                }
             }
             // wl_registry.bind
             (Iface::Registry, 0) => {
@@ -589,9 +605,15 @@ impl Client {
                 let _iface = a.text();
                 let v = a.uint();
                 let id = a.uint();
-                match GLOBALS.get((name as usize).wrapping_sub(1)) {
-                    Some(&(_, max, kind)) => self.bind(id, kind, v.clamp(1, max)),
-                    None => self.error(obj, 0, "no such global"),
+                let monitor = (name as usize).checked_sub(GLOBALS.len()).filter(|&i| i > 0 && i < screens().len());
+                match (GLOBALS.get((name as usize).wrapping_sub(1)), monitor) {
+                    (Some(&(_, max, kind)), _) => self.bind(id, kind, v.clamp(1, max)),
+                    (None, Some(i)) => {
+                        let v = v.clamp(1, 4);
+                        self.add(id, Iface::Output, v, Data::None);
+                        self.send_output(id, v, i);
+                    }
+                    (None, None) => self.error(obj, 0, "no such global"),
                 }
             }
             // wl_compositor
@@ -800,7 +822,7 @@ impl Client {
                     self.out.event(id, 1).string("seat0");
                 }
             }
-            Iface::Output => self.send_output(id, v),
+            Iface::Output => self.send_output(id, v, 0),
             Iface::KdeManager => {
                 self.out.event(id, 0).uint(2); // default mode: the server's
             }
@@ -808,18 +830,22 @@ impl Client {
         }
     }
 
-    fn send_output(&mut self, id: u32, v: u32) {
-        let (pw, ph) = crate::console::framebuffer().map_or((1024, 768), |f| (f.width as i32, f.height as i32));
+    /// What wl_output `id` (of version `v`) says about monitor `i`: where
+    /// it is (in units), its size and its scale.
+    fn send_output(&mut self, id: u32, v: u32, i: usize) {
         let k = crate::gui::scale().max(1);
+        let all = screens();
+        let r = all.get(i).or(all.first()).copied().unwrap_or(Rect::new(0, 0, 1024 / k, 768 / k));
+        let (pw, ph) = (r.w * k, r.h * k);
         // About 96 dots per inch at one pixel per unit.
         let (mw, mh) = (pw * 254 / 96 / 10 / k, ph * 254 / 96 / 10 / k);
-        self.out.event(id, 0).int(0).int(0).int(mw).int(mh).int(0).string("justOS").string("Display").int(0);
+        self.out.event(id, 0).int(r.x).int(r.y).int(mw).int(mh).int(0).string("justOS").string("Display").int(0);
         self.out.event(id, 1).uint(3).int(pw).int(ph).int(60_000);
         if v >= 2 {
             self.out.event(id, 3).int(k);
         }
         if v >= 4 {
-            self.out.event(id, 4).string("justOS-1");
+            self.out.event(id, 4).string(&alloc::format!("justOS-{}", i + 1));
             self.out.event(id, 5).string("justOS display");
         }
         if v >= 2 {
@@ -1371,7 +1397,8 @@ impl Client {
             t.win = Some(win.clone());
         }
         self.update_resizable(id);
-        // It is on the one screen there is.
+        // It is on every monitor, as far as the program knows: they all
+        // have the same scale.
         for (out, _) in self.objects_of(Iface::Output) {
             self.out.event(id, 0).object(out);
         }
@@ -1401,7 +1428,8 @@ impl Client {
     /// Sends a toplevel the size it should have and its state.
     fn reconfigure(&mut self, id: u32) {
         let serial = self.next_serial();
-        let (pw, ph) = crate::console::framebuffer().map_or((1024, 768), |f| (f.width as i32, f.height as i32));
+        // As big as one monitor at most.
+        let (pw, ph) = crate::dev::display::monitor_size().map_or((1024, 768), |(w, h)| (w as i32, h as i32));
         let k = crate::gui::scale().max(1);
         let Some(Surface { role: Role::Top(t), .. }) = self.surfs.get_mut(&id) else { return };
         t.xdg.sent = true;
