@@ -220,7 +220,7 @@ PCI che il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
 | Trascinamento tra finestre | ✅ File, Terminale, Editor, dock (Cestino e app), programmi con `WIN_DROPS` |
 | Selezione multipla | ✅ Ctrl+clic, Maiusc+clic, Ctrl+A |
 | Ricerca globale istantanea | ✅ per nome, per la home |
-| Ricerca nel contenuto dei file | ⬜ |
+| Ricerca nel contenuto dei file | ✅ file di testo della home in Ctrl+Spazio, con la riga trovata, un po' per fotogramma |
 
 **Passi.**
 
@@ -245,7 +245,9 @@ PCI che il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
 4. **Indice** (1 mese): un servizio che tiene un indice dei nomi e delle
    parole dei file di testo, aggiornato dal file system (JustFS segnala le
    scritture a un osservatore: nuova chiamata `WATCH(path)`); la ricerca di
-   Ctrl+Spazio lo interroga invece di leggere la home.
+   Ctrl+Spazio lo interroga invece di leggere la home. Intanto la ricerca
+   nel contenuto legge i file di testo mentre la si usa, qualche
+   millisecondo per fotogramma, e tiene i testi letti finché è aperta.
 
 ## 5. Aggiornamenti e sicurezza
 

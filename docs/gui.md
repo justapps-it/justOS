@@ -126,6 +126,15 @@ Presa a modello da macOS:
   **impostazioni** per parola («sfondo», «volume», «password», «processore»...)
   e i **file e le cartelle** della home per nome, che si aprono con l'app
   giusta. La home viene letta una volta sola all'apertura della ricerca.
+  Da tre lettere in su si cerca anche **nel contenuto** dei file di testo
+  (`txt`, `md`, `rs`, `c`, `h`, `py`, `json`, `csv`, `html`, `xml`,
+  `conf`, `sh`, `log`...): i risultati arrivano sotto quelli per nome, nella
+  sezione *Contenuto*, con la riga trovata e le parole cercate più chiare.
+  La ricerca va avanti qualche millisecondo per fotogramma, così scrivere
+  non aspetta mai: al più 200 file per ricerca, fino a 256 KiB l'uno, i più
+  vicini alla home per primi, 3 risultati; i testi letti restano in memoria
+  (fino a 4 MiB) finché la ricerca è aperta, così la lettera seguente non
+  rilegge il disco. Maiuscole e minuscole, anche accentate, sono uguali.
 - **Notifiche**: un'app installata, un timer scaduto, un file salvato, un
   programma che si è chiuso per un errore. Quelle brevi escono dal dock
   (vedi [La barra dinamica](#la-barra-dinamica)), le altre in alto a

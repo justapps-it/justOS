@@ -558,13 +558,15 @@ struct Launcher {
     /// What to start once it has faded out.
     then: Option<Launch>,
     scroll: i32,
-    /// Calculations, settings and files for the query.
+    /// Calculations, settings and files for the query: by name at once,
+    /// then by what they say as the search inside files finds them.
     found: Vec<apps::search::Found>,
     index: apps::search::Index,
 }
 
-/// The rows of search results shown at most.
-const FOUND_ROWS: usize = 6;
+/// The rows of search results shown at most: up to five files by name and
+/// three by what they say, with room for a setting.
+const FOUND_ROWS: usize = 9;
 
 impl Launcher {
     fn visible(&self) -> Vec<&apps::Entry> {
@@ -2129,7 +2131,7 @@ impl Desktop {
             }
             None => {
                 self.launcher =
-                    Some(Launcher { query: String::new(), entries: apps::catalog(), anim: Anim::new(260), closing: false, settled: false, then: None, scroll: 0, found: Vec::new(), index: None });
+                    Some(Launcher { query: String::new(), entries: apps::catalog(), anim: Anim::new(260), closing: false, settled: false, then: None, scroll: 0, found: Vec::new(), index: Default::default() });
             }
         }
         self.popup = None;
@@ -3541,15 +3543,22 @@ impl Desktop {
         let visible = la.visible();
         let top = la.found_h();
         if visible.is_empty() && la.found.is_empty() {
-            text::draw_centered(c, Font::Body, self.w / 2, 190, "Nessun risultato", alpha(ui::WHITE_DIM));
+            let note = if apps::search::searching(&la.index) { "Cerco nel contenuto dei file…" } else { "Nessun risultato" };
+            text::draw_centered(c, Font::Body, self.w / 2, 190, note, alpha(ui::WHITE_DIM));
         }
-        // Calculations, settings and files, in a glass list.
+        // Calculations, settings and files, in a glass list; a thin line
+        // where a section ends and the next begins.
         let rows = self.found_rows(la.found.len());
         if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
             let panel = Rect::new(first.x - 6, first.y - 6, first.w + 12, last.bottom() - first.y + 12);
             c.fill_round(panel, 18, alpha(WALL_PANEL));
             c.stroke_round(panel, 18, 1, alpha(ui::GLASS_EDGE));
+            let mut section = "";
             for (f, r) in la.found.iter().zip(&rows) {
+                if !section.is_empty() && f.section != section {
+                    c.fill(Rect::new(r.x + 10, r.y - 2, r.w - 20, 1), alpha(ui::GLASS_EDGE));
+                }
+                section = f.section;
                 if full && r.contains(self.mouse.0, self.mouse.1) {
                     c.fill_round(*r, 12, WALL_HOVER);
                 }
@@ -3557,11 +3566,19 @@ impl Desktop {
                 let font = if f.copy.is_some() { Font::Heading } else { Font::Strong };
                 let (lh, _) = text::metrics(font);
                 let tag_w = text::width(Font::Small, f.section) + 12;
-                let name = text::fit(font, &f.name, r.w / 2);
+                // A line found in a file says more than its name: the name
+                // gives it more room.
+                let name = text::fit(font, &f.name, if f.mark.is_some() { r.w / 3 } else { r.w / 2 });
                 let w = text::draw(c, font, r.x + 50, r.y + (r.h - lh) / 2, &name, alpha(ui::WHITE));
                 let detail = text::fit(Font::Small, &f.detail, r.w - 50 - w - 24 - tag_w);
                 let (sh, _) = text::metrics(Font::Small);
-                text::draw(c, Font::Small, r.x + 62 + w, r.y + (r.h - sh) / 2, &detail, alpha(ui::WHITE_FAINT));
+                let (dx, dy) = (r.x + 62 + w, r.y + (r.h - sh) / 2);
+                match f.mark {
+                    Some(mark) => draw_marked(c, Font::Small, (dx, dy), &detail, mark, alpha(ui::WHITE_FAINT), alpha(ui::WHITE)),
+                    None => {
+                        text::draw(c, Font::Small, dx, dy, &detail, alpha(ui::WHITE_FAINT));
+                    }
+                }
                 text::draw_right(c, Font::Small, r.right() - 12, r.y + (r.h - sh) / 2, f.section, alpha(ui::WHITE_DIM));
             }
         }
@@ -3990,6 +4007,24 @@ fn space_close(thumb: Rect) -> Rect {
     Rect::new(thumb.x - 9, thumb.y - 9, 22, 22)
 }
 
+/// `s` with the bytes `mark` in `bright` and the rest in `color`: the words
+/// a search found in a line. `s` may have been shortened with "…" at its
+/// end, so the mark is cut to what is left of it.
+fn draw_marked(c: &mut Canvas, font: Font, (x, y): (i32, i32), s: &str, mark: (usize, usize), color: u32, bright: u32) {
+    let end = s.strip_suffix('…').map_or(s.len(), |t| t.len());
+    let floor = |mut i: usize| {
+        while !s.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    };
+    let to = floor(mark.1.min(end));
+    let from = floor(mark.0.min(to));
+    let mut at = x + text::draw(c, font, x, y, &s[..from], color);
+    at += text::draw(c, font, at, y, &s[from..to], bright);
+    text::draw(c, font, at, y, &s[to..], color);
+}
+
 fn capitalize(s: &str) -> String {
     let mut ch = s.chars();
     ch.next().map(|f| f.to_uppercase().chain(ch).collect()).unwrap_or_default()
@@ -4150,7 +4185,7 @@ impl View for Desktop {
             return lock.animating();
         }
         !self.fx.is_empty()
-            || self.launcher.as_ref().is_some_and(|l| !l.settled || l.closing)
+            || self.launcher.as_ref().is_some_and(|l| !l.settled || l.closing || apps::search::searching(&l.index))
             || self.popup.as_ref().is_some_and(|p| !p.settled)
             || self.mag.moving()
             || self.grow.moving()
@@ -4436,6 +4471,15 @@ impl Desktop {
                     if !la.settled || la.closing {
                         l.damage(Rect::new(0, 0, self.w, self.h));
                         la.settled = la.anim.done();
+                    }
+                    // The search inside files goes on a little each frame;
+                    // what it finds goes after the files found by name.
+                    if !la.closing && apps::search::searching(&la.index) {
+                        let more = apps::search::step(&mut la.index);
+                        if !more.is_empty() || !apps::search::searching(&la.index) {
+                            la.found.extend(more);
+                            l.damage(Rect::new(0, 0, self.w, self.h));
+                        }
                     }
                     if la.closing && la.anim.done() {
                         let then = self.launcher.take().and_then(|la| la.then);
