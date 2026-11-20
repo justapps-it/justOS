@@ -1,16 +1,21 @@
 //! The dynamic bar: the dock changes shape to show what is going on, and
 //! always goes back to the dock at rest.
 //!
-//! - A program starting, a song playing, a timer: the app's icon in the
-//!   dock widens into a capsule (a well with the icon's tile, smaller, a
+//! - The whole bar becomes an island for what happens now: the volume or
+//!   the brightness changing (16 cells and the value in soft pixels), a
+//!   short notification (its icon, title and text), a program starting
+//!   (its name and cells going round), a song or a timer that has just
+//!   started, a timer ringing. The dock's own shape turns into the
+//!   island's, there is no second bar. As soon as the pointer comes onto
+//!   it, it is the dock with the apps again ([`ISL_BACK_MS`]); it comes
+//!   back [`ISL_REFORM_MS`] after the pointer left, while there is still
+//!   something to show. Long notifications keep their banners.
+//! - In the dock, a program starting, a song playing, a timer: the app's
+//!   icon widens into a capsule (a well with the icon's tile, smaller, a
 //!   name with a line under it, and cells that move by themselves). Only
 //!   the most recent one is open; the one before waits in a round bubble
 //!   beside the dock (with how many wait there, when more than one). A
 //!   click on the bubble swaps them; a click on the capsule opens its app.
-//! - The volume or the brightness changing: for a moment the whole bar is
-//!   a row of 16 cells with the value in soft pixels.
-//! - A short notification: the bar grows upwards by a row with it and its
-//!   buttons, and closes again by itself. Long ones keep their banners.
 //! - Over a full-screen window, where the dock hides, a thin pill at the
 //!   bottom shows the time and what goes on.
 //!
@@ -87,10 +92,25 @@ const VOLUME_STEP: u32 = 6;
 /// The volume before the mute key, to go back to.
 static UNMUTE: AtomicU32 = AtomicU32::new(50);
 
-// A short notification: its row above the dock, how much the bar grows for
-// it, and what is short.
-const NOTE_ROW: i32 = 52;
-const NOTE_LIFT: i32 = 60;
+// The island the whole bar becomes: its height (the level's) and corner,
+// the room at its ends, its icon and the room after it, the narrowest and
+// widest its text may be, and the cells of a timer's digits in it.
+const ISL_H: i32 = LEVEL_H;
+const ISL_RAD: i32 = 30;
+const ISL_PAD: i32 = 14;
+const ISL_ICON: i32 = 40;
+const ISL_GAP: i32 = 12;
+const ISL_TEXT_MIN: i32 = 96;
+const ISL_TEXT_MAX: i32 = 360;
+const ISL_DIGIT: i32 = 3200;
+/// How fast the island gives way to the dock when the pointer comes onto
+/// it, and how long after the pointer left it comes back.
+const ISL_BACK_MS: u64 = 140;
+const ISL_REFORM_MS: u64 = 700;
+/// How long the island shows a song or a timer that has just started.
+const SHOW_MS: u64 = 4000;
+
+// A short notification: what is short.
 const SHORT_TITLE: usize = 40;
 const SHORT_BODY: usize = 60;
 
@@ -177,6 +197,16 @@ impl ActKind {
     }
 }
 
+/// Which activity an island shows: its kind and key.
+pub(super) type IslandId = (ActKind, String);
+
+/// Whether the island `id` shows the activity of kind `kind` and key `key`
+/// (a level stays the same island when it turns from the volume to the
+/// brightness).
+fn shows(id: &IslandId, kind: ActKind, key: &str) -> bool {
+    (id.0 == kind || (id.0.level() && kind.level())) && id.1 == key
+}
+
 /// Something going on that the bar shows.
 pub(super) struct Activity {
     kind: ActKind,
@@ -191,12 +221,13 @@ pub(super) struct Activity {
     ringing: bool,
     /// The level shown, 0..=100.
     value: u32,
-    /// The app a notification opens ("Apri").
-    app: Option<&'static str>,
     /// When it last came forward (uptime): the most recent has the capsule.
     front: u64,
     /// When it goes by itself (uptime; 0: while it lasts).
     until: u64,
+    /// Until when the bar becomes its island (a song or a timer that has
+    /// just started; uptime).
+    show_until: u64,
     /// How far it is out.
     open: Morph,
     /// Going: it closes, then it is dropped.
@@ -205,16 +236,33 @@ pub(super) struct Activity {
 
 impl Activity {
     fn new(kind: ActKind, key: String, icon: String, title: String, sub: String, now: u64) -> Activity {
-        Activity { kind, key, icon, title, sub, ringing: false, value: 0, app: None, front: now, until: 0, open: Morph::new(), leaving: false }
+        let show_until = if matches!(kind, ActKind::Music | ActKind::Timer) { now + SHOW_MS } else { 0 };
+        Activity { kind, key, icon, title, sub, ringing: false, value: 0, front: now, until: 0, show_until, open: Morph::new(), leaving: false }
+    }
+
+    fn id(&self) -> IslandId {
+        (self.kind, self.key.clone())
+    }
+
+    /// How much the bar wants to become its island now (none: not at all).
+    fn island_rank(&self, now: u64) -> Option<u8> {
+        if self.leaving {
+            return None;
+        }
+        match self.kind {
+            ActKind::Volume | ActKind::Brightness => Some(5),
+            ActKind::Note => Some(4),
+            ActKind::Timer if self.ringing => Some(3),
+            ActKind::Starting => Some(2),
+            ActKind::Music | ActKind::Timer if now < self.show_until => Some(1),
+            _ => None,
+        }
     }
 }
 
 /// The parts of the bar that take a press besides the dock's icons.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum BarHit {
-    Close,
-    Open,
-    Note,
     Bubble,
     Pill,
     Level,
@@ -282,12 +330,32 @@ fn start_line(note: Option<&str>) -> String {
 /// The text of a capsule: as wide as its longer line (a song's time at
 /// its widest, so that the capsule does not change width every second).
 fn text_w(a: &Activity) -> i32 {
+    lines_w(a).clamp(CAP_TEXT_MIN, CAP_TEXT_MAX)
+}
+
+/// The wider of an activity's two lines (a song's time at its widest).
+fn lines_w(a: &Activity) -> i32 {
     let sub: String = if a.kind == ActKind::Music {
         a.sub.chars().map(|ch| if ch.is_ascii_digit() { '0' } else { ch }).collect()
     } else {
         a.sub.clone()
     };
-    text::width(Font::Strong, &a.title).max(text::width(Font::Small, &sub)).clamp(CAP_TEXT_MIN, CAP_TEXT_MAX)
+    text::width(Font::Strong, &a.title).max(text::width(Font::Small, &sub))
+}
+
+/// The text of an island.
+fn isl_text_w(a: &Activity) -> i32 {
+    lines_w(a).clamp(ISL_TEXT_MIN, ISL_TEXT_MAX)
+}
+
+/// What an island shows right of its icon: how wide.
+fn isl_content_w(a: &Activity) -> i32 {
+    match a.kind {
+        ActKind::Starting => isl_text_w(a) + ISL_GAP + busy_w(BUSY),
+        ActKind::Music => isl_text_w(a) + ISL_GAP + EQ_TOTAL,
+        ActKind::Timer => digits_w(&a.title, ISL_DIGIT) + 10 + text::width(Font::Small, &a.sub).min(ISL_TEXT_MAX / 2),
+        _ => isl_text_w(a),
+    }
 }
 
 /// The one line of a capsule in the compact dock.
@@ -363,15 +431,6 @@ fn cells_w() -> i32 {
     LEVEL_CELLS * LEVEL_CELL_W + (LEVEL_CELLS - 1) * LEVEL_CELL_GAP
 }
 
-/// The built-in app a notification with `icon` comes from, which "Apri"
-/// opens (none for the system's own).
-fn note_app(icon: &str) -> Option<&'static str> {
-    apps::BUILT_IN
-        .iter()
-        .find(|(id, _, ic)| (*ic == icon || *id == icon) && !matches!(*id, "about" | "trash" | "viewer"))
-        .map(|(id, _, _)| *id)
-}
-
 impl Desktop {
     // ------------------------------------------------------------------
     // What is where
@@ -393,32 +452,107 @@ impl Desktop {
         self.acts.iter().find(|a| a.kind.level())
     }
 
-    fn note_act(&self) -> Option<&Activity> {
-        self.acts.iter().find(|a| a.kind == ActKind::Note)
-    }
-
-    /// A short notification is in the bar (or coming, or going).
-    pub(super) fn note_act_shown(&self) -> bool {
-        self.note_act().is_some()
-    }
-
-    /// How far the bar has become the level (0: not at all).
+    /// How far the bar has become the level over a full-screen window, from
+    /// the pill (0: not at all).
     pub(super) fn level_t(&self) -> u32 {
         self.level_act().map_or(0, |a| a.open.value())
     }
 
-    /// How far the bar has grown for a notification.
-    pub(super) fn note_t(&self) -> u32 {
-        if self.dock_shown() {
-            self.note_act().map_or(0, |a| a.open.value())
+    /// The activity the island shows (coming, there, or going).
+    fn island_index(&self) -> Option<usize> {
+        let id = self.isl.as_ref()?;
+        self.acts.iter().position(|a| shows(id, a.kind, &a.key))
+    }
+
+    fn island_act(&self) -> Option<&Activity> {
+        self.island_index().map(|i| &self.acts[i])
+    }
+
+    /// How far the bar has become an island (0: it is the dock).
+    pub(super) fn island_t(&self) -> u32 {
+        if self.dock_shown() && self.island_index().is_some() {
+            self.island.value()
         } else {
             0
         }
     }
 
-    /// The dock is there to be pressed (not turned into the level).
+    /// The dock is there to be pressed (not turned into an island).
     pub(super) fn dock_live(&self) -> bool {
-        self.dock_shown() && self.level_t() == 0
+        self.dock_shown() && self.island_t() == 0
+    }
+
+    /// The island of `a`, all the way out: at the bottom in the middle.
+    fn island_rect(&self, a: &Activity) -> Rect {
+        if a.kind.level() {
+            return self.level_rect();
+        }
+        let w = (2 * ISL_PAD + ISL_ICON + ISL_GAP + isl_content_w(a)).min(self.w - 24);
+        Rect::new((self.w - w) / 2, self.h - 12 - ISL_H, w, ISL_H)
+    }
+
+    /// Where the island is all the way out, while the bar is one (or is
+    /// becoming or leaving one).
+    pub(super) fn island_zone(&self) -> Option<Rect> {
+        self.island_act().filter(|_| self.island_t() > 0).map(|a| self.island_rect(a))
+    }
+
+    /// The activity the bar becomes now, while the pointer is away from
+    /// it: the one that wants it most (a level, a short notification, a
+    /// timer ringing, a program starting, a song or a timer that has just
+    /// started), the most recent of them. None over a full-screen window
+    /// (the pill shows what goes on) or while something else is open over
+    /// the bar.
+    fn island_pick(&self, now: u64) -> Option<usize> {
+        let busy = self.launcher.is_some()
+            || self.overview.is_some()
+            || self.lock.is_some()
+            || self.ending.is_some()
+            || self.carry.is_some()
+            || self.popup.as_ref().is_some_and(|p| p.up);
+        if busy || self.full_screen() {
+            return None;
+        }
+        self.acts.iter().enumerate().filter_map(|(i, a)| a.island_rank(now).map(|r| (r, a.front, i))).max().map(|(_, _, i)| i)
+    }
+
+    /// The bar becomes the island of what goes on, and gives way to the
+    /// dock as soon as the pointer comes onto it (it comes back
+    /// [`ISL_REFORM_MS`] after the pointer left). From one island to
+    /// another it goes back to the dock first. Called after every move of
+    /// the pointer and ten times a second.
+    pub(super) fn island_update(&mut self, l: &mut Looper) {
+        let now = time::uptime_ms();
+        if self.near_dock {
+            self.near_at = now;
+        }
+        let away = !self.near_dock && now >= self.near_at + ISL_REFORM_MS;
+        let want = if away { self.island_pick(now).map(|i| self.acts[i].id()) } else { None };
+        let same = matches!((&self.isl, &want), (Some(cur), Some(w)) if shows(cur, w.0, &w.1));
+        let changed = if same {
+            self.isl = want;
+            self.island.set(1000)
+        } else if self.island.value() > 0 || self.island.moving() {
+            // Another one, or the dock: back to the dock first; at once
+            // when the pointer came onto it.
+            self.island.set_in(0, if self.near_dock { ISL_BACK_MS } else { MORPH_MS })
+        } else {
+            let before = self.isl.is_some();
+            self.isl = want;
+            if self.isl.is_some() {
+                self.island.set(1000)
+            } else {
+                before
+            }
+        };
+        if changed {
+            if self.island.target() > 0 {
+                // The icons stop growing: the dock is going away.
+                self.mag.target = 0;
+                self.hover = None;
+            }
+            self.damage_bar(l);
+        }
     }
 
     /// The capsule out (or coming or going) on the dock item of window kind
@@ -477,34 +611,12 @@ impl Desktop {
         (sym, cells, Rect::new(x, r.y, digits_w("100", LEVEL_SYM), r.h))
     }
 
-    /// The bar's panel around the dock `bg`: grown upwards for a
-    /// notification, or on its way to being the level.
+    /// The bar's panel: the dock `bg`, on its way to being the island.
     pub(super) fn bar_panel(&self, bg: Rect) -> Rect {
-        let lift = NOTE_LIFT * self.note_t() as i32 / 1000;
-        let p = Rect::new(bg.x, bg.y - lift, bg.w, bg.h + lift);
-        match self.level_t() {
-            0 => p,
-            t => ui::lerp_rect(p, self.level_rect(), t),
+        match self.island_zone() {
+            Some(r) => ui::lerp_rect(bg, r, self.island_t()),
+            None => bg,
         }
-    }
-
-    /// A notification's row, all the way out, above the dock `bg`.
-    fn note_row(&self, bg: Rect) -> Rect {
-        Rect::new(bg.x + DOCK_PAD, bg.y - NOTE_LIFT + DOCK_PAD, bg.w - 2 * DOCK_PAD, NOTE_ROW)
-    }
-
-    /// "Chiudi" and, when there is an app to open, "Apri", at the right end
-    /// of the notification's row.
-    fn note_buttons(row: Rect, open: bool) -> (Rect, Option<Rect>) {
-        let y = row.y + (row.h - 32) / 2;
-        let mut x = row.right() - 6;
-        let open = open.then(|| {
-            x -= 72;
-            let r = Rect::new(x, y, 72, 32);
-            x -= 8;
-            r
-        });
-        (Rect::new(x - 86, y, 86, 32), open)
     }
 
     /// The pill over a full-screen window, while something goes on: where,
@@ -529,8 +641,8 @@ impl Desktop {
     /// What the bar may paint besides the dock `d` and its icons.
     pub(super) fn bar_extent(&self, d: Rect) -> Rect {
         let mut z = Rect::EMPTY;
-        if self.acts.iter().any(|a| a.kind == ActKind::Note) {
-            z = z.union(&ui::with_shadow(Rect::new(d.x, d.y - NOTE_LIFT, d.w, d.h + NOTE_LIFT)));
+        if let Some(a) = self.island_act() {
+            z = z.union(&ui::with_shadow(self.island_rect(a)));
         }
         if self.acts.iter().any(|a| a.kind.level()) {
             z = z.union(&ui::with_shadow(self.level_rect()));
@@ -554,6 +666,13 @@ impl Desktop {
         if !self.dock_shown() {
             if let Some((r, i)) = self.pill() {
                 out.push((i, r, self.pill_ind(r)));
+            }
+            return out;
+        }
+        if self.island_t() > 0 {
+            // The island's own: all of it, it is small.
+            if let (Some(i), Some(r)) = (self.island_index(), self.island_zone()) {
+                out.push((i, r, r));
             }
             return out;
         }
@@ -582,7 +701,7 @@ impl Desktop {
     }
 
     pub(super) fn bar_moving(&self) -> bool {
-        self.bubble.moving() || self.acts.iter().any(|a| a.open.moving())
+        self.bubble.moving() || self.island.moving() || self.acts.iter().any(|a| a.open.moving())
     }
 
     /// Where each activity goes: the most recent capsule open, the others
@@ -630,12 +749,17 @@ impl Desktop {
                         // Back before it had gone (a song played again).
                         a.leaving = false;
                         a.front = now;
+                        a.show_until = now + SHOW_MS;
                         shape = true;
                     }
                     if *ringing && !a.ringing {
                         // A timer that rings comes out of the bubble.
                         a.front = now;
                         shape = true;
+                    }
+                    if a.kind == ActKind::Music && a.title != *title {
+                        // Another song: the island shows it.
+                        a.show_until = now + SHOW_MS;
                     }
                     if a.title != *title || a.sub != *sub || a.ringing != *ringing {
                         let before = (content_small(a), content_full(a));
@@ -663,19 +787,10 @@ impl Desktop {
                 shape = true;
             }
         }
-        // Levels and notifications go after a while; a notification stays
-        // while the pointer is on it.
-        let on_note = self.note_t() > 0 && {
-            let (_, _, bg) = self.dock_geometry(&self.dock_items());
-            self.note_row(bg).contains(self.mouse.0, self.mouse.1)
-        };
+        // Levels and notifications go after a while.
         for a in self.acts.iter_mut().filter(|a| a.until != 0 && !a.leaving && now >= a.until) {
-            if a.kind == ActKind::Note && on_note {
-                a.until = now + 1000;
-            } else {
-                a.leaving = true;
-                shape = true;
-            }
+            a.leaving = true;
+            shape = true;
         }
         // The volume or the brightness changed (the keys, the settings, an app).
         let levels = (crate::dev::audio::volume(), crate::gui::brightness());
@@ -688,7 +803,10 @@ impl Desktop {
         }
         self.levels = Some(levels);
         shape |= self.bar_targets();
-        self.acts.retain(|a| !(a.leaving && a.open.value() == 0 && !a.open.moving()));
+        // What the island still shows (closing) stays until it is gone.
+        let isl = self.isl.clone().filter(|_| self.island.value() > 0 || self.island.moving());
+        self.acts.retain(|a| !(a.leaving && a.open.value() == 0 && !a.open.moving()) || isl.as_ref().is_some_and(|id| shows(id, a.kind, &a.key)));
+        self.island_update(l);
         let step = step();
         let stepped = step != self.bar_phase;
         self.bar_phase = step;
@@ -731,9 +849,8 @@ impl Desktop {
                 self.acts.push(a);
             }
         }
-        self.mag.target = 0;
-        self.hover = None;
         self.bar_targets();
+        self.island_update(l);
         self.damage_bar(l);
     }
 
@@ -771,45 +888,34 @@ impl Desktop {
         self.show_level(l, kind, if kind == ActKind::Brightness { now.1 } else { now.0 });
     }
 
-    /// A short notification comes out of the bar, when the dock is there
-    /// to show it; whether it did (if not, it gets a banner).
+    /// A short notification becomes the bar's island, when the dock is
+    /// there to show it and the pointer is not on it (the dock stays the
+    /// dock then); whether it did (if not, it gets a banner).
     pub(super) fn bar_note(&mut self, l: &mut Looper, title: &str, body: &str, icon: &str) -> bool {
         let busy = self.launcher.is_some() || self.overview.is_some() || self.lock.is_some() || self.popup.is_some() || self.ending.is_some();
-        if busy || self.full_screen() || title.chars().count() > SHORT_TITLE || body.chars().count() > SHORT_BODY {
+        if busy || self.near_dock || self.full_screen() || title.chars().count() > SHORT_TITLE || body.chars().count() > SHORT_BODY {
             return false;
         }
         let now = time::uptime_ms();
-        let app = note_app(icon);
         let until = now + MORPH_MS + NOTE_STAY;
         match self.acts.iter_mut().find(|a| a.kind == ActKind::Note) {
             Some(a) => {
                 a.title = title.into();
                 a.sub = body.into();
                 a.icon = icon.into();
-                a.app = app;
                 a.until = until;
                 a.leaving = false;
             }
             None => {
                 let mut a = Activity::new(ActKind::Note, String::new(), icon.into(), title.into(), body.into(), now);
-                a.app = app;
                 a.until = until;
                 self.acts.push(a);
             }
         }
-        self.mag.target = 0;
-        self.hover = None;
         self.bar_targets();
+        self.island_update(l);
         self.damage_bar(l);
         true
-    }
-
-    fn dismiss_note(&mut self, l: &mut Looper) {
-        for a in self.acts.iter_mut().filter(|a| a.kind == ActKind::Note) {
-            a.leaving = true;
-        }
-        self.bar_targets();
-        self.damage_bar(l);
     }
 
     /// A program starting from `kind` was launched again: its capsule
@@ -838,25 +944,11 @@ impl Desktop {
             }
             return self.pill().filter(|(r, _)| r.contains(x, y)).map(|_| BarHit::Pill);
         }
+        // An island takes no press: the pointer on it makes it the dock.
+        if self.island_t() > 0 {
+            return None;
+        }
         let (_, _, bg) = self.dock_geometry(&self.dock_items());
-        if self.level_t() > 0 {
-            return self.bar_panel(bg).contains(x, y).then_some(BarHit::Level);
-        }
-        if self.note_t() >= 500 {
-            if let Some(a) = self.note_act() {
-                let row = self.note_row(bg);
-                let (close, open) = Self::note_buttons(row, a.app.is_some());
-                if close.contains(x, y) {
-                    return Some(BarHit::Close);
-                }
-                if open.is_some_and(|o| o.contains(x, y)) {
-                    return Some(BarHit::Open);
-                }
-                if row.contains(x, y) {
-                    return Some(BarHit::Note);
-                }
-            }
-        }
         (self.bubble.value() >= 500 && self.bubble_rect(bg).contains(x, y)).then_some(BarHit::Bubble)
     }
 
@@ -864,15 +956,6 @@ impl Desktop {
     pub(super) fn bar_press(&mut self, l: &mut Looper, x: i32, y: i32) -> bool {
         let Some(hit) = self.bar_hit(x, y) else { return false };
         match hit {
-            BarHit::Close => self.dismiss_note(l),
-            BarHit::Open => {
-                let app = self.note_act().and_then(|a| a.app);
-                self.dismiss_note(l);
-                if let Some(id) = app {
-                    self.open_id(l, id);
-                }
-            }
-            BarHit::Note => {}
             BarHit::Bubble => {
                 // The one in the bubble swaps with the one in the dock.
                 if let Some(&j) = self.waiting().first() {
@@ -925,25 +1008,70 @@ impl Desktop {
         }
     }
 
-    /// The bar's panel around the dock `bg` (grown for a notification, or
-    /// becoming the level) with its shadow, the bubble and the
-    /// notification. None when the bar is the level now: then nothing of
-    /// the dock is drawn.
+    /// The bar's panel: the dock `bg`, or on its way to being the island,
+    /// with its shadow, and the bubble. None when the bar is the island
+    /// now (its content is drawn): then nothing of the dock is drawn.
     pub(super) fn bar_frame(&self, c: &mut Canvas, bg: Rect, dock_rad: i32) -> Option<Rect> {
-        let level = self.level_t();
+        let t = self.island_t();
         let panel = self.bar_panel(bg);
-        let rad = ui::lerp(dock_rad, LEVEL_RAD, level);
+        let to = if self.island_act().is_some_and(|a| a.kind.level()) { LEVEL_RAD } else { ISL_RAD };
+        let rad = ui::lerp(dock_rad, to, t).min(panel.h / 2);
         ui::drop_shadow(c, panel, rad, 16, 55);
         ui::panel(c, panel, rad);
-        if level >= LEVEL_SWAP {
-            self.draw_level(c, panel, level);
+        if t >= LEVEL_SWAP {
+            if let Some(a) = self.island_act() {
+                self.draw_island(c, a, panel, t);
+            }
             return None;
         }
-        if level == 0 {
+        if t == 0 {
             self.draw_bubble(c, bg);
         }
-        self.draw_bar_note(c, bg, panel);
         Some(panel)
+    }
+
+    /// The island of `a` inside `panel`, coming in as the morph ends (`t`):
+    /// the app's icon and its two lines, with the equaliser or the cells; a
+    /// timer's time left in soft-pixel digits (orange, pulsing, when it
+    /// rings).
+    fn draw_island(&self, c: &mut Canvas, a: &Activity, panel: Rect, t: u32) {
+        if a.kind.level() {
+            self.draw_level(c, panel, t);
+            return;
+        }
+        let k = t.saturating_sub(LEVEL_SWAP) * 1000 / (1000 - LEVEL_SWAP);
+        let r = self.island_rect(a);
+        let saved = c.clip();
+        c.set_clip(saved.intersect(&panel));
+        if a.ringing {
+            let ph = (time::uptime_ms() % 1000) as u32;
+            let tri = if ph < 500 { ph * 2 } else { (1000 - ph) * 2 };
+            c.fill_round(panel, ISL_RAD.min(panel.h / 2), fade(((40 + tri * 120 / 1000) << 24) | (ui::ORANGE & 0xFF_FFFF), k));
+        }
+        res::draw_icon_faded(c, &a.icon, ISL_ICON, r.x + ISL_PAD, r.y + (r.h - ISL_ICON) / 2, k * 255 / 1000);
+        let x = r.x + ISL_PAD + ISL_ICON + ISL_GAP;
+        let (fg, dim) = (fade(ui::text(), k), fade(ui::text_dim(), k));
+        if a.kind == ActKind::Timer {
+            let col = if a.ringing { fade(ui::ORANGE, k) } else { fg };
+            draw_digits(c, &a.title, x, r, ISL_DIGIT, col);
+            let lx = x + digits_w(&a.title, ISL_DIGIT) + 10;
+            let (sh, _) = text::metrics(Font::Small);
+            text::draw(c, Font::Small, lx, r.y + (r.h - sh) / 2, &text::fit(Font::Small, &a.sub, r.right() - ISL_PAD - lx), dim);
+        } else {
+            let w = isl_text_w(a).min(r.right() - ISL_PAD - x);
+            let (th, _) = text::metrics(Font::Strong);
+            let (sh, _) = text::metrics(Font::Small);
+            let y = r.y + (r.h - th - sh) / 2;
+            text::draw(c, Font::Strong, x, y, &text::fit(Font::Strong, &a.title, w), fg);
+            text::draw(c, Font::Small, x, y + th, &text::fit(Font::Small, &a.sub, w), dim);
+            let tail = Rect::new(x + w + ISL_GAP, r.y, r.right() - ISL_PAD - (x + w + ISL_GAP), r.h);
+            match a.kind {
+                ActKind::Music => draw_eq(c, tail, EQ_H, k),
+                ActKind::Starting => draw_busy(c, tail, BUSY, BUSY_H, k),
+                _ => {}
+            }
+        }
+        c.set_clip(saved);
     }
 
     /// The level's symbol, cells and value inside `panel`, coming in as
@@ -973,29 +1101,6 @@ impl Desktop {
             }
         }
         draw_digits(c, &format!("{}", a.value), digits.x, digits, LEVEL_SYM, fg);
-        c.set_clip(saved);
-    }
-
-    /// A short notification's row above the dock `bg`, inside `panel`.
-    fn draw_bar_note(&self, c: &mut Canvas, bg: Rect, panel: Rect) {
-        let t = self.note_t();
-        let Some(a) = self.note_act().filter(|_| t > 0) else { return };
-        let row = self.note_row(bg);
-        let saved = c.clip();
-        c.set_clip(saved.intersect(&panel));
-        res::draw_icon_faded(c, &a.icon, 40, row.x + 6, row.y + (row.h - 40) / 2, t * 255 / 1000);
-        let (close, open) = Self::note_buttons(row, a.app.is_some());
-        let x = row.x + 58;
-        let w = close.x - 14 - x;
-        let (th, _) = text::metrics(Font::Strong);
-        let (sh, _) = text::metrics(Font::Small);
-        let y = row.y + (row.h - th - sh) / 2;
-        text::draw(c, Font::Strong, x, y, &text::fit(Font::Strong, &a.title, w), fade(ui::text(), t));
-        text::draw(c, Font::Small, x, y + th, &text::fit(Font::Small, &a.sub, w), fade(ui::text_dim(), t));
-        ui::button(c, close, "Chiudi", false, self.bar_hover == Some(BarHit::Close));
-        if let Some(o) = open {
-            ui::button(c, o, "Apri", true, self.bar_hover == Some(BarHit::Open));
-        }
         c.set_clip(saved);
     }
 

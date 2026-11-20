@@ -83,11 +83,14 @@ Presa a modello da macOS:
   piena in 220 ms (con un'accelerazione morbida, a tempo); quando se ne va
   aspetta 400 ms e torna piccolo, così non sfarfalla passandoci accanto.
   Resta grande finché è aperto un menu o il centro di controllo che vengono
-  dal dock (anche da tastiera), mentre c'è una notifica breve con i suoi
-  pulsanti e mentre ci si trascinano sopra dei file. Una volta grande,
-  l'icona sotto il puntatore **si ingrandisce** di un poco (circa 1,2×, le
-  vicine meno); le icone sono sempre disegnate dalla loro immagine alla
-  misura giusta e i clic seguono quello che si vede. *Impostazioni →
+  dal dock (anche da tastiera) e mentre ci si trascinano sopra dei file.
+  Una volta grande, l'icona sotto il puntatore **si ingrandisce** di un poco
+  (circa 1,2×, le vicine meno) e sale di metà di quanto cresce. Il pannello
+  del dock resta fermo: le icone crescono sul posto, negli spazi tra l'una e
+  l'altra (crescono sempre meno di uno spazio, così non si toccano), e
+  nessuna si sposta di lato, così quella puntata resta sotto il puntatore; il
+  quadratino delle app aperte resta dov'è. Le icone sono sempre disegnate
+  dalla loro immagine alla misura giusta e i clic seguono quello che si vede. *Impostazioni →
   Aspetto* ha due interruttori, accesi all'inizio: **Dock compatto** (spento,
   il dock resta sempre grande; a riposo è identico a prima, pixel per pixel)
   e **Ingrandimento icone**.
@@ -296,30 +299,42 @@ l'azione in `act`. Se cambia qualcosa dei colori, `act` restituisce
 ### La barra dinamica
 
 Il dock in basso si adatta a quello che succede: invece di aprire
-finestrelle altrove, cambia forma per un momento e poi torna com'era. È
-fatto nello stesso stile a pixel morbidi del resto (pannello opaco, incavi,
-celle arancioni), non copia quello di altri sistemi. Il codice è in
-`system/kernel/src/gui/desktop/bar.rs`.
+finestrelle altrove, è la barra stessa a cambiare forma. Diventa
+un'**isola**, un pannello arrotondato in basso al centro con quello che
+succede in quel momento: il pannello del dock si stringe o si allarga fino
+alla forma dell'isola (250 ms), il contenuto del dock sparisce a metà strada
+e quello dell'isola compare. Non spunta una seconda barra. Appena il puntatore
+arriva sulla barra (o su dove era l'isola), torna **subito** il dock con le
+app (140 ms); quando il puntatore se ne va, l'isola torna dopo 0,7 secondi
+se c'è ancora qualcosa da mostrare. Da un'isola a un'altra la barra passa
+dal dock. È fatta nello stesso stile a pixel morbidi del resto (pannello
+opaco, incavi, celle arancioni), non copia quello di altri sistemi. Il codice
+è in `system/kernel/src/gui/desktop/bar.rs`.
 
 | Cosa succede | Come cambia il dock |
 |---|---|
 | a riposo | il dock compatto (vedi [La scrivania](#la-scrivania)); con *Dock compatto* spento, come sempre: nessun pixel diverso |
-| un programma si avvia | la sua icona diventa una **capsula** con il nome, *Si sta avviando…* (o una nota: *Si avvia con Wine…*, *Prima apertura: preparo Windows…*, *Si estrae, ci vuole un po'…*) e una fila di celle che scorre; sparisce quando arriva la finestra, quando il programma finisce senza finestra o dopo 120 secondi. Aprirlo di nuovo mentre parte non ne avvia un secondo: la capsula torna davanti e l'icona rimbalza |
-| volume o luminosità | il dock diventa una **barra di livello** in basso al centro: il simbolo, 16 celle e il valore; resta 1,5 secondi dopo l'ultimo cambio. Un clic sulle celle sceglie il livello. Viene dai tasti del volume (su, giù, muto), dalle Impostazioni o da un'app; non compare con il centro di controllo aperto, che ha già i suoi cursori |
-| una notifica breve (titolo fino a 40 caratteri, testo fino a 60) | il dock **cresce verso l'alto** con una riga: icona, titolo, testo, *Chiudi* e, se viene da un'app, *Apri* arancione; resta 4,5 secondi, di più finché il puntatore ci sta sopra. Quelle lunghe, o con il dock nascosto, vanno in alto a destra come prima |
-| musica | l'icona di Musica diventa una capsula con il titolo, *Musica · 0:42* e un equalizzatore di 5 barre a 8 passi al secondo; un clic apre Musica. Nel dock compatto la capsula ha una riga sola (icona, titolo accorciato, equalizzatore più basso) e diventa quella piena mentre il dock cresce; lo stesso per le capsule di avvio e del timer |
-| timer dell'Orologio | capsula con il tempo che manca; quando suona pulsa in arancione per 30 secondi ed esce davanti alle altre |
+| un programma si avvia | la barra diventa l'isola del programma: la sua icona, il nome, *Si sta avviando…* (o una nota: *Si avvia con Wine…*, *Prima apertura: preparo Windows…*, *Si estrae, ci vuole un po'…*) e una fila di celle che scorre. Con il puntatore sul dock la sua icona è una **capsula** con le stesse cose. Spariscono quando arriva la finestra, quando il programma finisce senza finestra o dopo 120 secondi. Aprirlo di nuovo mentre parte non ne avvia un secondo: la capsula torna davanti e l'icona rimbalza |
+| volume o luminosità | la barra diventa una **barra di livello**: il simbolo, 16 celle e il valore; resta 1,5 secondi dopo l'ultimo cambio. Viene dai tasti del volume (su, giù, muto), dalle Impostazioni o da un'app; non compare con il centro di controllo aperto, che ha già i suoi cursori |
+| una notifica breve (titolo fino a 40 caratteri, testo fino a 60) | la barra diventa l'isola della notifica: icona, titolo e testo; resta 4,5 secondi. Quelle lunghe, quelle che arrivano con il puntatore sul dock o con il dock nascosto vanno in alto a destra come prima; tutte restano nel centro notifiche (clic sull'orologio) |
+| musica | quando parte una canzone (o ne parte un'altra) la barra diventa per 4 secondi l'isola con il titolo, *Musica · 0:42* e un equalizzatore di 5 barre a 8 passi al secondo. Poi torna il dock, dove l'icona di Musica è una capsula con le stesse cose; un clic apre Musica. Nel dock compatto la capsula ha una riga sola (icona, titolo accorciato, equalizzatore più basso) e diventa quella piena mentre il dock cresce; lo stesso per le capsule di avvio e del timer |
+| timer dell'Orologio | quando parte, l'isola per 4 secondi con il tempo che manca in cifre a pixel morbidi; poi la capsula nel dock. Quando suona, la barra torna l'isola, con le cifre arancioni, e pulsa per 30 secondi; esce davanti alle altre |
 | a schermo intero | il dock è nascosto; se c'è un'attività resta una **pillola** sottile in basso al centro con l'ora e l'equalizzatore, le celle o il tempo del timer. Un clic apre l'app; il dock torna come su macOS: sale dal bordo in basso (220 ms, frenando) quando il puntatore tocca le ultime 2 righe, oppure quando viene lanciato in giù nella fascia degli ultimi 48 punti a più di 600 punti al secondo (misurati sugli ultimi 80 ms); un avvicinamento lento non lo fa uscire, così i controlli in fondo alla finestra restano usabili. È il dock a dimensione piena, sopra la finestra; la pillola sparisce mentre c'è e torna dopo. Quando il puntatore esce dalla sua zona resta 350 ms e poi scende (180 ms, accelerando); non scende mai con un menu del dock, il menu di sistema o il centro di controllo aperti, né con file trascinati sopra. I clic vanno al dock solo dove si vede |
-| due attività o più | nel dock ce n'è una (la più recente), le altre aspettano in una **bolla** a destra del dock, con il numero quando sono due o più; un clic sulla bolla le scambia |
+| due attività o più | l'isola mostra la più importante (livello, notifica, timer che suona, programma che parte, canzone o timer appena partiti), a parità la più recente. Nel dock c'è una capsula (la più recente), le altre aspettano in una **bolla** a destra del dock, con il numero quando sono due o più; un clic sulla bolla le scambia |
 
 Come funziona:
 
 - Ogni attività (`Activity`) ha il suo tipo (`ActKind`: `Starting`, `Music`,
   `Timer`, `Volume`, `Brightness`, `Note`), una scadenza facoltativa e un
-  `Morph`, un valore da 0 a 1000 che va verso l'obiettivo in 250 ms. La
-  forma del dock passa da una all'altra con questo valore: le capsule si
-  allargano dall'icona, la barra di livello e la riga della notifica
-  sfumano dal dock.
+  `Morph`, un valore da 0 a 1000 che va verso l'obiettivo in 250 ms: le
+  capsule si allargano dall'icona con questo valore.
+- L'isola ha un suo `Morph` (`Desktop::island`, 0 il dock, 1000 l'isola) e
+  ricorda quale attività mostra (`isl`). `island_pick` sceglie l'attività
+  con `Activity::island_rank`; `island_update`, chiamata a ogni movimento del
+  puntatore e dieci volte al secondo, la porta verso l'isola o verso il dock
+  (in 140 ms se il puntatore è arrivato sulla barra). Il pannello è
+  `lerp_rect` tra il rettangolo del dock e quello dell'isola
+  (`island_rect`).
 - Le app dicono cosa fanno con `App::activity()` (`wm::Live::Music` o
   `Live::Timer`); `Desktop::bar_tick`, dieci volte al secondo, le
   confronta con quelle che ci sono, legge volume e luminosità e toglie le
@@ -330,7 +345,7 @@ Come funziona:
   timer.
 - Un'app nuova che vuole la sua capsula implementa `activity()` restituendo
   una variante di `Live`; se serve un tipo nuovo, si aggiunge a `Live`, ad
-  `ActKind` e a `draw_capsule`.
+  `ActKind`, a `draw_capsule`, a `draw_island` e a `island_rank`.
 - Dalla shell `notify <titolo> <testo> [icona]` manda una notifica per
   provarla.
 
@@ -347,7 +362,7 @@ si vedono meno fotogrammi ma l'animazione dura uguale.
 | ingrandisci / ripristina | la finestra si allarga fino allo schermo e torna |
 | Applicazioni | lo sfondo si sfoca e scurisce, le icone arrivano con uno zoom |
 | dock | da compatto a pieno in 220 ms e ritorno, ingrandimento morbido delle icone, rimbalzo all'avvio di un'app |
-| barra dinamica | il dock cambia forma in 250 ms: capsule, barra di livello, riga della notifica, pillola, bolla |
+| barra dinamica | la barra cambia forma in 250 ms: isole (livello, notifica, avvio, musica, timer), capsule, pillola, bolla; torna il dock in 140 ms quando ci arriva il puntatore |
 | menu e centro di controllo | si aprono in un attimo, dal dock verso l'alto |
 | notifiche | scivolano dentro da destra e poi via |
 | vista d'insieme | le finestre scivolano dal loro posto alla griglia, i desktop scendono dall'alto |

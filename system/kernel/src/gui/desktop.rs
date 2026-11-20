@@ -726,6 +726,14 @@ struct Desktop {
     /// and the icon it shows.
     bubble: Morph,
     bubble_icon: String,
+    /// The island the whole bar becomes (see [`bar`]): how far it is one
+    /// (0: the dock), the activity it shows, when the pointer was last on
+    /// the bar, and where the island was when the pointer came onto it (the
+    /// dock stays while the pointer is there).
+    island: Morph,
+    isl: Option<bar::IslandId>,
+    near_at: u64,
+    isl_hold: Rect,
     /// The volume and the brightness last seen (None before the first look).
     levels: Option<(u32, u32)>,
     /// Where the bar was painted since its area was last damaged: its shape
@@ -994,60 +1002,33 @@ impl Desktop {
         let dock_h = d.h();
         // The bubble beside the dock takes room at its right.
         let bubble = self.bubble_room(dock_h);
-        let base_x = (self.w - total - bubble) / 2;
+        let x0 = (self.w - total - bubble) / 2;
         let bottom = self.h - 12 - d.pad - 4;
-        // Icons grow under the pointer as the dock reaches full size.
+        // The background stays where it is: the icons near the pointer grow
+        // in place, into the gaps beside them (MAGNIFY is less than a gap,
+        // so neighbours never touch), and rise by half as much. None moves
+        // sideways, so the one aimed at stays under the pointer.
         let mag = if magnify && settings::dock_magnify() { self.mag.value.clamp(0, 1000) as i64 * size as i64 / 1000 } else { 0 };
         let range = (icon + d.gap) as i64 * 3 / 2;
         let mx = self.mouse.0 as i64;
-        let mut sizes: Vec<i32> = xs
+        let mut rects: Vec<Rect> = xs
             .iter()
             .enumerate()
             .map(|(k, &x)| {
+                let left = x0 + x;
                 // A capsule does not grow.
-                if mag == 0 || (k > 0 && extras[k - 1] > 0) {
-                    return icon;
-                }
-                let c = (base_x + x + icon / 2) as i64;
-                let d = (mx - c).abs();
-                let f = if d >= range { 0 } else { 1000 - d * d * 1000 / (range * range) };
-                icon + (MAGNIFY as i64 * mag * f / 1_000_000) as i32
+                let grow = if mag == 0 || (k > 0 && extras[k - 1] > 0) {
+                    0
+                } else {
+                    let dist = (mx - (left + icon / 2) as i64).abs();
+                    let f = if dist >= range { 0 } else { 1000 - dist * dist * 1000 / (range * range) };
+                    (MAGNIFY.min(d.gap - 2) as i64 * mag * f / 1_000_000) as i32
+                };
+                let s = (icon + grow) & !1;
+                Rect::new(left + (icon - s) / 2, bottom - s - grow / 2, s, s)
             })
             .collect();
-        // A full dock grows only as far as the screen's edges.
-        let room = (self.w - 8 - total - bubble).max(0);
-        let grown: i32 = sizes.iter().map(|s| s - icon).sum();
-        if grown > room {
-            for s in sizes.iter_mut() {
-                *s = icon + (*s - icon) * room / grown;
-            }
-        }
-        let extra: i32 = sizes.iter().map(|s| s - icon).sum();
-        let total_now = total + extra;
-        let x0 = (self.w - total_now - bubble) / 2;
-        let mut rects = Vec::new();
-        let mut shift = 0;
-        for (i, &x) in xs.iter().enumerate() {
-            let s = sizes[i] & !1;
-            rects.push(Rect::new(x0 + x + shift, bottom - s, s, s));
-            shift += sizes[i] - icon;
-        }
-        // Keep the point under the pointer where it was, so the icon being
-        // aimed at does not slide away as the others grow.
-        if mag > 0 && !xs.is_empty() {
-            let k = xs.iter().rposition(|&x| base_x + x - d.gap / 2 <= self.mouse.0).unwrap_or(0);
-            let f = ((self.mouse.0 - (base_x + xs[k])) as i64 * 1000 / icon as i64).clamp(0, 1000);
-            let now_at = rects[k].x as i64 + rects[k].w as i64 * f / 1000;
-            let shift = ((mx - now_at) * mag / 1000) as i32;
-            let shift = shift.clamp(-extra / 2, extra / 2);
-            for r in rects.iter_mut() {
-                r.x += shift;
-            }
-            let bg = Rect::new(x0 + shift, self.h - dock_h - 12, total_now, dock_h);
-            let mark = rects.remove(0);
-            return (mark, rects, bg);
-        }
-        let bg = Rect::new(x0, self.h - dock_h - 12, total_now, dock_h);
+        let bg = Rect::new(x0, self.h - dock_h - 12, total, dock_h);
         let mark = rects.remove(0);
         (mark, rects, bg)
     }
@@ -1068,10 +1049,10 @@ impl Desktop {
     }
 
     /// The dock stays at full size: a menu or the control centre opened
-    /// from it, a short notification in the bar, files carried onto it.
+    /// from it, files carried onto it.
     fn dock_held(&self) -> bool {
         let popup = self.popup.as_ref().is_some_and(|p| p.up && matches!(p.kind, PopupKind::Menu | PopupKind::Control));
-        popup || self.note_act_shown() || self.carry.as_ref().is_some_and(|c| c.dock.is_some())
+        popup || self.carry.as_ref().is_some_and(|c| c.dock.is_some())
     }
 
     /// The compact dock grows to full size while the pointer is near it
@@ -1116,8 +1097,22 @@ impl Desktop {
         if self.bubble.value() > 0 {
             near = near.union(&self.bubble_rect(bg).grow(10));
         }
+        // The island, and where it was when the pointer came onto it: the
+        // dock stays the dock while the pointer is there.
+        let island = self.island_zone().map(|r| r.grow(10));
+        if let Some(r) = island {
+            near = near.union(&r);
+        }
+        if self.near_dock {
+            near = near.union(&self.isl_hold);
+        }
         let on = near.contains(x, y);
-        self.near_dock = on && self.dock_shown() && self.level_t() == 0;
+        self.near_dock = on && self.dock_shown();
+        if !self.near_dock {
+            self.isl_hold = Rect::EMPTY;
+        } else if let Some(r) = island {
+            self.isl_hold = self.isl_hold.union(&r);
+        }
         let inside = on && live;
         if !inside {
             return (false, None);
@@ -3072,10 +3067,11 @@ impl Desktop {
                 self.reveal_left = 0;
             }
         }
-        // The dock grows near the pointer and magnifies around it; not
-        // while the bar shows the level or a notification over it.
-        let live = self.popup.is_none() && self.dock_live() && self.note_t() == 0;
+        // The dock grows near the pointer and magnifies around it; an
+        // island the bar has become gives way to it at once.
+        let live = self.popup.is_none() && self.dock_live();
         let (inside, hover) = self.dock_near(x, y, live);
+        self.island_update(l);
         self.mag.target = if inside && settings::dock_magnify() { 1000 } else { 0 };
         if inside || self.mag.moving() || hover != self.hover {
             l.damage(self.dock_zone());
@@ -3127,6 +3123,7 @@ impl Desktop {
         // The dock grows and magnifies as usual; some of its icons take files.
         let live = self.popup.is_none() && self.dock_shown();
         let (inside, hover) = self.dock_near(x, y, live);
+        self.island_update(l);
         self.mag.target = if inside && settings::dock_magnify() { 1000 } else { 0 };
         let items = self.dock_items();
         if inside || self.mag.moving() || hover != self.hover {
@@ -3399,12 +3396,12 @@ impl Desktop {
         let size = self.dock_size();
         let d = self.dims_at(&items, size);
         let extras = self.cap_extras(&items, size);
-        // The bar's panel, with a notification above the dock or on its way
-        // to being the level (then the dock's content is cut to it).
+        // The bar's panel, on its way to being an island (then the dock's
+        // content is cut to it).
         let Some(panel) = self.bar_frame(c, bg, d.rad) else { return };
-        let level = self.level_t();
+        let away = self.island_t();
         let saved = c.clip();
-        if level > 0 {
+        if away > 0 {
             c.set_clip(saved.intersect(&panel));
         }
         // The justOS mark on a dark tile, like an app's icon: it opens the
@@ -3449,8 +3446,10 @@ impl Desktop {
             let x = r.x - (d.sep + d.gap) / 2 - 1;
             c.fill_round(Rect::new(x, bg.y + (bg.h - 4 - sep_h) / 2, 2, sep_h), 1, sep);
         };
-        // The dot under the icon of an app that is open.
+        // The dot under the icon of an app that is open: it stays where it
+        // is while the icon grows.
         let dot = ui::lerp(4, 5, size);
+        let dot_y = bg.bottom() - d.pad - 1;
         if let Some(first) = rects.first() {
             sep_at(c, *first);
         }
@@ -3492,14 +3491,14 @@ impl Desktop {
                         res::draw_icon(c, &it.icon, r.w, r.x, r.y - lift);
                     }
                     if open {
-                        c.fill_round(Rect::new(r.x + r.w / 2 - 2, r.bottom() + 3, dot, dot), 1, ui::ORANGE);
+                        c.fill_round(Rect::new(r.x + r.w / 2 - 2, dot_y, dot, dot), 1, ui::ORANGE);
                     }
                 }
             }
         }
         c.set_clip(saved);
         // The name over the icon under the pointer (a capsule says it).
-        if level > 0 || self.note_t() > 0 {
+        if away > 0 {
             return;
         }
         if let Some(i) = self.hover.filter(|&i| i < items.len() && extras[i] == 0) {
@@ -4470,10 +4469,16 @@ impl Desktop {
                 // The icons move under a pointer that stays still while the
                 // dock grows or magnifies: the one under it (its name, its
                 // click) is found again.
-                if (magnified || growing) && self.carry.is_none() && (self.near_dock || self.hover.is_some()) {
+                let returning = self.island.moving() && self.island.target() == 0;
+                if (magnified || growing || returning) && self.carry.is_none() && (self.near_dock || self.hover.is_some()) {
                     let (x, y) = self.mouse;
-                    let live = self.popup.is_none() && self.dock_live() && self.note_t() == 0;
-                    let (_, hover) = self.dock_near(x, y, live);
+                    let live = self.popup.is_none() && self.dock_live();
+                    let (inside, hover) = self.dock_near(x, y, live);
+                    let mag = if inside && settings::dock_magnify() { 1000 } else { 0 };
+                    if mag != self.mag.target {
+                        self.mag.target = mag;
+                        l.damage(self.dock_zone());
+                    }
                     if hover != self.hover {
                         self.hover = hover;
                         l.damage(self.dock_zone());
@@ -4665,6 +4670,10 @@ pub fn run(d: &mut Display) {
         acts: Vec::new(),
         bubble: Morph::new(),
         bubble_icon: String::new(),
+        island: Morph::new(),
+        isl: None,
+        near_at: 0,
+        isl_hold: Rect::EMPTY,
         levels: None,
         bar_painted: Cell::new(Rect::EMPTY),
         bar_hover: None,
