@@ -183,6 +183,7 @@ live-root: system tools
 	gzip -dc system/kernel/assets/fonts@2x.bin.gz > $(LIVE_ROOT)/system/fonts@2x.bin
 
 # The disk image's system volume: justOS's files and the Linux libraries.
+GTK_LIB := $(ROOT)/usr/lib/x86_64-linux-gnu
 root: live-root $(LINUX)/usr/PACKAGES
 	rm -rf $(ROOT)
 	cp -a $(LIVE_ROOT) $(ROOT)
@@ -191,6 +192,11 @@ root: live-root $(LINUX)/usr/PACKAGES
 	cp -r rootfs/. $(ROOT)/
 	# Windows programs (Wine, when there) take justOS's look too.
 	tools/linux/winelook.py $(ROOT)
+	# GTK programs load justOS's GTK module (rootfs/etc/gtk-3.0/settings.ini),
+	# built here against the tree's GTK.
+	if [ -e $(GTK_LIB)/libgtk-3.so.0 ]; then mkdir -p $(GTK_LIB)/gtk-3.0/modules && \
+		$(CC) -shared -fPIC -O2 -Wall -nostdlib -o $(GTK_LIB)/gtk-3.0/modules/libjustos-gtk.so \
+		tools/linux/justos-gtk.c -L$(GTK_LIB) -l:libgtk-3.so.0 -l:libgobject-2.0.so.0; fi
 
 image: $(BUILD)/stage1.bin $(BUILD)/stage2.bin uefi system tools $(PACKAGES) root
 	$(JUSTTOOL) image $(IMAGE) --size $(SIZE) --slot-size $(SLOT_SIZE) --version $(VERSION) \

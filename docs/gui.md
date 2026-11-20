@@ -446,7 +446,7 @@ puntatore quasi niente.
 | Impostazioni | sette sezioni con ricerca: nome e configurazione iniziale, tema e sfondo, risoluzione e dimensione dello schermo, volume e suono all'avvio, tastiera, password e blocco, permessi delle app (vedi [Le Impostazioni](#le-impostazioni)) |
 | Monitor attività | i programmi in esecuzione, il processore e la memoria nell'ultimo minuto; un programma si può terminare |
 | Info sistema | panoramica, dispositivi con i loro driver, dischi con lo spazio libero |
-| Terminale | la shell di justOS: l'unico posto dove si vedono le righe di comando |
+| Terminale | la shell di justOS: l'unico posto dove si vedono le righe di comando; `help` elenca i comandi e `help <comando>` ne spiega uno, in italiano; i nomi dei comandi e le loro parole chiave (`drv list`, `sysupdate check`) restano in inglese |
 
 ## Il Negozio e le app installabili
 

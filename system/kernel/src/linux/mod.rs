@@ -502,9 +502,13 @@ fn default_env(own: &[String]) -> Vec<String> {
         .map(|s| s.to_string())
         .chain([alloc::format!("COLUMNS={cols}"), alloc::format!("LINES={rows}")])
         .chain([alloc::format!("XDG_RUNTIME_DIR={}", wayland::RUNTIME_DIR), alloc::format!("WAYLAND_DISPLAY={}", wayland::DISPLAY)])
-        // GTK and GLib: settings kept in memory (there is no dconf service)
-        // and no accessibility bus to look for.
-        .chain(["GSETTINGS_BACKEND=memory", "NO_AT_BRIDGE=1"].iter().map(|s| s.to_string()))
+        // GTK and GLib: settings in a file (there is no dconf service), so
+        // that justOS's defaults in /etc/glib-2.0/settings/defaults apply
+        // (the file chooser opens in the program's folder, not on an empty
+        // "Recent") and what the user changes stays, in
+        // ~/.config/glib-2.0/settings/keyfile; and no accessibility bus to
+        // look for.
+        .chain(["GSETTINGS_BACKEND=keyfile", "NO_AT_BRIDGE=1"].iter().map(|s| s.to_string()))
         // GTK's theme follows the desktop's (light text on the light panel
         // would be unreadable); the programs read it when they start.
         .chain([alloc::format!("GTK_THEME={}", if crate::gui::window::theme() == justdk::syscall::THEME_LIGHT { "justOS-light" } else { "justOS" })])

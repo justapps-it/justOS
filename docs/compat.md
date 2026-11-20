@@ -156,6 +156,37 @@ Lo sfondo della finestra GTK è ora pieno (lo stesso colore del corpo delle
 finestre di justOS): Firefox legge da lì i colori dei suoi dialoghi e lo
 "trasparente" lo prendeva per bianco, anche con il tema scuro.
 
+**Il selettore di file.** Il selettore di GTK (Apri e Salva di Firefox, il
+pulsante file di `gtk3-widget-factory`) si apriva su "Recent", vuoto, e
+"Trash" nella barra laterale rispondeva solo "Operation not supported":
+`trash:///` lo serve GVfs, il servizio di GNOME per il cestino e i dischi
+in rete, che passa da D-Bus. Ora:
+
+- si apre nella cartella del programma, cioè nella home per uno avviato
+  dalla scrivania (dal Terminale, nella cartella corrente). È
+  l'impostazione `startup-mode='cwd'` di `org.gtk.Settings.FileChooser`:
+  i programmi Linux partono con `GSETTINGS_BACKEND=keyfile` (in
+  `linux::default_env`), e il backend a file di GLib legge i valori
+  predefiniti di justOS da `/etc/glib-2.0/settings/defaults`
+  (`rootfs/etc/glib-2.0/settings/defaults`). Le impostazioni che il
+  programma cambia (dimensioni del selettore, ordinamento, file nascosti)
+  restano in `~/.config/glib-2.0/settings/keyfile`; prima stavano in
+  memoria e si perdevano a ogni chiusura. Firefox sceglie da sé la
+  cartella quando ne ha una: Salva parte da `Scaricati` (o dall'ultima
+  usata per salvare), Apri dall'ultima da cui ha aperto un file;
+- "Recent" funziona: GTK ricorda i file scelti nel selettore in
+  `~/.local/share/recently-used.xbel` e li mostra lì, in tutti i programmi
+  GTK (provato con `gtk3-widget-factory` e con Ctrl+O in Firefox);
+- "Trash" non c'è più. Nessuna impostazione lo toglie (la barra laterale lo
+  mostra nei programmi che accettano anche posti non locali, come
+  `gtk3-widget-factory`; non in Firefox), quindi lo fa un piccolo modulo GTK
+  di justOS, `tools/linux/justos-gtk.c`: spegne la proprietà `show-trash`
+  di ogni barra laterale quando compare. L'immagine lo compila contro il
+  GTK dell'albero (il passo `root` del `Makefile`, in
+  `/usr/lib/x86_64-linux-gnu/gtk-3.0/modules`) e GTK lo carica da
+  `gtk-modules` in `rootfs/etc/gtk-3.0/settings.ini`. Il Cestino di justOS
+  è nell'app File.
+
 **Aprire un file da un programma Linux.** "Apri" nel pannello dei download di
 Firefox (GLib, `g_app_info_launch_default_for_uri`) e `xdg-open` finiscono
 sullo stesso percorso del doppio clic nell'app File. Non c'è D-Bus, quindi il
@@ -209,9 +240,9 @@ notifica «nome.exe» si è chiuso per un errore (`check_wine` in
 0xC......., tranne 0xC000013A, la chiusura con Ctrl+C). Un programma chiuso
 normalmente non ne lascia; uno avviato dal terminale scrive l'errore lì.
 
-Non ci sono ancora inotify (GIO ripiega su controlli periodici), D-Bus e
-l'accessibilità; le impostazioni (GSettings) restano in memoria. L'avvio di
-un programma GTK prende qualche secondo.
+Non ci sono ancora D-Bus (e quindi GVfs) e l'accessibilità; le
+impostazioni (GSettings) stanno in un file (vedi *Il selettore di file*
+sopra). L'avvio di un programma GTK prende qualche secondo.
 
 `make test-gtk` avvia `gtk3-widget-factory` dalla console seriale e
 controlla la sua finestra sullo schermo: c'è, ha i colori del tema e non il

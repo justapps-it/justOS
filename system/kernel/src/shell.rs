@@ -41,69 +41,69 @@ struct Shell {
 }
 
 const COMMANDS: &[(&str, &str, &str)] = &[
-    ("help", "[command]", "list commands, or explain one"),
-    ("ls", "[path]", "list a folder (also: dir)"),
-    ("cd", "<path>", "change the current folder"),
-    ("cat", "<file>", "show a text file (also: type)"),
-    ("hex", "<file>", "show a file as hex bytes"),
-    ("write", "<file> <text>", "replace a file with text"),
-    ("append", "<file> <text>", "add a line of text to a file"),
-    ("mkdir", "<path>", "create a folder (and missing parents)"),
-    ("rm", "[-r] <path>", "delete a file or folder (also: del)"),
-    ("mv", "<from> <to>", "rename or move within a volume"),
-    ("cp", "<from> <to>", "copy a file"),
-    ("vol", "", "list mounted volumes"),
-    ("disks", "", "list disks and partitions"),
-    ("format", "<disk> <label>", "create a JustFS volume on a disk"),
-    ("check", "<volume>", "check a volume for errors"),
-    ("unmount", "<volume>", "detach a volume (before removing its disk)"),
-    ("dev", "[id | scan]", "list devices and their drivers"),
-    ("drv", "[list|info|add|remove|reload|inbox]", "manage drivers"),
-    ("kbd", "[us|it]", "show or set the keyboard layout"),
-    ("mem", "", "memory usage"),
-    ("ps", "", "running programs and threads"),
-    ("kill", "<pid>", "stop a program"),
-    ("cpus", "", "what each processor runs, and the TLB flushes programs cost"),
-    ("locks", "[reset]", "where the kernel waited for locks, and held its mutexes longest"),
-    ("where", "<tid>|busy [samples]", "where a thread of a Linux program is (library+offset), sampled; busy: the four busiest"),
-    ("top", "[seconds]", "over a few seconds (2): how idle each processor was, the busiest threads, the system calls of Linux programs"),
-    ("ports", "", "named message ports and who owns them"),
-    ("perms", "[allow|deny|ask <app> <perm>]", "what apps may use outside their sandbox"),
-    ("updates", "[check|install <app>|all|auto on|off]", "updates of the installed apps"),
-    ("sysupdate", "[check|install [file]|rollback|cancel]", "justOS updates: the two system slots"),
-    ("install-system", "[list | <disk> [--yes-erase <code>]]", "install justOS on a disk of this computer, erasing it"),
-    ("dnd", "test", "check moving and copying files the way a drop does"),
-    ("run", "<program> [args]", "start a program (also just: <program>)"),
-    ("irq", "", "interrupt lines and message interrupts"),
-    ("net", "", "network interfaces and addresses"),
-    ("ping", "<host> [count]", "send ICMP echo requests"),
-    ("host", "<name>", "look up the address of a host name"),
-    ("fetch", "<url> [file]", "download from the web (http and https)"),
-    ("sha256", "<file>", "the SHA-256 checksum of a file"),
-    ("sysinfo", "", "about this machine"),
-    ("acpi", "[tree [path] | eval <path> [n...]]", "battery, temperatures and the firmware (ACPI)"),
-    ("date", "", "date and time"),
-    ("uptime", "", "time since start"),
-    ("log", "[lines]", "the system journal"),
-    ("verbose", "[on|off]", "show debug messages on screen"),
-    ("strace", "[on|off] [failed] [n,n…] [t<tid>]", "log the system calls of Linux programs (in the journal): only failed ones, only some calls, only one thread's"),
-    ("export", "[NAME=value | NAME=]", "environment of the Linux programs started from now on"),
-    ("echo", "<text>", "print text"),
-    ("notify", "<title> <text> [icon]", "show a notification on the desktop"),
-    ("clear", "", "clear the screen (also: cls)"),
-    ("restart", "", "restart the computer (also: reboot)"),
-    ("shutdown", "", "turn the computer off (also: off)"),
-    ("suspend", "[seconds | check]", "sleep with memory kept (also: sleep); wake by key or button, or after seconds"),
-    ("install", "[name]", "install a program from the store (also: pkg); a .deb goes to dpkg"),
-    ("deb", "[list | install <file.deb> | remove <name>]", "Debian packages installed with dpkg (double click on a .deb does the same with a window)"),
-    ("uninstall", "<name>", "remove a program installed from the store"),
-    ("play", "<file.wav> | stop", "play a sound file"),
-    ("tone", "[hz] [ms]", "play a tone (default 440 Hz, 500 ms)"),
-    ("volume", "[0-100]", "show or set the sound volume"),
-    ("hostname", "[name | check]", "the computer's name: show it, change it, or check the DHCP packet that sends it"),
-    ("setup", "[skip]", "first-start setup: its state, or mark it done without asking (for automation)"),
-    ("display", "[WxH | scale auto|1|2]", "screen resolutions, switch to one, or the interface size"),
-    ("fps", "[auto|60|120|144|240]", "frames the interface drew in the last second; or set the most a second"),
+    ("help", "[comando]", "elenca i comandi, o ne spiega uno"),
+    ("ls", "[percorso]", "elenca i file di una cartella (anche: dir)"),
+    ("cd", "<percorso>", "cambia la cartella corrente"),
+    ("cat", "<file>", "mostra un file di testo (anche: type)"),
+    ("hex", "<file>", "mostra i byte di un file in esadecimale"),
+    ("write", "<file> <testo>", "riscrive un file con un testo"),
+    ("append", "<file> <testo>", "aggiunge una riga di testo a un file"),
+    ("mkdir", "<percorso>", "crea una cartella (anche quelle intermedie)"),
+    ("rm", "[-r] <percorso>", "elimina un file o una cartella (anche: del)"),
+    ("mv", "<da> <a>", "rinomina o sposta dentro lo stesso volume"),
+    ("cp", "<da> <a>", "copia un file"),
+    ("vol", "", "elenca i volumi montati"),
+    ("disks", "", "elenca dischi e partizioni"),
+    ("format", "<disco> <etichetta>", "crea un volume JustFS su un disco"),
+    ("check", "<volume>", "cerca errori in un volume"),
+    ("unmount", "<volume>", "smonta un volume (prima di togliere il disco)"),
+    ("dev", "[id | scan]", "elenca i dispositivi e i loro driver"),
+    ("drv", "[list|info|add|remove|reload|inbox]", "gestisce i driver"),
+    ("kbd", "[us|it]", "mostra o cambia il layout della tastiera"),
+    ("mem", "", "quanta memoria è in uso"),
+    ("ps", "", "programmi e thread in esecuzione"),
+    ("kill", "<pid>", "termina un programma"),
+    ("cpus", "", "cosa esegue ogni processore, e gli svuotamenti della TLB causati dai programmi"),
+    ("locks", "[reset]", "dove il kernel ha aspettato i lock, e dove ha tenuto più a lungo i suoi mutex"),
+    ("where", "<tid>|busy [campioni]", "dove si trova un thread di un programma Linux (libreria+offset), a campione; busy: i quattro più occupati"),
+    ("top", "[secondi]", "in pochi secondi (2): quanto è rimasto inattivo ogni processore, i thread più occupati, le chiamate di sistema dei programmi Linux"),
+    ("ports", "", "le porte di messaggi con un nome, e di chi sono"),
+    ("perms", "[allow|deny|ask <app> <permesso>]", "cosa possono usare le app fuori dalla loro sandbox"),
+    ("updates", "[check|install <app>|all|auto on|off]", "gli aggiornamenti delle app installate"),
+    ("sysupdate", "[check|install [file]|rollback|cancel]", "gli aggiornamenti di justOS: i due slot di sistema"),
+    ("install-system", "[list | <disco> [--yes-erase <codice>]]", "installa justOS su un disco di questo computer, cancellandolo"),
+    ("dnd", "test", "prova a spostare e copiare file come quando li trascini"),
+    ("run", "<programma> [argomenti]", "avvia un programma (basta anche: <programma>)"),
+    ("irq", "", "le linee di interrupt e gli interrupt a messaggio"),
+    ("net", "", "interfacce di rete e indirizzi"),
+    ("ping", "<host> [numero]", "manda richieste ICMP echo"),
+    ("host", "<nome>", "cerca l'indirizzo di un nome di host"),
+    ("fetch", "<url> [file]", "scarica dal web (http e https)"),
+    ("sha256", "<file>", "la somma SHA-256 di un file"),
+    ("sysinfo", "", "informazioni su questo computer"),
+    ("acpi", "[tree [percorso] | eval <percorso> [n...]]", "batteria, temperature e firmware (ACPI)"),
+    ("date", "", "data e ora"),
+    ("uptime", "", "da quanto tempo il computer è acceso"),
+    ("log", "[righe]", "il giornale di sistema"),
+    ("verbose", "[on|off]", "mostra sullo schermo i messaggi di debug"),
+    ("strace", "[on|off] [failed] [n,n…] [t<tid>]", "scrive nel giornale le chiamate di sistema dei programmi Linux: solo quelle fallite, solo alcune, solo quelle di un thread"),
+    ("export", "[NOME=valore | NOME=]", "l'ambiente dei programmi Linux avviati da adesso in poi"),
+    ("echo", "<testo>", "scrive un testo"),
+    ("notify", "<titolo> <testo> [icona]", "mostra una notifica sulla scrivania"),
+    ("clear", "", "pulisce lo schermo (anche: cls)"),
+    ("restart", "", "riavvia il computer (anche: reboot)"),
+    ("shutdown", "", "spegne il computer (anche: off)"),
+    ("suspend", "[secondi | check]", "sospende con la memoria accesa (anche: sleep); si risveglia con un tasto, con il pulsante o dopo i secondi dati"),
+    ("install", "[nome]", "installa un programma dal Negozio (anche: pkg); un .deb lo passa a dpkg"),
+    ("deb", "[list | install <file.deb> | remove <nome>]", "i pacchetti Debian installati con dpkg (il doppio clic su un .deb fa lo stesso, con una finestra)"),
+    ("uninstall", "<nome>", "rimuove un programma installato dal Negozio"),
+    ("play", "<file.wav> | stop", "riproduce un file audio"),
+    ("tone", "[hz] [ms]", "suona una nota (senza valori: 440 Hz per 500 ms)"),
+    ("volume", "[0-100]", "mostra o cambia il volume"),
+    ("hostname", "[nome | check]", "il nome del computer: lo mostra, lo cambia o controlla il pacchetto DHCP che lo manda"),
+    ("setup", "[skip]", "la configurazione del primo avvio: a che punto è, o la segna come fatta senza chiedere (per i test automatici)"),
+    ("display", "[LxA | scale auto|1|2]", "elenca le risoluzioni dello schermo, passa a una di loro, o cambia la dimensione dell'interfaccia"),
+    ("fps", "[auto|60|120|144|240]", "quanti fotogrammi l'interfaccia ha disegnato nell'ultimo secondo; o ne imposta il massimo al secondo"),
 ];
 
 /// The BusyBox applets justOS exposes as commands once `busybox` is installed.
@@ -1578,11 +1578,11 @@ impl Shell {
         if let Some(t) = topic {
             match COMMANDS.iter().find(|c| c.0 == t) {
                 Some((name, args, text)) => println!("{BOLD}{name}{RESET} {args}\n  {text}"),
-                None => println!("{ERR}no command named {t}{RESET}"),
+                None => println!("{ERR}non c'è un comando che si chiama {t}{RESET}"),
             }
             if t == "drv" {
                 println!(
-                    "  drv                 every driver: store, boot pack, loaded\n  drv info <name>     manifest and devices of a driver\n  drv add <file>      add a package to the store and install it\n  drv remove <name>   unload and delete a driver\n  drv reload <name>   unload and load again (new version)\n  drv inbox           install the packages waiting in {}\n  drv scan            look for new hardware",
+                    "  drv                 tutti i driver: magazzino, pacchetto di avvio, caricati\n  drv info <nome>     il manifesto e i dispositivi di un driver\n  drv add <file>      aggiunge un pacchetto al magazzino e lo installa\n  drv remove <nome>   scarica un driver e lo cancella\n  drv reload <nome>   scarica un driver e lo ricarica (versione nuova)\n  drv inbox           installa i pacchetti che aspettano in {}\n  drv scan            cerca hardware nuovo",
                     driver::INBOX
                 );
             }
@@ -1591,15 +1591,15 @@ impl Shell {
         for (name, args, text) in COMMANDS {
             println!("  {BOLD}{name:<10}{RESET}{DIM}{args:<22}{RESET} {text}");
         }
-        println!("\nPaths name a volume first: {BOLD}sys:/system/drivers{RESET}. Tab completes commands and paths.");
-        println!("A program followed by {BOLD}&{RESET} runs without the shell waiting for it.");
+        println!("\nUn percorso comincia dal volume: {BOLD}sys:/system/drivers{RESET}. Tab completa comandi e percorsi.");
+        println!("Un programma seguito da {BOLD}&{RESET} gira senza che la shell lo aspetti.");
         if let Ok(apps) = fs::abs("sys:/apps").and_then(|p| fs::list_dir(&p)) {
             let names: Vec<String> = apps
                 .iter()
                 .filter_map(|(e, _)| e.name.strip_suffix(".app").map(String::from))
                 .collect();
             if !names.is_empty() {
-                println!("Programs in sys:/apps: {BOLD}{}{RESET}", names.join("  "));
+                println!("Programmi in sys:/apps: {BOLD}{}{RESET}", names.join("  "));
             }
         }
     }
