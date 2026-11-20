@@ -93,7 +93,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("clear", "", "pulisce lo schermo (anche: cls)"),
     ("restart", "", "riavvia il computer (anche: reboot)"),
     ("shutdown", "", "spegne il computer (anche: off)"),
-    ("suspend", "[secondi | check]", "sospende con la memoria accesa (anche: sleep); si risveglia con un tasto, con il pulsante o dopo i secondi dati"),
+    ("suspend", "[idle | ram] [secondi] | check", "sospende con la memoria accesa (anche: sleep): in RAM (S3) o a corrente accesa (s2idle); si risveglia con un tasto, con il pulsante o dopo i secondi dati"),
     ("install", "[nome]", "installa un programma dal Negozio (anche: pkg); un .deb lo passa a dpkg"),
     ("deb", "[list | install <file.deb> | remove <nome>]", "i pacchetti Debian installati con dpkg (il doppio clic su un .deb fa lo stesso, con una finestra)"),
     ("uninstall", "<nome>", "rimuove un programma installato dal Negozio"),
