@@ -71,15 +71,26 @@ APPS     := $(notdir $(wildcard system/apps/*))
 STORE    := $(notdir $(wildcard system/store/*))
 # What dynamically linked Linux programs need, from Debian's packages
 # (tools/linux/debroot.py): the dynamic loader and glibc (with its C.UTF-8
-# locale, in libc-bin), what programs with windows link to talk to the
-# Wayland compositor, and GTK 3 (with the SVG loader for its icons, and
-# its demo programs gtk3-widget-factory and gtk3-demo), and Firefox, which
-# comes with the system (it is in the launcher, from its .desktop file).
-LINUX_PKGS ?= dash dpkg tar coreutils diffutils grep sed desktop-file-utils libc6 libc-bin libwayland-client0 libxkbcommon0 libgtk-3-0t64 librsvg2-common gtk-3-examples firefox-esr
+# locale, in libc-bin, and the translations of its messages, libc-l10n),
+# what programs with windows link to talk to the Wayland compositor, and
+# GTK 3 (with the SVG loader for its icons, its demo programs
+# gtk3-widget-factory and gtk3-demo, and the translations of GLib's
+# messages, libglib2.0-data: "661 byte"), and Firefox, which comes with the
+# system (it is in the launcher, from its .desktop file), with its Italian
+# language pack and spelling dictionary.
+LINUX_PKGS ?= dash dpkg tar coreutils diffutils grep sed desktop-file-utils libc6 libc-bin libc-l10n libwayland-client0 libxkbcommon0 libgtk-3-0t64 libglib2.0-data librsvg2-common gtk-3-examples firefox-esr firefox-esr-l10n-it hunspell-it
 LINUX_DIST ?= trixie
+# Linux programs speak Italian, like the rest of justOS: debroot.py
+# compiles these glibc locales into the tree and keeps the translations
+# into their languages (and no others), and the kernel starts the
+# programs with LANG=it_IT.UTF-8 when the system has that locale
+# (linux::default_env). Empty: programs in English, with C.UTF-8.
+LINUX_LOCALES ?= it_IT.UTF-8
 # Packages left out although others depend on them (comma-separated):
-# libraries the programs run without.
-LINUX_SKIP ?=
+# libraries the programs run without, and dictionaries-common, whose Perl
+# scripts register the spelling dictionaries for other programs (Firefox
+# reads them from their folder).
+LINUX_SKIP ?= dictionaries-common
 # Wine 10 for Windows programs (unless WINE=0), 64-bit; debroot.py adds
 # the DLLs for 32-bit programs (WoW64) from libwine's i386 package. It
 # runs without the multimedia, camera, scanner, smart card, sound server
@@ -160,7 +171,7 @@ $(PACKAGES): $(BUILD)/drivers/%.jdp: system tools
 # in build/debcache, so this runs offline once they are there).
 $(LINUX)/usr/PACKAGES: tools/linux/debroot.py Makefile
 	tools/linux/debroot.py --out $(LINUX) --cache $(BUILD)/debcache --dist $(LINUX_DIST) \
-		$(if $(SKIP),--skip $(SKIP)) $(PKGS)
+		$(if $(LINUX_LOCALES),--locales $(LINUX_LOCALES)) $(if $(SKIP),--skip $(SKIP)) $(PKGS)
 
 linux-root:
 	rm -f $(LINUX)/usr/PACKAGES

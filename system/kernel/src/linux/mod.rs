@@ -488,6 +488,29 @@ pub fn masked(mode: u32) -> u16 {
     (mode & 0o7777 & !with_state(|st| st.umask)) as u16
 }
 
+/// glibc's Italian locale, as the image's Linux tree has it (compiled by
+/// tools/linux/debroot.py, LINUX_LOCALES in the Makefile).
+const ITALIAN_LOCALE: &str = "sys:/usr/lib/locale/it_IT.utf8/LC_CTYPE";
+
+/// The language of Linux programs: Italian, like the rest of justOS, when
+/// the system has the locale; otherwise C.UTF-8, which libc-bin brings (a
+/// locale glibc cannot find would leave programs in "C", ASCII only). A
+/// system volume made before has no Italian locale, since updates replace
+/// only the system slots, and the live CD has no Linux tree at all. With
+/// the locale come the translations of the programs' texts (GTK's,
+/// Firefox's language pack, Wine's) and Italian dates and numbers, these
+/// too ("1,5 MB", as justOS's own apps write them, not "1.5 MB"): no
+/// LC_NUMERIC=C. A script that reads numbers or messages sets LC_ALL=C
+/// itself, as Debian's do and as the dpkg runs of gui/apps/debinst.rs do;
+/// `export LC_NUMERIC=C` in the Terminal brings the dot back.
+fn lang() -> &'static str {
+    if crate::fs::abs(ITALIAN_LOCALE).is_ok_and(|p| crate::fs::exists(&p)) {
+        "LANG=it_IT.UTF-8"
+    } else {
+        "LANG=C.UTF-8"
+    }
+}
+
 /// The environment of a Linux program justOS starts (one started by
 /// another Linux program gets what that one passes to execve).
 ///
@@ -497,7 +520,7 @@ fn default_env(own: &[String]) -> Vec<String> {
     let (cols, rows) = crate::console::size();
     let extra = extra_env();
     let set = |v: &String| extra.iter().any(|e| e.split_once('=').map(|(n, _)| n) == v.split_once('=').map(|(n, _)| n));
-    ["PATH=/apps:/usr/local/bin:/usr/bin:/bin", "HOME=/home", "USER=root", "LANG=C.UTF-8", "TERM=xterm", "SHELL=/bin/sh"]
+    ["PATH=/apps:/usr/local/bin:/usr/bin:/bin", "HOME=/home", "USER=root", lang(), "TERM=xterm", "SHELL=/bin/sh"]
         .iter()
         .map(|s| s.to_string())
         .chain([alloc::format!("COLUMNS={cols}"), alloc::format!("LINES={rows}")])

@@ -7,8 +7,10 @@
 # binder driver (its IPC) with two processes, /dev/ashmem (its shared
 # memory) and shared mappings of files (its property areas); one more
 # timerfd and signalfd (init's main loop), edge-triggered epoll and short
-# sleeps (Firefox's event loop). Each is skipped (and noted) when its compiler is missing. A web server on this machine answers their
-# requests at 10.0.2.2.
+# sleeps (Firefox's event loop); one more the language programs get
+# (glibc's Italian locale, the translations of glibc and GTK). Each is
+# skipped (and noted) when its compiler is missing. A web server on this
+# machine answers their requests at 10.0.2.2.
 #
 # EXTRA=<folder> also copies the programs in it (for example ripgrep, fd,
 # bat built for x86_64-unknown-linux-musl) and runs `<name> --version`.
@@ -31,7 +33,7 @@ PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); pr
 mkdir www && echo "hello from the host" > www/hello.txt
 (cd www && exec python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1) & PID=$!
 
-C=0; R=0; G=0; D=0; B=0; A=0; M=0; T=0
+C=0; R=0; G=0; D=0; B=0; A=0; M=0; T=0; L=0
 if command -v musl-gcc >/dev/null 2>&1 && musl-gcc -static -O2 -o ct "$HERE/linux/threads-net.c" -lpthread 2>/dev/null; then
     strip ct; put ct ct && C=1
 fi
@@ -49,6 +51,9 @@ if command -v gcc >/dev/null 2>&1 && gcc -O2 -o ms "$HERE/linux/mapshared-test.c
 fi
 if command -v gcc >/dev/null 2>&1 && gcc -O2 -o ft "$HERE/linux/fdtimer-test.c" 2>/dev/null; then
     strip ft; put ft ft && T=1
+fi
+if command -v gcc >/dev/null 2>&1 && gcc -O2 -o lc "$HERE/linux/locale-test.c" 2>/dev/null; then
+    strip lc; put lc lc && L=1
 fi
 if command -v cargo >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -q x86_64-unknown-linux-musl; then
     mkdir -p rt/src && cp "$HERE/linux/rust-test.rs" rt/src/main.rs
@@ -75,6 +80,7 @@ fi
     [ $A = 1 ] && { echo "./am"; echo '@sleep 2'; }
     [ $M = 1 ] && { echo "./ms"; echo '@sleep 2'; }
     [ $T = 1 ] && { echo "./ft"; echo '@sleep 3'; }
+    [ $L = 1 ] && { echo "./lc"; echo '@sleep 2'; }
     if [ -n "${EXTRA:-}" ]; then
         for f in "$EXTRA"/*; do
             n=$(basename "$f"); put "$f" "$n"; echo "./$n --version"; echo '@sleep 3'
@@ -125,6 +131,10 @@ fi
         'tf: periodic more=1 quiet=1 abs=1 late=1' 'sf: chld epoll=1 size=128 signo=17 status=7 pidok=1' \
         'sf: usr1 signo=10 code=0 pidok=1' 'sf: done usr2=1 left=1 back=1' \
         'et: eventfd first=1 again=0 level=2 more=1 mod=1 pipe=1,0,1' 'ns: short sleeps wait=1 select=1'
+    # The image's Linux tree has the Italian locale (LINUX_LOCALES), so
+    # the program gets it; without it LANG would be C.UTF-8.
+    [ $L = 1 ] && printf '%s\n' 'lc: LANG=it_IT.UTF-8 set=it_IT.UTF-8' 'lc: codeset=UTF-8 number=1.234.567,89' \
+        'lc: date=venerdì 20 novembre 2026' 'lc: error=File o directory non esistente' 'lc: gtk=A_nnulla Recenti'
 } > expect.txt
 
 STEP_WAIT=${STEP_WAIT:-2} "$HERE/test.sh" justos.img session.txt > out.txt 2>&1
@@ -137,5 +147,5 @@ done < expect.txt
 grep -q "unimplemented syscall\|stopped:" out.txt && grep "unimplemented syscall\|stopped:" out.txt | sed 's/^/  /' | head -5
 [ $STATUS -ne 0 ] && { echo "  the kernel stopped"; FAILED=1; }
 [ "${VERBOSE:-0}" = 1 ] && cat out.txt
-[ $FAILED = 0 ] && echo "  ok    linux ($(grep -c . expect.txt) checks, c=$C rust=$R go=$G glibc=$D binder=$B ashmem=$A mapshared=$M timerfd=$T)"
+[ $FAILED = 0 ] && echo "  ok    linux ($(grep -c . expect.txt) checks, c=$C rust=$R go=$G glibc=$D binder=$B ashmem=$A mapshared=$M timerfd=$T locale=$L)"
 exit $FAILED

@@ -10,22 +10,26 @@ build copies onto the system volume.
 
     tools/linux/debroot.py --out build/linux libc6
     tools/linux/debroot.py --out build/linux --dist trixie firefox-esr
+    tools/linux/debroot.py --out build/linux --locales it_IT.UTF-8 libc-bin gtk-3-examples
 
 Downloads are kept in --cache (build/debcache), so a second run is quick
 and offline. The tree follows Debian's merged /usr: /bin, /sbin, /lib and
 /lib64 are links into /usr. Documentation, man pages and translations are
 left out unless --keep-docs is given, and so are glibc's modules for
-legacy character sets. Nothing here runs package scripts: the files are
-only unpacked. The caches some of those scripts would make (gdk-pixbuf's
-loaders, GLib's compiled settings schemas and modules, the MIME database,
-icon theme caches) are made afterwards by running the tree's own tools
-through its own dynamic loader, on this machine (Linux x86-64): see
-`caches`.
+legacy character sets; the translations into the languages of --locales
+stay. Nothing here runs package scripts: the files are only unpacked. The
+caches some of those scripts would make (gdk-pixbuf's loaders, GLib's
+compiled settings schemas and modules, the MIME database, icon theme
+caches) are made afterwards by running the tree's own tools through its
+own dynamic loader, on this machine (Linux x86-64): see `caches`. So are
+the glibc locales of --locales, which Debian's `locales` package would
+compile in its scripts: see `compile_locales`.
 
 Only the Python standard library is needed. Packages compressed with zstd
 (Ubuntu's) need the `zstd` program; Debian's use xz.
 """
 import argparse
+import gzip
 import hashlib
 import io
 import lzma
@@ -35,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 
 MIRROR = "http://deb.debian.org/debian"
@@ -53,11 +58,14 @@ SKIP = {
 }
 
 # Parts of packages left out of the tree (unless --keep-docs): documentation,
-# translations, and glibc's iconv modules for legacy character sets (8 MiB;
-# UTF-8 needs none of them).
-DOCS = ("usr/share/doc/", "usr/share/man/", "usr/share/info/", "usr/share/locale/", "usr/share/lintian/",
+# translations (but those into the languages of --locales, see
+# `translation_kept`), glibc's iconv modules for legacy character sets (8
+# MiB; UTF-8 needs none of them), and Chromium's copies of the spelling
+# dictionaries (Firefox reads those in usr/share/hunspell).
+TRANSLATIONS = "usr/share/locale/"
+DOCS = ("usr/share/doc/", "usr/share/man/", "usr/share/info/", TRANSLATIONS, "usr/share/lintian/",
         "usr/share/bug/", "usr/share/doc-base/", "usr/share/bash-completion/", "usr/share/menu/",
-        "usr/lib/x86_64-linux-gnu/gconv/")
+        "usr/lib/x86_64-linux-gnu/gconv/", "usr/share/hunspell-bdic/")
 
 
 def fetch(url, dest):
@@ -76,6 +84,19 @@ def sha256(path):
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def deb_file(a, name, fields):
+    """The .deb of package `name` (its index `fields`) in the cache,
+    downloaded unless it is there with the archive's checksum."""
+    deb = os.path.join(a.cache, "pool", os.path.basename(fields["Filename"]))
+    if not os.path.exists(deb) or sha256(deb) != fields["SHA256"]:
+        print(f"debroot: download {name} {fields['Version']}", file=sys.stderr)
+        fetch(f"{a.mirror}/{fields['Filename']}", deb)
+        if sha256(deb) != fields["SHA256"]:
+            os.remove(deb)
+            raise SystemExit(f"debroot: {name}: checksum mismatch")
+    return deb
 
 
 # ----------------------------------------------------------------------------
@@ -234,16 +255,33 @@ class Names:
         return "/".join(out)
 
 
-def unpack(deb, out, keep_docs, names, listing=None):
+def language(locale):
+    """The language of a locale or of a translations folder: "it" for
+    it_IT.UTF-8, it_IT, it@variant and it."""
+    return re.split(r"[_.@]", locale)[0]
+
+
+def translation_kept(rel, languages):
+    """Whether `rel` is a translation into one of `languages`
+    (usr/share/locale/it/, it_IT/ or it@variant/ for "it"), or the folder
+    they are in."""
+    path = rel.rstrip("/") + "/"
+    if not languages or not path.startswith(TRANSLATIONS):
+        return False
+    first = path[len(TRANSLATIONS):].split("/")[0]
+    return first == "" or language(first) in languages
+
+
+def unpack(deb, out, keep_docs, names, listing=None, languages=()):
     """Unpacks one package; `listing` (a list) gets the paths unpacked, as
-    dpkg's .list files name them."""
+    dpkg's .list files name them. Translations into `languages` stay."""
     files = 0
     with data_tar(deb) as tar:
         for m in tar.getmembers():
             rel = usr_path(m.name)
             if not rel or rel.startswith("..") or "/../" in rel:
                 continue
-            if not keep_docs and (rel.rstrip("/") + "/").startswith(DOCS):
+            if not keep_docs and (rel.rstrip("/") + "/").startswith(DOCS) and not translation_kept(rel, languages):
                 continue
             rel = names.place(rel, m.isdir())
             if rel is None:
@@ -364,6 +402,56 @@ def caches(out):
         print("debroot: made " + ", ".join(made))
 
 
+def compile_locales(a, pkgs, locales):
+    """The glibc locales `locales` ("it_IT.UTF-8"), compiled as locale-gen
+    does in the scripts of Debian's `locales` package: from that package's
+    definitions, by the tree's own localedef, so that the files have the
+    format of the tree's glibc whatever this machine's is. Each goes into
+    the folder of usr/lib/locale that glibc looks for ("it_IT.utf8"), with
+    no locale archive; the package itself (13 MiB of definitions, for
+    every language) stays out of the tree. A locale that cannot be made
+    here is only missing: programs then run with C.UTF-8."""
+    if "locales" not in pkgs:
+        print("debroot: no package 'locales': no locales compiled", file=sys.stderr)
+        return
+    deb = deb_file(a, "locales", pkgs["locales"])
+    made = []
+    with tempfile.TemporaryDirectory() as tmp:
+        with data_tar(deb) as tar:
+            for m in tar.getmembers():
+                rel = usr_path(m.name)
+                if m.isfile() and rel.startswith("usr/share/i18n/"):
+                    dest = os.path.join(tmp, rel)
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with tar.extractfile(m) as s, open(dest, "wb") as f:
+                        shutil.copyfileobj(s, f)
+        i18n = os.path.join(tmp, "usr/share/i18n")
+        for name in locales:
+            # it_IT.UTF-8@variant is the definition it_IT@variant in the
+            # character set UTF-8; the folder's name has the set in lower
+            # case and without punctuation (utf8), as glibc looks for it.
+            base, charset, variant = re.fullmatch(r"([^.@]+)(?:\.([^@]+))?(@.+)?", name).groups("")
+            charset = charset or "UTF-8"
+            source = os.path.join(i18n, "locales", base + variant)
+            charmap = os.path.join(i18n, "charmaps", charset + ".gz")
+            if not os.path.exists(source) or not os.path.exists(charmap):
+                print(f"debroot: no definition of the locale {name}", file=sys.stderr)
+                continue
+            with gzip.open(charmap) as s, open(os.path.join(tmp, charset), "wb") as f:
+                shutil.copyfileobj(s, f)
+            folder = f"{base}.{re.sub(r'[^a-z0-9]', '', charset.lower())}{variant}"
+            dest = os.path.join(os.path.abspath(a.out), "usr/lib/locale", folder)
+            # -c: the files even with warnings about the definition, as
+            # locale-gen makes them.
+            if run_tool(a.out, "usr/bin/localedef", "--no-archive", "-c", "-i", source, "-f", os.path.join(tmp, charset),
+                        dest, env={"I18NPATH": i18n}) is None:
+                print(f"debroot: the locale {name} could not be compiled", file=sys.stderr)
+                continue
+            made.append(f"{name} (usr/lib/locale/{folder})")
+    if made:
+        print("debroot: compiled the locales " + ", ".join(made))
+
+
 def dpkg_database(out, chosen, pkgs, lists):
     """dpkg's database for the tree (/var/lib/dpkg): every package unpacked
     here is "installed", so that dpkg knows what the image has, checks the
@@ -424,13 +512,7 @@ def wine32(a, pkgs, names):
     if fields is None:
         print(f"debroot: no i386 libwine {version}: 32-bit Windows programs will not run", file=sys.stderr)
         return 0
-    deb = os.path.join(a.cache, "pool", os.path.basename(fields["Filename"]))
-    if not os.path.exists(deb) or sha256(deb) != fields["SHA256"]:
-        print(f"debroot: download libwine:i386 {version}", file=sys.stderr)
-        fetch(f"{a.mirror}/{fields['Filename']}", deb)
-        if sha256(deb) != fields["SHA256"]:
-            os.remove(deb)
-            raise SystemExit("debroot: libwine:i386: checksum mismatch")
+    deb = deb_file(a, "libwine:i386", fields)
     src, dst = "usr/lib/i386-linux-gnu/wine/i386-windows/", "usr/lib/x86_64-linux-gnu/wine/i386-windows/"
     files = 0
     with data_tar(deb) as tar:
@@ -462,6 +544,8 @@ def main():
     ap.add_argument("--skip", default="", help="more packages to leave out, comma-separated")
     ap.add_argument("--refresh", action="store_true", help="download the index again")
     ap.add_argument("--keep-docs", action="store_true")
+    ap.add_argument("--locales", default="",
+                    help="glibc locales to compile, comma-separated (it_IT.UTF-8); their languages' translations stay")
     ap.add_argument("--list", action="store_true", help="only print the packages")
     a = ap.parse_args()
 
@@ -479,17 +563,12 @@ def main():
     total = 0
     names = Names()
     lists = {}
+    locales = [s for s in a.locales.split(",") if s]
+    languages = {language(s) for s in locales}
     for n in chosen:
-        f = pkgs[n]
-        deb = os.path.join(a.cache, "pool", os.path.basename(f["Filename"]))
-        if not os.path.exists(deb) or sha256(deb) != f["SHA256"]:
-            print(f"debroot: download {n} {f['Version']}", file=sys.stderr)
-            fetch(f"{a.mirror}/{f['Filename']}", deb)
-            if sha256(deb) != f["SHA256"]:
-                os.remove(deb)
-                raise SystemExit(f"debroot: {n}: checksum mismatch")
+        deb = deb_file(a, n, pkgs[n])
         listing = []
-        total += unpack(deb, a.out, a.keep_docs, names, listing)
+        total += unpack(deb, a.out, a.keep_docs, names, listing, languages)
         lists[n] = listing
     if "libwine" in chosen:
         total += wine32(a, pkgs, names)
@@ -500,6 +579,8 @@ def main():
     for d in ("bin", "sbin", "lib", "lib64"):
         os.makedirs(os.path.join(a.out, "usr", d), exist_ok=True)
         os.symlink(f"usr/{d}", os.path.join(a.out, d))
+    if locales:
+        compile_locales(a, pkgs, locales)
     caches(a.out)
     drop_long_names(a.out)
     if "dpkg" in chosen:
