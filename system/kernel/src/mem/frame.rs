@@ -1,8 +1,11 @@
-//! Physical page frame allocator: one bit per 4 KiB frame.
+//! Physical page frame allocator: one bit per 4 KiB frame, and for each
+//! frame how many more address spaces share it (fork leaves a process's
+//! pages to both processes until one of them writes).
 
 use super::{align_down, align_up, phys_to_virt, PAGE_SIZE};
 use crate::boot::{BootInfo, MEM_USABLE};
 use crate::sync::IrqLock;
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 struct Frames {
     bitmap: *mut u64,
@@ -21,6 +24,35 @@ static FRAMES: IrqLock<Frames> =
 
 /// Physical memory below this is never handed out (BIOS data, loader).
 const LOW_RESERVED: u64 = 0x100000;
+
+/// For each frame, how many address spaces map it besides one (0 for
+/// almost all), right after the bitmap. Read and changed without the lock.
+static SHARES: AtomicPtr<AtomicU32> = AtomicPtr::new(core::ptr::null_mut());
+static SHARES_LEN: AtomicU64 = AtomicU64::new(0);
+
+fn shares_of(phys: u64) -> Option<&'static AtomicU32> {
+    let i = phys / PAGE_SIZE;
+    let base = SHARES.load(Ordering::Acquire);
+    if base.is_null() || i >= SHARES_LEN.load(Ordering::Relaxed) {
+        return None;
+    }
+    // SAFETY: the array has SHARES_LEN entries and lives as long as the
+    // kernel.
+    Some(unsafe { &*base.add(i as usize) })
+}
+
+/// One more address space maps `phys` (a page fork shares): the frame is
+/// free only after one more [`free`].
+pub fn share(phys: u64) {
+    if let Some(n) = shares_of(phys) {
+        n.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+/// How many address spaces map `phys` besides the one asking.
+pub fn sharers(phys: u64) -> u32 {
+    shares_of(phys).map_or(0, |n| n.load(Ordering::Acquire))
+}
 
 impl Frames {
     fn word(&self, i: usize) -> u64 {
@@ -64,14 +96,15 @@ pub fn init(boot: &BootInfo) {
     let top = map.iter().filter(|r| r.kind == MEM_USABLE).map(|r| r.base + r.len).max().unwrap_or(0);
     let frames = top / PAGE_SIZE;
     let words = frames.div_ceil(64) as usize;
-    let bytes = (words * 8) as u64;
+    // The bitmap, then a share count for each frame.
+    let bytes = (words * 8) as u64 + frames * 4;
 
     let (k_start, k_end) = super::kernel_range();
     let pack = (boot.pack_phys, boot.pack_phys + boot.pack_size);
     let system = (boot.system_phys, boot.system_phys + boot.system_size);
     let overlaps = |a: u64, b: u64, c: u64, d: u64| a < d && c < b;
 
-    // Put the bitmap in the first usable RAM above 1 MiB that is free and
+    // Put them in the first usable RAM above 1 MiB that is free and
     // reachable through the loader's 4 GiB direct map.
     let mut place = None;
     for r in map.iter().filter(|r| r.kind == MEM_USABLE) {
@@ -94,6 +127,11 @@ pub fn init(boot: &BootInfo) {
         }
     }
     let bitmap_phys = place.expect("no room for the frame bitmap");
+    let shares = phys_to_virt(bitmap_phys + (words * 8) as u64) as *mut AtomicU32;
+    // SAFETY: the counts are in the room just found, through the direct map.
+    unsafe { core::ptr::write_bytes(shares, 0, frames as usize) };
+    SHARES_LEN.store(frames, Ordering::Relaxed);
+    SHARES.store(shares, Ordering::Release);
 
     let mut f = FRAMES.lock();
     f.bitmap = phys_to_virt(bitmap_phys) as *mut u64;
@@ -175,7 +213,12 @@ pub fn alloc_contiguous(count: u64, limit: u64) -> Option<u64> {
     Some(phys)
 }
 
+/// Gives a frame back. One that other address spaces still map (see
+/// [`share`]) stays theirs.
 pub fn free(phys: u64) {
+    if shares_of(phys).is_some_and(|n| n.try_update(Ordering::AcqRel, Ordering::Acquire, |c| c.checked_sub(1)).is_ok()) {
+        return;
+    }
     free_contiguous(phys, 1);
 }
 

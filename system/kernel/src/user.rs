@@ -387,8 +387,9 @@ pub(crate) fn write_in(pid: u32, addr: u64, data: &[u8]) {
         if at >= USER_TOP {
             return;
         }
-        // Not a file's page that the child still shares (unlikely there).
-        if paging::entry_in(cr3, at).is_some_and(|e| e & paging::WRITE == 0) {
+        // A page fork left to both processes gets copied first; a file's
+        // page that the child still shares is left alone (unlikely there).
+        if paging::entry_in(cr3, at).is_some_and(|e| e & paging::WRITE == 0) && paging::unshare_in(cr3, at & !(PAGE_SIZE - 1)) != Some(true) {
             continue;
         }
         if let Some(phys) = paging::translate_in(cr3, at) {

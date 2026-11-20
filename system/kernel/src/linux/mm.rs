@@ -734,6 +734,11 @@ pub fn sys_madvise(addr: u64, len: u64, advice: u64) -> i64 {
 /// whether the access may be retried.
 pub fn fault(addr: u64, write: bool) -> bool {
     let page = addr & !(PAGE_SIZE - 1);
+    // A page fork left to both processes, wherever it is (the program's
+    // segments and its break are not areas).
+    if write && paging::entry_in(cpu::read_cr3(), page).is_some_and(|e| e & paging::COPY != 0) {
+        return copy_on_write(page);
+    }
     let found = super::try_state(|st| {
         let (&s, v) = st.vmas.range(..=page).next_back()?;
         (page < v.end && v.prot != 0).then(|| (s, v.clone()))
@@ -798,10 +803,11 @@ pub fn fault(addr: u64, write: bool) -> bool {
     }
 }
 
-/// A write to a page that maps a file's shared frame (read-only): the
-/// mapping gets a copy of its own, writable. Only the page tables are
-/// looked at (a read-only shared user page is nothing else), so the kernel
-/// can come here when it writes to a program's memory, whatever it holds.
+/// A write to a page that maps a file's shared frame (read-only), or one
+/// that fork left to both processes: the mapping gets a page of its own,
+/// writable. Only the page tables are looked at (a read-only user page is
+/// nothing else), so the kernel can come here when it writes to a
+/// program's memory, whatever it holds.
 pub fn copy_on_write(addr: u64) -> bool {
     let page = addr & !(PAGE_SIZE - 1);
     let cr3 = cpu::read_cr3();
@@ -811,6 +817,9 @@ pub fn copy_on_write(addr: u64) -> bool {
     }
     if e & paging::WRITE != 0 {
         return true; // another thread was first
+    }
+    if e & paging::COPY != 0 {
+        return paging::unshare_in(cr3, page).unwrap_or(false);
     }
     if e & paging::SHARED == 0 {
         return false;
