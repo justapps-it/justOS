@@ -38,6 +38,7 @@ mod setup;
 pub use setup::{device_name as set_device_name, done as setup_done, skip as setup_skip};
 mod splash;
 mod textarea;
+mod thumbs;
 mod ui;
 pub mod window;
 pub mod wm;

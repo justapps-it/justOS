@@ -129,6 +129,15 @@ Presa a modello da macOS:
   **impostazioni** per parola («sfondo», «volume», «password», «processore»...)
   e i **file e le cartelle** della home per nome, che si aprono con l'app
   giusta. La home viene letta una volta sola all'apertura della ricerca.
+  Da tre lettere in su si cerca anche **nel contenuto** dei file di testo
+  (`txt`, `md`, `rs`, `c`, `h`, `py`, `json`, `csv`, `html`, `xml`,
+  `conf`, `sh`, `log`...): i risultati arrivano sotto quelli per nome, nella
+  sezione *Contenuto*, con la riga trovata e le parole cercate più chiare.
+  La ricerca va avanti qualche millisecondo per fotogramma, così scrivere
+  non aspetta mai: al più 200 file per ricerca, fino a 256 KiB l'uno, i più
+  vicini alla home per primi, 3 risultati; i testi letti restano in memoria
+  (fino a 4 MiB) finché la ricerca è aperta, così la lettera seguente non
+  rilegge il disco. Maiuscole e minuscole, anche accentate, sono uguali.
 - **Notifiche**: un'app installata, un timer scaduto, un file salvato, un
   programma che si è chiuso per un errore. Quelle brevi escono dal dock
   (vedi [La barra dinamica](#la-barra-dinamica)), le altre in alto a
@@ -423,7 +432,7 @@ puntatore quasi niente.
 
 | App | Cosa fa |
 |---|---|
-| File | sfoglia i volumi: risorse a sinistra, cartelle e file a destra; doppio clic apre una cartella o il file con l'app giusta; **schede** (Ctrl+T o il **+**, Ctrl+W chiude, Ctrl+Tab passa alla successiva, *Apri in una nuova scheda* sulle cartelle); tasto destro per aprire, rinominare (anche F2), spostare nel Cestino (Canc), creare una cartella; nel Cestino eliminare o svuotare; **selezione multipla** (Ctrl+clic, Maiusc+clic, Ctrl+A) e **trascinamento** tra cartelle, schede e finestre |
+| File | sfoglia i volumi: risorse a sinistra, cartelle e file a destra; doppio clic apre una cartella o il file con l'app giusta; **schede** (Ctrl+T o il **+**, Ctrl+W chiude, Ctrl+Tab passa alla successiva, *Apri in una nuova scheda* sulle cartelle); tasto destro per aprire, rinominare (anche F2), spostare nel Cestino (Canc), creare una cartella; nel Cestino eliminare o svuotare; **selezione multipla** (Ctrl+clic, Maiusc+clic, Ctrl+A) e **trascinamento** tra cartelle, schede e finestre; le immagini (QOI, PNG, JPEG, GIF) mostrano la loro **miniatura** al posto dell'icona, fatta da un thread a parte (`gui/thumbs.rs`) mentre si guarda: prima quelle in vista, l'icona finché non è pronta e per sempre per i file oltre 20 MiB, le foto oltre 16 megapixel e quelli che non si leggono; le miniature (fino a 8 MiB) si ricordano per percorso, dimensione e data di modifica |
 | Editor di testo | file di testo con selezione, copia e incolla, scorrimento; Nuovo, Apri, Salva (Ctrl+N, Ctrl+O, Ctrl+S) con la scelta del file (salvando, il nome arriva con «Senza titolo» già selezionato: si scrive il nome e l'estensione resta); alla chiusura salva da solo |
 | Note | note in `sys:/home/Note`, la prima riga è il titolo, ricerca, si salvano mentre si scrive |
 | Promemoria | cose da fare, spuntate con un clic (`sys:/home/Promemoria.txt`) |
@@ -432,7 +441,7 @@ puntatore quasi niente.
 | Calcolatrice | come quella di macOS, anche da tastiera; calcoli in virgola fissa con dodici decimali |
 | Foto | le immagini di `Immagini` e gli sfondi, in miniatura e a tutto schermo |
 | Musica | i file WAV di `Musica` e i suoni di sistema: riproduzione, pausa, brano precedente e successivo, barra di avanzamento, volume; tre brani di esempio |
-| Anteprima | un'immagine sola, aperta da File |
+| Anteprima | un'immagine sola (QOI, PNG, JPEG, GIF), aperta da File |
 | Negozio | le app di `sys:/store` per categoria, con la loro pagina; installa, apre, rimuove |
 | Impostazioni | sette sezioni con ricerca: nome e configurazione iniziale, tema e sfondo, risoluzione e dimensione dello schermo, volume e suono all'avvio, tastiera, password e blocco, permessi delle app (vedi [Le Impostazioni](#le-impostazioni)) |
 | Monitor attività | i programmi in esecuzione, il processore e la memoria nell'ultimo minuto; un programma si può terminare |
@@ -496,6 +505,7 @@ esterne.
 |---|---|
 | `justgfx` (`gfx.rs`, `font.rs`, `qoi.rs`) | superfici e disegno: rettangoli arrotondati antialiasati, il riflesso sul bordo (`sheen_round`), i pixel morbidi (`soft_grid`), trasparenze (anche su livelli trasparenti), sfumature, ombre, sfocatura, linee, archi, ridimensionamento; il testo dall'atlante dei glifi; le immagini QOI (lettura e scrittura). Solo aritmetica intera |
 | `text.rs`, `res.rs` | i caratteri e le icone di sistema, gli sfondi |
+| `thumbs.rs` | le miniature delle immagini per File: un thread che legge a pezzi, decodifica e rimpicciolisce, una cache limitata in byte e in voci |
 | `splash.rs`, `setup.rs`, `desktop.rs` | avvio, configurazione guidata, scrivania con dock, Applicazioni, notifiche, centro di controllo e animazioni |
 | `wm.rs` | le finestre e l'interfaccia `App` delle app |
 | `window.rs` | le finestre dei programmi in modalità utente |

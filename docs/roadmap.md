@@ -220,19 +220,21 @@ il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
 | Cosa | Stato |
 |---|---|
 | File: risorse, cartelle, apertura con l'app giusta, rinomina, Cestino | ✅ |
-| Anteprime (miniature di immagini) | 🟡 nelle Foto; in File icone per tipo |
+| Anteprime (miniature di immagini) | ✅ nelle Foto e in File (QOI, PNG, JPEG, GIF), fatte da un thread a parte |
 | Schede | ✅ Ctrl+T, Ctrl+W, Ctrl+Tab |
 | Trascinamento tra finestre | ✅ File, Terminale, Editor, dock (Cestino e app), programmi con `WIN_DROPS` |
 | Selezione multipla | ✅ Ctrl+clic, Maiusc+clic, Ctrl+A |
 | Ricerca globale istantanea | ✅ per nome, per la home |
-| Ricerca nel contenuto dei file | ⬜ |
+| Ricerca nel contenuto dei file | ✅ file di testo della home in Ctrl+Spazio, con la riga trovata, un po' per fotogramma |
 
 **Passi.**
 
 1. ~~**Schede in File**~~ fatto.
-2. **Anteprime** (2 settimane): miniature QOI già decodificate dalle Foto
-   (`gui/res.rs`), prima pagina dei testi, *Quick Look* con la barra
-   spaziatrice.
+2. ~~**Anteprime**~~ fatto per le immagini: in File le miniature le fa un
+   thread (`gui/thumbs.rs`) che legge il file a pezzi, lo decodifica e lo
+   rimpicciolisce per media delle aree; una cache di 8 MiB le tiene per
+   percorso, dimensione e data. Manca: la prima pagina dei testi, *Quick
+   Look* con la barra spaziatrice.
 3. ~~**Trascinamento**~~ fatto: i file trascinati fuori da File li porta il
    desktop (`gui/dnd.rs`), con l'icona sotto il puntatore; la finestra sotto
    li riceve (`App::drop_files`) e illumina dove andrebbero. Dentro un
@@ -248,7 +250,9 @@ il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
 4. **Indice** (1 mese): un servizio che tiene un indice dei nomi e delle
    parole dei file di testo, aggiornato dal file system (JustFS segnala le
    scritture a un osservatore: nuova chiamata `WATCH(path)`); la ricerca di
-   Ctrl+Spazio lo interroga invece di leggere la home.
+   Ctrl+Spazio lo interroga invece di leggere la home. Intanto la ricerca
+   nel contenuto legge i file di testo mentre la si usa, qualche
+   millisecondo per fotogramma, e tiene i testi letti finché è aperta.
 
 ## 5. Aggiornamenti e sicurezza
 

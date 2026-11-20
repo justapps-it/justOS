@@ -6,10 +6,12 @@ use crate::gui::dnd;
 use crate::gui::gfx::{Canvas, Rect};
 use crate::gui::res;
 use crate::gui::text::{self, Font};
+use crate::gui::thumbs::{self, Thumb};
 use crate::gui::ui;
 use crate::gui::wm::{Action, App};
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 const SIDEBAR: i32 = 180;
@@ -18,6 +20,11 @@ const TILE_H: i32 = 104;
 const HEADER: i32 = 52;
 /// The tab bar's height, when there are tabs.
 const TABS_H: i32 = 38;
+/// The box a picture's thumbnail fits in, centred where the icon would be.
+const THUMB_W: i32 = 76;
+const THUMB_H: i32 = 56;
+/// The middle of the icon (and of a thumbnail), from the top of its tile.
+const ICON_MID: i32 = 36;
 
 const PLACES: [(&str, &str); 9] = [
     ("Home", "sys:/home"),
@@ -34,6 +41,19 @@ const PLACES: [(&str, &str); 9] = [
 struct Item {
     name: String,
     dir: bool,
+    size: u64,
+    modified: u64,
+    preview: Preview,
+}
+
+/// What a tile shows in place of the type icon.
+enum Preview {
+    /// Nothing: not a picture, or one without a thumbnail (too large, not
+    /// readable).
+    None,
+    /// A picture whose thumbnail is being made: the type icon meanwhile.
+    Wanted,
+    Ready(Arc<Canvas>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -94,6 +114,8 @@ pub struct Files {
     hover_menu: Option<usize>,
     /// The grid's rectangle at the last drawing.
     grid_at: Rect,
+    /// Items whose thumbnail arrived since the last drawing.
+    fresh: Vec<usize>,
 }
 
 const MENU_ROW: i32 = 32;
@@ -149,6 +171,7 @@ impl Files {
             renaming: None,
             hover_menu: None,
             grid_at: Rect::EMPTY,
+            fresh: Vec::new(),
         };
         f.reload();
         f
@@ -163,11 +186,46 @@ impl Files {
 
     fn reload(&mut self) {
         self.items = fs::list_dir(&self.dir)
-            .map(|list| list.into_iter().filter(|(_, st)| !st.hidden).map(|(e, st)| Item { name: e.name, dir: st.kind == justfs::Kind::Dir }).collect())
+            .map(|list| list.into_iter().filter(|(_, st)| !st.hidden).map(|(e, st)| self.item(e.name, &st)).collect())
             .unwrap_or_default();
         self.selection.clear();
         self.selected = None;
         self.scroll = 0;
+        self.fresh.clear();
+    }
+
+    /// An entry of the folder. A picture shows the thumbnail made before
+    /// at once, so listing the folder again does not flash its icon.
+    fn item(&self, name: String, st: &fs::Stat) -> Item {
+        let dir = st.kind == justfs::Kind::Dir;
+        let mut it = Item { name, dir, size: st.size, modified: st.modified, preview: Preview::None };
+        if !dir && st.size <= thumbs::MAX_FILE && thumbs::is_picture(&it.name) {
+            it.preview = match thumbs::cached(&self.thumb_key(&it, crate::gui::scale())) {
+                Some(t) => Preview::Ready(t),
+                None => Preview::Wanted,
+            };
+        }
+        it
+    }
+
+    /// Which thumbnail an item shows, at `scale` pixels per unit.
+    fn thumb_key(&self, it: &Item, scale: i32) -> thumbs::Key {
+        thumbs::Key { path: format!("{}", self.dir.join(&it.name)), size: it.size, modified: it.modified, w: THUMB_W, h: THUMB_H, scale }
+    }
+
+    /// The items in sight in the grid at the last drawing.
+    fn in_sight(&self) -> core::ops::Range<usize> {
+        let g = self.grid_at;
+        let cols = (g.w / TILE_W).max(1) as usize;
+        let first = (self.scroll / TILE_H) as usize * cols;
+        let last = ((self.scroll + g.h) / TILE_H + 1) as usize * cols;
+        first.min(self.items.len())..last.min(self.items.len())
+    }
+
+    /// Item `i`'s tile in the grid.
+    fn tile(&self, grid: Rect, cols: i32, i: usize) -> Rect {
+        let (col, row) = (i as i32 % cols, i as i32 / cols);
+        Rect::new(grid.x + col * TILE_W, grid.y + row * TILE_H - self.scroll, TILE_W, TILE_H)
     }
 
     /// Only item `i` selected.
@@ -462,6 +520,18 @@ fn place_icon(name: &str) -> &'static str {
     }
 }
 
+/// A picture's thumbnail in its tile `t`, where the icon would be: a
+/// rounded tile with a faint pane under it (for pictures with transparent
+/// parts), a small shadow and a thin line around, as the soft-pixel tiles.
+fn draw_thumb(c: &mut Canvas, th: &Canvas, t: Rect) {
+    let r = Rect::new(t.x + (TILE_W - th.w) / 2, t.y + ICON_MID - th.h / 2, th.w, th.h);
+    let rad = 7.min(r.w / 4).min(r.h / 4);
+    c.shadow(r, rad, 2, ui::shadow_strength(60));
+    c.fill_round(r, rad, ui::pane());
+    c.blit_round_from(th, 0, 0, r, rad, 0);
+    c.stroke_round(r, rad, 1, ui::line());
+}
+
 /// Is Ctrl or Alt (without Shift) held, so that a drop copies?
 fn dnd_copy_held() -> bool {
     let (ctrl, alt, shift) = crate::dev::input::mods();
@@ -564,8 +634,7 @@ impl App for Files {
             text::draw_centered(c, Font::Body, grid.x + grid.w / 2, grid.y + 60, "La cartella è vuota", ui::text_dim());
         }
         for (i, item) in self.items.iter().enumerate() {
-            let (col, row) = (i as i32 % cols, i as i32 / cols);
-            let t = Rect::new(grid.x + col * TILE_W, grid.y + row * TILE_H - self.scroll, TILE_W, TILE_H);
+            let t = self.tile(grid, cols, i);
             if t.bottom() < grid.y || t.y > grid.bottom() {
                 continue;
             }
@@ -576,7 +645,12 @@ impl App for Files {
                 c.fill_round(t.grow(-4), 14, DROP_FILL);
                 c.stroke_round(t.grow(-4), 14, 2, DROP_EDGE);
             }
-            res::draw_icon(c, icon_for(&item.name, item.dir), 52, t.x + (TILE_W - 52) / 2, t.y + 10);
+            match &item.preview {
+                // A thumbnail made for another scale waits for the next tick
+                // to be made again; the icon meanwhile.
+                Preview::Ready(th) if th.scale() == c.scale() => draw_thumb(c, th, t),
+                _ => res::draw_icon(c, icon_for(&item.name, item.dir), 52, t.x + (TILE_W - 52) / 2, t.y + ICON_MID - 26),
+            }
             match &self.renaming {
                 Some((k, name)) if *k == i => {
                     let w = (text::width(Font::Small, name) + 14).clamp(40, TILE_W + 20);
@@ -815,6 +889,41 @@ impl App for Files {
         self.selection = self.items.iter().enumerate().filter(|(_, it)| names.contains(&it.name)).map(|(i, _)| i).collect();
         self.selected = self.selection.last().copied();
         self.renaming = None;
+    }
+
+    /// Asks for the thumbnails of the pictures in sight and takes those
+    /// that are ready. The decoding happens in the thumbnails' own thread
+    /// (see [`thumbs`]), never here or while drawing.
+    fn tick(&mut self) -> bool {
+        let k = crate::gui::scale();
+        // From the last one up: the last asked for is made first, so the
+        // grid fills from the top.
+        for i in self.in_sight().rev() {
+            let it = &self.items[i];
+            match &it.preview {
+                Preview::Ready(th) if th.scale() == k => continue,
+                Preview::None => continue,
+                _ => {}
+            }
+            let preview = match thumbs::get(&self.thumb_key(it, k)) {
+                Thumb::Waiting => Preview::Wanted,
+                Thumb::Never => Preview::None,
+                Thumb::Ready(th) => {
+                    self.fresh.push(i);
+                    Preview::Ready(th)
+                }
+            };
+            self.items[i].preview = preview;
+        }
+        !self.fresh.is_empty()
+    }
+
+    /// Only the tiles that got their thumbnail.
+    fn changed(&mut self, area: Rect) -> Option<Rect> {
+        let (grid, cols) = self.grid(area);
+        let fresh = core::mem::take(&mut self.fresh);
+        let r = fresh.into_iter().map(|i| self.tile(grid, cols, i)).reduce(|a, b| a.union(&b))?;
+        Some(r.intersect(&grid))
     }
 
     fn key(&mut self, ev: crate::dev::input::KeyEvent) -> Action {
