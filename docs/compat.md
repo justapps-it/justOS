@@ -33,8 +33,9 @@ sistema con la disposizione di Debian: tutto in `/usr`, con `/bin`, `/sbin`,
 `/lib` e `/lib64` come collegamenti simbolici dentro `/usr` (JustFS ha i
 collegamenti simbolici). L'app File non mostra queste cartelle. Quali
 pacchetti, lo dice `LINUX_PKGS` nel `Makefile` (per ora `libc6`, la glibc
-2.41 di Debian 13 con la sua localizzazione C.UTF-8, `libwayland-client0`
-con `libxkbcommon0` per i programmi con finestre, GTK 3, Firefox, e `dpkg`
+2.41 di Debian 13 con la sua localizzazione C.UTF-8 e quella italiana (vedi
+*La lingua* sotto), `libwayland-client0` con `libxkbcommon0` per i programmi
+con finestre, GTK 3, Firefox con il pacchetto della lingua italiana, e `dpkg`
 con gli strumenti che usa, `tar`, `coreutils`, `diffutils`, `grep`, `sed`:
 vedi "Pacchetti Debian"), più
 `WINE_PKGS` (Wine) se non c'è `WINE=0`; `make linux-root` rifà l'albero. Il
@@ -80,6 +81,42 @@ nel giornale di sistema come `unimplemented syscall N` (con `verbose on`), così
 Com'è fatto: `system/kernel/src/linux/` (il caricamento e le chiamate) e
 `system/kernel/src/arch/syscall.rs` (l'istruzione `syscall` e le basi FS/GS di
 ogni thread).
+
+### La lingua
+
+I programmi Linux parlano italiano, come il resto di justOS: GTK
+(«Annulla», «Recenti», «Altre posizioni» nel selettore di file), Firefox,
+i dialoghi di Wine, i messaggi della glibc e degli strumenti da riga di
+comando («File o directory non esistente»). Servono tre cose:
+
+- **le traduzioni**: `debroot.py` toglie dall'albero le traduzioni
+  (`usr/share/locale`) tranne quelle italiane (`it/`, e `it_IT/` dove un
+  pacchetto le ha), circa 1 MB in tutto; `libc-l10n` porta quelle dei
+  messaggi della glibc, `libglib2.0-data` quelle di GLib («661 byte»);
+- **la localizzazione `it_IT.UTF-8` della glibc**: la compila `debroot.py`
+  (`--locales`, da `LINUX_LOCALES` nel `Makefile`) con il `localedef`
+  dell'albero stesso, così il formato è quello della glibc 2.41 di Debian
+  qualunque sia quella della macchina che costruisce, dalle definizioni del
+  pacchetto `locales` (che resta fuori dall'albero: 13 MiB per tutte le
+  lingue). Il risultato è la cartella `/usr/lib/locale/it_IT.utf8`, 2,9 MB,
+  come la farebbe `locale-gen` senza archivio;
+- **l'ambiente**: il kernel avvia i programmi con `LANG=it_IT.UTF-8` se
+  quella cartella c'è (`linux::default_env`), altrimenti con `LANG=C.UTF-8`,
+  che la glibc ha sempre: con una localizzazione che non trova, un programma
+  resterebbe in "C", solo ASCII. Le due immagini di disco (con Wine e
+  senza, quella dei test) hanno l'italiano; il CD live non ha l'albero di
+  Debian.
+
+Anche i numeri e le date sono italiani (`LC_NUMERIC` non resta "C"): un
+programma GTK scrive «1,5 MB» e «50,0» come le app di justOS, non «1.5 MB».
+Uno script che legge numeri o messaggi imposta da sé `LC_ALL=C`, come
+fanno quelli di Debian e come fa la finestra «Installazione» quando lancia
+`dpkg` (legge i suoi messaggi, «Setting up», in inglese); dal Terminale
+`export LC_NUMERIC=C` (o `export LANG=C.UTF-8`) torna al punto e
+all'inglese per i programmi avviati dopo. `make test-linux` controlla con
+un piccolo programma (`scripts/linux/locale-test.c`) che `setlocale` trovi
+la localizzazione e che numeri, date, i messaggi della glibc e quelli di
+GTK arrivino in italiano.
 
 ### Programmi con finestre (Wayland)
 
@@ -255,6 +292,16 @@ per questo anche l'immagine senza Wine è di 1 GiB) e gira con i suoi processi f
 pagine web dalla rete. Sotto emulazione, senza accelerazione, la prima
 finestra arriva dopo una quarantina di secondi.
 
+Firefox è in italiano: `firefox-esr-l10n-it` porta il pacchetto della
+lingua (`/usr/lib/firefox-esr/browser/extensions`, 380 KB) e Debian imposta
+`intl.locale.requested` vuoto (`/etc/firefox-esr/firefox-esr.js`), cioè
+«segui la lingua del sistema»: con `LANG=it_IT.UTF-8` (vedi *La lingua*)
+menu, pagina di benvenuto e nuova scheda sono in italiano, e i
+siti ricevono l'italiano come lingua preferita. Il controllo ortografico
+usa il dizionario di `hunspell-it` (`/usr/share/hunspell`, dove lo cerca il
+Firefox di Debian); `dictionaries-common`, che lo registrerebbe per altri
+programmi con script Perl, resta fuori (`LINUX_SKIP`).
+
 I programmi Linux con una finestra compaiono tra le applicazioni (e nella
 ricerca) da soli: il launcher legge i file `.desktop` di
 `sys:/usr/share/applications` (nome, anche in italiano, programma, icona;
@@ -333,6 +380,11 @@ cd sys:/usr/lib/wine
 ./wine64 cmd /c echo ciao     un programma da console
 ./wine64 "C:\Program Files\Windows NT\Accessories\wordpad.exe"
 ```
+
+Wine segue `LANG` (vedi *La lingua*): il Blocco note si apre come
+«(senza nome) - Blocco Note», con i menu (File, Modifica, Trova,
+Visualizza, Aiuto) e la finestra «Apri» in italiano. Le traduzioni sono
+dentro le DLL di Wine; serve solo la localizzazione della glibc.
 
 La prima volta Wine prepara il disco `C:` (il suo prefisso, in
 `/home/.wine`): ci vuole circa un minuto, di più nell'emulatore (in QEMU

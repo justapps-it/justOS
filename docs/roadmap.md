@@ -129,12 +129,12 @@ chiamate `WIN_CREATE`/`WIN_PRESENT`/`WIN_EVENT`.
 
 | Cosa | Stato |
 |---|---|
-| Browser | ✅ Firefox ESR, di serie, sullo strato Linux |
+| Browser | ✅ Firefox ESR, di serie e in italiano, sullo strato Linux |
 | WebGL, DRM (Widevine) | ⬜ / ⛔ |
 | Negozio grafico con installazione in un clic | ✅ (`sys:/store`, pacchetti `.app`) |
 | Aggiornamenti delle app in background | ✅ indice firmato Ed25519, servizio `just.updates`, sezione Aggiornamenti del Negozio |
 | Permessi in stile mobile | ✅ cartelle, dischi, fotocamera, microfono, posizione, rete (`just.permissions`) |
-| Programmi Linux (ELF) | ✅ statici e dinamici con la glibc di Debian, finestre Wayland, GTK 3, Firefox ESR (`kernel/src/linux`, `make test-linux`, `make test-gtk`) |
+| Programmi Linux (ELF) | ✅ statici e dinamici con la glibc di Debian, finestre Wayland, GTK 3, Firefox ESR; in italiano, con la localizzazione `it_IT.UTF-8` e le traduzioni (`kernel/src/linux`, `make test-linux`, `make test-gtk`) |
 | Programmi Windows (PE) | 🟡 Wine 10 per i programmi a 64 e a 32 bit, console e finestre, di serie nell'immagine di disco (doppio clic su un `.exe`); `winrun` per quelli semplici e nel CD live |
 | Android (DEX/APK) | 🟡 `dalvik`, programmi semplici; driver binder e `/dev/ashmem` per il sistema Android vero (`kernel/src/linux/binder.rs`, `ashmem.rs`) |
 

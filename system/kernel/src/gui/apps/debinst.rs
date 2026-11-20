@@ -268,7 +268,11 @@ fn unmet(depends: &str, db: &[Installed]) -> Vec<String> {
 
 /// The script every step runs (a file: no quoting through the arguments).
 /// `MODE`, `DEB`/`PKG` and `OUT` (where its output goes, one name per run)
-/// come in the environment.
+/// come in the environment. dpkg and the package's scripts run in
+/// English (LC_ALL=C.UTF-8), although Linux programs otherwise get
+/// Italian (`linux::default_env`): the window reads dpkg's messages
+/// ("Unpacking", "Setting up", "dependency problems") to show how far it
+/// is and what went wrong, and scripts parse what the tools print.
 const SCRIPT: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 DEBIAN_FRONTEND=noninteractive
