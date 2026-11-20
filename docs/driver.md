@@ -269,6 +269,8 @@ madri le interruzioni arrivano instradate male.
 
 Durante la sospensione in RAM (S3) la memoria resta alimentata, i
 dispositivi no: al risveglio ogni registro è tornato al valore di reset.
+In s2idle la corrente resta, ma i dispositivi si fermano allo stesso
+modo: gli stessi hook servono a entrambe.
 Un driver dice come il suo dispositivo si ferma e riparte, in `probe`:
 
 ```rust

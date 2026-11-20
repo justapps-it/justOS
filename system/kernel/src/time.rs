@@ -105,6 +105,13 @@ pub fn resync() -> u64 {
     rtc.saturating_sub(before)
 }
 
+/// After s2idle: the tick stood still while the time stamp counter went
+/// on, so measuring one against the other starts again.
+pub fn recalibrate() {
+    CAL_TICKS.store(0, Ordering::Relaxed);
+    TICK_TSC.store(rdtsc(), Ordering::Release);
+}
+
 fn bcd_mode() -> bool {
     cmos(0x0B) & 4 == 0
 }

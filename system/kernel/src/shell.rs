@@ -1055,16 +1055,21 @@ impl Shell {
                 crate::arch::cpu::halt_forever();
             }
             "suspend" | "sleep" => match rest.first().copied() {
-                Some("check") => match crate::sleep::available() {
-                    Ok(()) => println!("this computer can sleep (slept {} times since it started)", crate::sleep::count()),
+                Some("check") => match crate::sleep::kind() {
+                    Ok(k) => println!("this computer can sleep: {} (slept {} times since it started)", k.describe(), crate::sleep::count()),
                     Err(e) => println!("{WARN}cannot sleep: {e}{RESET}"),
                 },
-                arg => {
+                first => {
+                    let (want, arg) = match first {
+                        Some("idle") => (Some(crate::sleep::Kind::Idle), rest.get(1).copied()),
+                        Some("ram") => (Some(crate::sleep::Kind::Ram), rest.get(1).copied()),
+                        _ => (None, first),
+                    };
                     let secs = match arg.map(str::parse::<u64>) {
                         None => None,
                         Some(Ok(s)) if (1..86_400).contains(&s) => Some(s),
                         Some(_) => {
-                            println!("{WARN}usage: suspend [seconds (1..86399) | check]{RESET}");
+                            println!("{WARN}usage: suspend [idle | ram] [seconds (1..86399)] | check{RESET}");
                             return;
                         }
                     };
@@ -1072,7 +1077,7 @@ impl Shell {
                         Some(s) => println!("going to sleep for {s} s…"),
                         None => println!("going to sleep; press the power button or a key to wake up…"),
                     }
-                    match crate::sleep::suspend(secs) {
+                    match crate::sleep::suspend_as(want, secs) {
                         Ok(s) => println!("awake again after {s} s"),
                         Err(e) => println!("{WARN}cannot sleep: {e}{RESET}"),
                     }

@@ -225,6 +225,52 @@ pub fn relax() {
     }
 }
 
+/// The hint for MWAIT's deepest idle state, or None without MONITOR and
+/// MWAIT: a processor with nothing to do for a long while (stopped for
+/// sleep) draws the least power there.
+pub fn mwait_hint() -> Option<u32> {
+    if cpuid(1, 0).ecx & (1 << 3) == 0 || cpuid(0, 0).eax < 5 {
+        return None;
+    }
+    let leaf = cpuid(5, 0);
+    if leaf.ecx & 1 == 0 {
+        return Some(0);
+    }
+    // EDX has four bits per state, from C0 up: how many sub-states it
+    // has. The hint names a state by its number minus one (the firmware
+    // may still hold the processor to a shallower one).
+    let deepest = (1..8u32).rev().find(|n| (leaf.edx >> (4 * n)) & 0xF != 0).unwrap_or(1);
+    Some((deepest - 1) << 4)
+}
+
+/// Whether an interrupt can end MWAIT while interrupts are off.
+pub fn mwait_breaks_on_irq() -> bool {
+    mwait_hint().is_some() && cpuid(5, 0).ecx & 0b11 == 0b11
+}
+
+/// Watches the cache line of `line`: a write to it ends the next [`mwait`].
+#[inline]
+pub fn monitor(line: *const u8) {
+    // SAFETY: ring 0; MONITOR only arms the watch.
+    unsafe { asm!("monitor", in("rax") line, in("ecx") 0u32, in("edx") 0u32, options(nostack, readonly)) };
+}
+
+/// Waits in the idle state `hint` until the watched line is written to
+/// or, with `irq_break`, an interrupt arrives even with interrupts off.
+#[inline]
+pub fn mwait(hint: u32, irq_break: bool) {
+    // SAFETY: ring 0; MWAIT only waits.
+    unsafe { asm!("mwait", in("eax") hint, in("ecx") irq_break as u32, options(nostack, nomem)) };
+}
+
+/// With interrupts off: lets the waiting ones run their handlers, then
+/// turns interrupts off again.
+#[inline]
+pub fn let_interrupts_in() {
+    // SAFETY: ring 0; STI takes effect after the next instruction.
+    unsafe { asm!("sti; nop; cli", options(nomem, nostack)) };
+}
+
 /// The CPU brand string ("QEMU Virtual CPU", "Intel(R) Core(TM) ...").
 pub fn brand(out: &mut [u8; 48]) -> &str {
     if cpuid(0x8000_0000, 0).eax < 0x8000_0004 {

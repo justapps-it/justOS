@@ -37,6 +37,9 @@ struct Fadt {
     fixed_power_button: bool,
     /// The same for the sleep button.
     fixed_sleep_button: bool,
+    /// The firmware would rather sleep with the power on (s2idle) than in
+    /// S3: LOW_POWER_S0_IDLE_CAPABLE, on computers made for Modern Standby.
+    low_power_idle: bool,
     /// The FACS (where the firmware finds the waking vector).
     facs: u64,
     /// The general-purpose event blocks (I/O ports; lengths in bytes).
@@ -160,6 +163,7 @@ pub fn init(rsdp_hint: u64, memory: &'static [MemoryRegion]) {
             f.gpe1_base = t[94];
             f.fixed_power_button = le32(t, 112) & (1 << 4) == 0;
             f.fixed_sleep_button = le32(t, 112) & (1 << 5) == 0;
+            f.low_power_idle = le32(t, 112) & (1 << 21) != 0;
             f.facs = le32(t, 36) as u64;
             if t.len() >= 140 && le64(t, 132) != 0 {
                 f.facs = le64(t, 132);
@@ -291,11 +295,13 @@ fn sci() {
         let pending = inw(status) & inw(enable);
         if pending != 0 {
             outw(status, pending); // write 1 to clear
-            if pending & PWRBTN != 0 {
+            // A press that wakes the computer from s2idle only wakes it.
+            let waking = crate::sleep::idling() || crate::sleep::just_woke();
+            if pending & PWRBTN != 0 && !waking {
                 *POWER_REASON.lock() = "power button pressed";
                 POWER_BUTTON.signal();
             }
-            if pending & SLPBTN != 0 {
+            if pending & SLPBTN != 0 && !waking {
                 sleep::request("sleep button pressed");
             }
         }

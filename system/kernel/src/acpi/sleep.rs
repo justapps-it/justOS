@@ -261,6 +261,58 @@ pub fn after_wake(plan: &Plan) {
     }
 }
 
+/// Whether the firmware would rather sleep with the power on (s2idle)
+/// than in S3.
+pub fn prefers_idle() -> bool {
+    ACPI.lock().fadt.is_some_and(|f| f.low_power_idle)
+}
+
+/// What s2idle takes on this machine: the chipset's registers, if it has
+/// them, and the GPEs that may wake it.
+pub struct IdlePlan {
+    fadt: Option<Fadt>,
+    wake_gpes: Vec<u16>,
+}
+
+/// Before s2idle, after the devices stopped: the wake devices are armed
+/// and the firmware told (see `aml::prepare_idle`).
+pub fn prepare_idle() -> IdlePlan {
+    let fadt = ACPI.lock().fadt;
+    let wake_gpes = if aml::ready() { aml::prepare_idle() } else { Vec::new() };
+    IdlePlan { fadt, wake_gpes }
+}
+
+/// With interrupts off, right before waiting: only wake events raise the
+/// SCI: the fixed buttons, the clock's alarm (`alarm`), the wake GPEs.
+pub fn arm_idle(plan: &IdlePlan, alarm: bool) {
+    let Some(f) = &plan.fadt else { return };
+    if f.pm1_evt_len >= 4 {
+        let wake = pm1_events(f) | if alarm { RTC } else { 0 };
+        for (status, enable) in pm1_regs(f) {
+            outw(status, 0xFFFF);
+            outw(enable, wake);
+        }
+    }
+    gpe::arm(&plan.wake_gpes);
+}
+
+/// After waiting, interrupts still off: the fixed events back to the
+/// buttons, every GPE off until the AML task enables its own.
+pub fn after_idle(plan: &IdlePlan) {
+    let Some(f) = &plan.fadt else { return };
+    gpe::disable_all();
+    if super::sci_line().is_some() {
+        listen_pm1(f);
+    }
+}
+
+/// After the devices run again: the firmware hears the computer is back.
+pub fn finish_idle() {
+    if aml::ready() {
+        aml::finish_idle();
+    }
+}
+
 /// After the devices run again: `_WAK` and the firmware's events.
 pub fn finish() {
     aml::finish_sleep(3);

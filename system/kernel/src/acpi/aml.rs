@@ -445,6 +445,71 @@ pub(super) fn finish_sleep(state: u8) {
     });
 }
 
+/// Modern Standby's device ("LPS0"), whose `_DSM` the system calls around
+/// s2idle: the screen went off (3) or on (4), the computer enters (5) or
+/// leaves (6) its idle sleep, and Microsoft's own entry (7) and exit (8).
+/// Without these calls many such computers never reach their low-power
+/// state.
+const LPS0_IDS: [&str; 1] = ["PNP0D80"];
+/// Intel's functions (c4eb40a0-6cd2-11e2-bcfd-0800200c9a66) and
+/// Microsoft's (11e00d56-ce64-47ce-837b-1f898f9aa461), as `ToUUID` lays
+/// them out.
+const LPS0_UUIDS: [[u8; 16]; 2] = [
+    [0xa0, 0x40, 0xeb, 0xc4, 0xd2, 0x6c, 0xe2, 0x11, 0xbc, 0xfd, 0x08, 0x00, 0x20, 0x0c, 0x9a, 0x66],
+    [0x56, 0x0d, 0xe0, 0x11, 0x64, 0xce, 0xce, 0x47, 0x83, 0x7b, 0x1f, 0x89, 0x8f, 0x9a, 0xa4, 0x61],
+];
+
+/// Calls the Modern Standby functions `funcs`, in order, that the firmware
+/// says it has (function 0 answers with a bit for each).
+fn lps0(aml: &mut Aml, funcs: &[u64]) {
+    for dev in aml.find_devices(&LPS0_IDS) {
+        if aml.status(dev) & 1 == 0 || aml.child(dev, "_DSM").is_none() {
+            continue;
+        }
+        for uuid in &LPS0_UUIDS {
+            let dsm = |aml: &mut Aml, f: u64| {
+                let args = [Value::Buffer(uuid.to_vec()), Value::Integer(0), Value::Integer(f), Value::Package(Vec::new())];
+                aml.evaluate_child(dev, "_DSM", &args)
+            };
+            let have = match dsm(aml, 0) {
+                Ok(Some(Value::Buffer(b))) => b.iter().take(8).enumerate().fold(0u64, |m, (i, &x)| m | (x as u64) << (8 * i)),
+                Ok(Some(Value::Integer(m))) => m,
+                _ => 0,
+            };
+            if have & 1 == 0 {
+                continue;
+            }
+            for &f in funcs.iter().filter(|&&f| have & (1 << f) != 0) {
+                if let Err(e) = dsm(aml, f) {
+                    crate::debug!("acpi", "LPS0 function {f}: {e}");
+                }
+            }
+        }
+    }
+}
+
+/// Before s2idle (the devices stopped): the devices that may wake the
+/// computer are armed for S0 and the firmware hears that the screen went
+/// off and the computer goes idle. The GPEs that may wake it.
+pub(super) fn prepare_idle() -> Vec<u16> {
+    with(5000, |aml| {
+        let gpes = arm_wake(aml, 0, true);
+        lps0(aml, &[3, 7, 5]);
+        gpes
+    })
+    .unwrap_or_default()
+}
+
+/// After s2idle: the reverse; then the AML task enables its GPEs again
+/// and reads batteries, lid and temperatures afresh.
+pub(super) fn finish_idle() {
+    let _ = with(5000, |aml| {
+        lps0(aml, &[6, 8, 4]);
+        arm_wake(aml, 0, false);
+        RESUMED.store(true, Ordering::Release);
+    });
+}
+
 /// The embedded controller's ports and how many transfers timed out.
 pub fn ec_info() -> Option<(u16, u16, u32)> {
     ec::present().then(|| {
@@ -658,7 +723,10 @@ fn handle_notes(aml: &mut Aml, devs: &mut power::Devices) {
             } else {
                 let ids = aml.ids(n);
                 if ids.iter().any(|i| i == "PNP0C0C") && v == 0x80 {
-                    super::request_power_off("power button pressed");
+                    // The press that woke the computer only wakes it.
+                    if !crate::sleep::just_woke() {
+                        super::request_power_off("power button pressed");
+                    }
                 } else if ids.iter().any(|i| i == "PNP0C0E") && v == 0x80 {
                     super::sleep::request("sleep button pressed");
                 } else {

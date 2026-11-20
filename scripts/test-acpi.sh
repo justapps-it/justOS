@@ -8,17 +8,21 @@
 # The sleep cases put the machine to sleep (S3) for a few seconds, on two
 # processors, and check that the disk, the file system and the network
 # work after it wakes up: sleep-pc (PIIX4, IDE), sleep-q35 (AHCI) and
-# sleep-uefi (OVMF).
+# sleep-uefi (OVMF). The idle cases do the same with suspend to idle
+# (s2idle), the power staying on: idle wakes up with the clock's alarm,
+# idle-button with the power button (which must not turn the machine off)
+# and idle-key with a key of the PS/2 keyboard.
 #
 # Usage: scripts/test-acpi.sh <image> [case...]
-# (cases: pc, q35, laptop, sleep-pc, sleep-q35, sleep-uefi)
+# (cases: pc, q35, laptop, sleep-pc, sleep-q35, sleep-uefi, idle,
+# idle-button, idle-key)
 set -u
 IMAGE=${1:?usage: test-acpi.sh <image> [case...]}
 shift
 HERE=$(dirname "$0")
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-CASES=${*:-pc q35 laptop sleep-pc sleep-q35 sleep-uefi}
+CASES=${*:-pc q35 laptop sleep-pc sleep-q35 sleep-uefi idle idle-button idle-key}
 
 printf '@sleep 3\ndev\n@sleep 8\necho still-on\n' > "$WORK/cmds.txt"
 
@@ -35,6 +39,20 @@ sysinfo
 shutdown
 EOT
 
+sed 's/^suspend 3$/suspend idle 3/' "$WORK/sleep.txt" > "$WORK/idle.txt"
+
+# Sleeps until something wakes the machine; QMP presses the power button
+# or a key meanwhile.
+cat > "$WORK/idle-wait.txt" <<'EOT'
+@sleep 3
+suspend check
+suspend idle
+@sleep 20
+echo woke-up
+sysinfo
+shutdown
+EOT
+
 # The battery drops to 2% (1000 of 50000 mWh) with the adapter unplugged.
 cat > "$WORK/laptop.txt" <<'EOT'
 @sleep 3
@@ -45,9 +63,9 @@ acpi eval \_SB.BAT0.SETC 1000 0
 echo still-on
 EOT
 
-# Presses the power button through QMP, $2 seconds after QEMU has started
-# (the machine starts only once test.sh has copied the image, which can
-# take seconds on a slow disk).
+# Presses the power button (or, with "key" as $3, the shift key) through
+# QMP, $2 seconds after QEMU has started (the machine starts only once
+# test.sh has copied the image, which can take seconds on a slow disk).
 cat > "$WORK/press.py" <<'EOT'
 import json, os, socket, sys, time
 for _ in range(600):
@@ -59,7 +77,10 @@ s = socket.socket(socket.AF_UNIX)
 s.connect(sys.argv[1])
 f = s.makefile("rw")
 f.readline()
-for cmd in ({"execute": "qmp_capabilities"}, {"execute": "system_powerdown"}):
+press = {"execute": "system_powerdown"}
+if sys.argv[3:] == ["key"]:
+    press = {"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "shift"}]}}
+for cmd in ({"execute": "qmp_capabilities"}, press):
     f.write(json.dumps(cmd) + "\n")
     f.flush()
     while "event" in json.loads(f.readline()):
@@ -106,6 +127,26 @@ for c in $CASES; do
                 "2 of 2 replies" "sleep *ready, slept 1 time"; do
                 grep -q "$want" "$WORK/out.txt" || problems="$problems [missing: $want]"
             done
+            ;;
+        idle)
+            DISK=ahci "$HERE/test.sh" "$IMAGE" "$WORK/idle.txt" -machine q35 -smp 2 > "$WORK/out.txt" 2>&1
+            [ $? -ne 0 ] && problems="$problems [kernel stopped]"
+            for want in "suspend to idle" "awake again after" "^kept across sleep" "sys: no problems found"                 "2 of 2 replies" "sleep *ready, slept 1 time"; do
+                grep -q "$want" "$WORK/out.txt" || problems="$problems [missing: $want]"
+            done
+            ;;
+        idle-button | idle-key)
+            python3 "$WORK/press.py" "$WORK/qmp.sock" 16 ${c#idle-} &
+            PRESS=$!
+            DISK=ahci "$HERE/test.sh" "$IMAGE" "$WORK/idle-wait.txt" -machine q35 -smp 2                 -qmp "unix:$WORK/qmp.sock,server,nowait" > "$WORK/out.txt" 2>&1
+            STATUS=$?
+            wait $PRESS
+            [ $STATUS -ne 0 ] && problems="$problems [kernel stopped]"
+            for want in "awake again after" "^woke-up" "sleep *ready, slept 1 time"; do
+                grep -q "$want" "$WORK/out.txt" || problems="$problems [missing: $want]"
+            done
+            grep -q "power button pressed: turning off" "$WORK/out.txt" &&
+                problems="$problems [the press turned the machine off]"
             ;;
         *) echo "unknown case: $c" >&2; exit 2 ;;
     esac

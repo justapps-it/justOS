@@ -230,6 +230,11 @@ pub fn dispatch(irq: u8) {
     }
 }
 
+/// How many interrupts a line has had so far.
+pub fn count(irq: u8) -> u64 {
+    COUNTS.lock()[irq as usize & 15]
+}
+
 /// (line, interrupts so far, handler owners) for every line in use.
 pub fn stats() -> Vec<(u8, u64, Vec<u32>)> {
     let lines = LINES.lock();

@@ -41,6 +41,17 @@ pub fn resume() {
     apply(*MASK.lock());
 }
 
+/// For s2idle: only the lines in `keep` (and the cascade) reach the
+/// processor, whether in use or not, until [`restore`].
+pub fn only(keep: u16) {
+    apply(!(keep | 1 << 2));
+}
+
+/// The lines in use reach the processor again, after [`only`].
+pub fn restore() {
+    apply(*MASK.lock());
+}
+
 fn program() {
     outb(PIC1_CMD, 0x11); // ICW1: init, ICW4 follows
     io_wait();

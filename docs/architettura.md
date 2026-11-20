@@ -245,7 +245,7 @@ La metà bassa appartiene al programma in esecuzione.
 | programmi | `user.rs` | processi, spazi di indirizzi, caricatore, chiamate di sistema (anche le finestre, `WIN_*`) |
 | negozio | `store.rs` | i pacchetti di `sys:/store`: elenco, installazione, rimozione |
 | ACPI | `acpi/` | tabelle, spegnimento (`_PTS`, S5), riavvio, pulsante di accensione; l'AML del firmware: GPE, embedded controller, batteria, alimentatore, coperchio, temperature |
-| sospensione | `sleep.rs`, `acpi/sleep.rs`, `dev/pm.rs` | sospensione in RAM (S3): dispositivi, processori, firmware e risveglio |
+| sospensione | `sleep.rs`, `acpi/sleep.rs`, `dev/pm.rs` | sospensione in RAM (S3) e a corrente accesa (s2idle): dispositivi, processori, firmware e risveglio |
 | shell | `shell.rs` | l'interfaccia a riga di comando |
 
 ### ACPI e AML
@@ -287,17 +287,25 @@ alimentatore, coperchio, zona termica), di cui scarica la batteria.
 ### Sospensione
 
 La sospensione in RAM (S3) spegne tutto tranne la memoria; al risveglio
-il sistema riparte da dove era. La chiedono il menu della scrivania, il
-tasto di sospensione, la chiusura del coperchio o `suspend` nel Terminale
+il sistema riparte da dove era. I portatili fatti per il Modern Standby
+non hanno S3: lì la sospensione è a corrente accesa (s2idle), con i
+dispositivi fermi, lo schermo nero e i processori nel loro stato di
+riposo più profondo. justOS usa S3 se il firmware la offre, a meno che la
+FADT dica di preferire s2idle (LOW_POWER_S0_IDLE_CAPABLE); altrimenti
+s2idle, se qualcosa può svegliare il computer (gli eventi ACPI o una
+tastiera PS/2). La chiedono il menu della scrivania, il tasto di
+sospensione, la chiusura del coperchio o `suspend` nel Terminale
 (`suspend 10` si risveglia da sola dopo 10 secondi, con la sveglia del
-CMOS; `suspend check` dice se si può). `sleep.rs` fa i passi in ordine, e
-se uno fallisce disfa quelli già fatti:
+CMOS; `suspend idle` e `suspend ram` scelgono il modo; `suspend check`
+dice se si può e come). `sleep.rs` fa i passi in ordine, e se uno
+fallisce disfa quelli già fatti:
 
-1. controlla che il firmware offra S3 (`\_S3`) e che ogni dispositivo
-   con un driver abbia i suoi hook (`dev/pm.rs`, vedi
-   [driver.md](driver.md#sospensione));
-2. con la grafica attiva mette su la schermata di blocco, se c'è una
-   password: è la prima cosa che si vede al risveglio;
+1. controlla che il firmware offra S3 (`\_S3`), o che qualcosa possa
+   svegliare il computer da s2idle, e che ogni dispositivo con un driver
+   abbia i suoi hook (`dev/pm.rs`, vedi [driver.md](driver.md#sospensione));
+2. con la grafica attiva fa diventare nero lo schermo e mette su la
+   schermata di blocco, se c'è una password: è la prima cosa che si vede
+   al risveglio;
 3. scrive i file system su disco (se la batteria si scarica, nulla va
    perso), avvisa il firmware (`_TTS`), trattiene l'I/O verso i
    dispositivi, salva la configurazione PCI e ferma i dispositivi, dai
@@ -317,6 +325,25 @@ e MSI-X, gli altri processori, il controller PS/2, i dispositivi (dai
 genitori ai figli), l'I/O trattenuto, `_WAK(3)`. Infine lo schermo: se era
 ancora nel modo del firmware, il driver lo rimette (il BIOS di QEMU lascia
 la scheda in modo testo), e l'interfaccia ridisegna tutto.
+
+In s2idle i passi 1–3 sono gli stessi (senza `_TTS`); poi `acpi/sleep.rs`
+arma i dispositivi che possono svegliare il computer per S0 e chiama le
+funzioni `_DSM` del dispositivo Modern Standby (PNP0D80, quelle di Intel
+e di Microsoft): schermo spento, ingresso nel riposo. Senza queste molti
+portatili non scendono mai nel loro stato a basso consumo. Gli altri
+processori si fermano in MWAIT (non girano a vuoto); sul primo, a
+interruzioni spente, il PIC lascia passare solo le linee che svegliano:
+lo SCI (tasto di accensione e di sospensione, coperchio e gli altri GPE
+di risveglio, la sveglia del CMOS), la tastiera PS/2 e la linea della
+sveglia; il mouse PS/2 è servito ma non sveglia. Anche il timer resta
+fuori, quindi nessun thread gira e il tempo di attività si ferma, come in
+S3. Il processore aspetta in MWAIT nello stato più profondo che offre (o
+con HLT) finché il contatore di una di quelle linee si muove. Al
+risveglio: l'orologio dal CMOS, il PIC, gli eventi del chipset, gli altri
+processori, i dispositivi, l'I/O trattenuto, `_DSM` (uscita, schermo
+acceso), lo schermo. La pressione del tasto di accensione che sveglia il
+computer serve solo a quello: non lo spegne, nemmeno quando il firmware
+la riporta un attimo dopo con un Notify.
 
 `make test-acpi` sospende e risveglia la macchina su PIIX4, Q35 e UEFI con
 due processori; con `SLEEP=1`, `make test-drivers` e `make test-audio`

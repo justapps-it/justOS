@@ -524,8 +524,19 @@ fn park_here(index: usize) {
     me.online.store(false, Ordering::Release);
     ONLINE.fetch_sub(1, Ordering::AcqRel);
     PARKED.fetch_add(1, Ordering::AcqRel);
+    // Across s2idle the power stays on: the processor waits in its deepest
+    // idle state, woken by the write that lets it go, rather than spin.
+    let hint = cpu::mwait_hint();
     while PARK.load(Ordering::Acquire) {
-        cpu::relax();
+        match hint {
+            Some(h) => {
+                cpu::monitor(PARK.as_ptr() as *const u8);
+                if PARK.load(Ordering::Acquire) {
+                    cpu::mwait(h, false);
+                }
+            }
+            None => cpu::relax(),
+        }
     }
     // Woken without sleeping: the kernel's mappings may have changed.
     me.tlb_seen.store(TLB_GEN.load(Ordering::Acquire), Ordering::Release);

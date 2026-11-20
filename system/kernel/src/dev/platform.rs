@@ -66,6 +66,11 @@ fn ps2() -> Ps2 {
     r
 }
 
+/// Whether a PS/2 keyboard answered (it can wake the computer from s2idle).
+pub fn ps2_keyboard() -> bool {
+    PS2.load(Ordering::Relaxed) & 1 != 0
+}
+
 /// After sleep: the controller is set up again (before the keyboard and
 /// mouse drivers wake up their devices).
 pub fn resume_ps2() {

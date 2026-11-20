@@ -103,7 +103,7 @@ impl Display {
         let k = self.scene.scale();
         let r = Rect::new(r.x * k, r.y * k, r.w * k, r.h * k);
         let stride = self.scene.pixel_width();
-        let level = brightness();
+        let level = if DARK.load(core::sync::atomic::Ordering::Acquire) { 0 } else { brightness() };
         let fast = self.fb.shift == (16, 8, 0) && level >= 100;
         for y in r.y..r.bottom() {
             let src = &self.scene.px[(y * stride + r.x) as usize..(y * stride + r.right()) as usize];
@@ -353,11 +353,19 @@ static SLEEP_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBo
 /// drawn again.
 static REDRAW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// The computer is going to sleep: the screen is drawn black (across
+/// s2idle the display keeps its power and would go on showing the desktop).
+static DARK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 pub fn before_sleep() {
     SLEEP_LOCK.store(true, core::sync::atomic::Ordering::Release);
+    DARK.store(true, core::sync::atomic::Ordering::Release);
+    REDRAW.store(true, core::sync::atomic::Ordering::Release);
+    crate::dev::input::wake_gui_soon();
 }
 
 pub fn after_sleep() {
+    DARK.store(false, core::sync::atomic::Ordering::Release);
     REDRAW.store(true, core::sync::atomic::Ordering::Release);
     crate::dev::input::wake_gui_soon();
 }

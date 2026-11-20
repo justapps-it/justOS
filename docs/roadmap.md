@@ -176,7 +176,7 @@ il ritorno alla versione precedente.
 | Collegamento a caldo dell'audio (cuffie) | ⬜ |
 | Wi-Fi | ⬜ |
 | Bluetooth | ⬜ |
-| Sospensione in RAM | ✅ S3, con tutti i driver inclusi; s2idle ⬜ |
+| Sospensione in RAM | ✅ S3, con tutti i driver inclusi; s2idle per i portatili senza S3 (Modern Standby) |
 | Batteria e temperatura | ✅ interprete AML `justaml`, embedded controller, GPE |
 
 **Wi-Fi.** Ogni famiglia di schede (Intel iwlwifi, Realtek, MediaTek,
@@ -206,9 +206,14 @@ interruzioni, processori e dispositivi. Ogni driver incluso ha i suoi
 hook (`power_hooks`, vedi [driver](driver.md#sospensione)); al risveglio
 c'è la schermata di blocco. Provata in QEMU su PIIX4, Q35 e UEFI, con
 due processori, con ogni disco, scheda di rete, controller USB, scheda
-audio, lettore SD e schermo che QEMU emula. Mancano: s2idle (i portatili
-recenti senza S3), la prova su portatili veri e lo stato dei dispositivi
-PCI che il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
+audio, lettore SD e schermo che QEMU emula. Fatta anche s2idle (i portatili
+recenti senza S3): dispositivi fermi, schermo nero, `_DSM` del Modern
+Standby, processori in MWAIT, risveglio dal tasto di accensione, dal
+coperchio, dalla tastiera PS/2 o dalla sveglia; provata in QEMU con
+tutti e tre. Mancano: la prova su portatili veri, il risveglio dai
+pulsanti GPIO dei computer ACPI ridotti (GED), la retroilluminazione
+spenta (oggi lo schermo è solo nero) e lo stato dei dispositivi PCI che
+il firmware non ripristina da sé (`_PS0`/`_PS3`, D3cold).
 
 ## 4. File manager e ricerca
 
