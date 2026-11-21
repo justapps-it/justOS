@@ -284,6 +284,9 @@ pub struct NetDesc {
 pub type AudioWrite = unsafe extern "C" fn(ctx: *mut c_void, samples: *const i16, frames: usize) -> Status;
 /// Plays what is queued to the end, then stops the device.
 pub type AudioDrain = unsafe extern "C" fn(ctx: *mut c_void) -> Status;
+/// Frames written and not played yet: how long the device takes to play a
+/// frame written now. 0 while the device is stopped.
+pub type AudioQueued = unsafe extern "C" fn(ctx: *mut c_void) -> usize;
 
 /// A sound output a driver hands to the kernel. The kernel converts every
 /// sound to the output's format and applies the volume itself; the driver
@@ -452,6 +455,14 @@ pub struct KernelApi {
     /// up (see [`PowerHooks`]). The kernel copies `hooks`. A device with a
     /// driver but without hooks keeps the machine from sleeping.
     pub power_hooks: unsafe extern "C" fn(device: u32, hooks: *const PowerHooks) -> Status,
+
+    // Sound timing
+    /// Tells the kernel how many frames sound output `output` (the number
+    /// `audio_register` returned) still has queued, called with the
+    /// output's `ctx`. The kernel's mixer then keeps only a little queued
+    /// (sounds start and stop at once) and tells programs exactly when what
+    /// they write will be heard. Without it the kernel counts by the clock.
+    pub audio_queued: unsafe extern "C" fn(output: u32, queued: AudioQueued) -> Status,
 }
 
 // ----------------------------------------------------------------------------

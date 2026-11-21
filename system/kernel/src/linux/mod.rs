@@ -31,6 +31,7 @@ pub mod mm;
 mod ns;
 pub mod opener;
 mod poll;
+pub mod pulse;
 mod seccomp;
 mod shm;
 pub mod signal;
@@ -502,6 +503,9 @@ fn default_env(own: &[String]) -> Vec<String> {
         .map(|s| s.to_string())
         .chain([alloc::format!("COLUMNS={cols}"), alloc::format!("LINES={rows}")])
         .chain([alloc::format!("XDG_RUNTIME_DIR={}", wayland::RUNTIME_DIR), alloc::format!("WAYLAND_DISPLAY={}", wayland::DISPLAY)])
+        // Sound: the kernel's PulseAudio server (libpulse would otherwise
+        // look in the runtime folder, then try to start a server).
+        .chain([alloc::format!("PULSE_SERVER=unix:{}", pulse::SOCKET)])
         // GTK and GLib: settings in a file (there is no dconf service), so
         // that justOS's defaults in /etc/glib-2.0/settings/defaults apply
         // (the file chooser opens in the program's folder, not on an empty

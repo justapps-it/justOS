@@ -170,6 +170,7 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
     gui::boot_progress(82);
 
     gui::start();
+    linux::pulse::start();
     sysupdate::start();
     if gui::active() {
         update::check_when_online();

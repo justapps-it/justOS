@@ -76,16 +76,19 @@ STORE    := $(notdir $(wildcard system/store/*))
 # its demo programs gtk3-widget-factory and gtk3-demo), and Firefox, which
 # comes with the system (it is in the launcher, from its .desktop file).
 LINUX_PKGS ?= dash dpkg tar coreutils diffutils grep sed desktop-file-utils libc6 libc-bin libwayland-client0 libxkbcommon0 libgtk-3-0t64 librsvg2-common gtk-3-examples firefox-esr
+# Sound: libpulse, through which programs (Firefox, Wine) play on the
+# kernel's PulseAudio server, and its paplay and pactl.
+LINUX_PKGS += libpulse0 pulseaudio-utils
 LINUX_DIST ?= trixie
 # Packages left out although others depend on them (comma-separated):
 # libraries the programs run without.
 LINUX_SKIP ?=
 # Wine 10 for Windows programs (unless WINE=0), 64-bit; debroot.py adds
 # the DLLs for 32-bit programs (WoW64) from libwine's i386 package. It
-# runs without the multimedia, camera, scanner, smart card, sound server
-# and OpenCL libraries its packages pull in.
+# runs without the multimedia, camera, scanner, smart card and OpenCL
+# libraries its packages pull in (sound goes through libpulse, above).
 WINE_PKGS := wine wine64 libwine fonts-wine
-WINE_SKIP := libavcodec61,libavformat61,libavutil59,libcapi20-3t64,libgphoto2-6t64,libgphoto2-port12t64,libgstreamer-plugins-base1.0-0,libgstreamer1.0-0,libpcap0.8t64,libpcsclite1,libpulse0,libusb-1.0-0,ocl-icd-libopencl1,libopencl1,libopencl-1.2-1
+WINE_SKIP := libavcodec61,libavformat61,libavutil59,libcapi20-3t64,libgphoto2-6t64,libgphoto2-port12t64,libgstreamer-plugins-base1.0-0,libgstreamer1.0-0,libpcap0.8t64,libpcsclite1,libusb-1.0-0,ocl-icd-libopencl1,libopencl1,libopencl-1.2-1
 comma    := ,
 # With Wine and without, the Linux tree and the system volume's files are
 # kept apart, so that the image and the tests' image (without Wine) do not

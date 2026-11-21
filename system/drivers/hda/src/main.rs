@@ -442,6 +442,11 @@ unsafe extern "C" fn drain(ctx: *mut c_void) -> Status {
     OK
 }
 
+unsafe extern "C" fn queued(ctx: *mut c_void) -> usize {
+    // SAFETY: ctx is the leaked Device; a frame is four bytes.
+    unsafe { &*(ctx as *const Device) }.ring.queued() / 4
+}
+
 unsafe extern "C" fn irq(ctx: *mut c_void) {
     // SAFETY: ctx is the leaked Device.
     let d = unsafe { &*(ctx as *const Device) };
@@ -587,6 +592,7 @@ fn probe(dev: &DeviceInfo) -> Status {
     if n < 0 {
         return n;
     }
+    justdrv::audio_queued(n, queued);
     justdrv::power_hooks(dev.id, ctx, Some(suspend), resume);
     OK
 }
