@@ -198,6 +198,23 @@ static void *sock_writer(void *arg) {
     return NULL;
 }
 
+static long shut_got = -99;
+static int shut_done;
+
+/* Waits in recvmsg until the main thread shuts the socket's read side. */
+static void *shut_reader(void *arg) {
+    int fd = *(int *)arg;
+    char b[8];
+    struct iovec io = {b, sizeof b};
+    struct msghdr m;
+    memset(&m, 0, sizeof m);
+    m.msg_iov = &io;
+    m.msg_iovlen = 1;
+    shut_got = recvmsg(fd, &m, 0);
+    __atomic_store_n(&shut_done, 1, __ATOMIC_SEQ_CST);
+    return NULL;
+}
+
 static void *worker(void *arg) {
     long *n = arg;
     for (int i = 0; i < 100000; i++)
@@ -724,6 +741,33 @@ int main(int argc, char **argv) {
     printf("dt: seqpacket %d %d dgram %d trunc %d\n", q1, q2, q3, (m3.msg_flags & MSG_TRUNC) != 0);
     close(sv[0]);
     close(sv[1]);
+
+    /* shutdown(SHUT_RD) ends a recvmsg waiting on the same socket with 0
+       (Firefox stops its sandbox reporter thread so, and joins it); the
+       other end's send then gets EPIPE and poll sees the socket readable.
+       If the reader does not wake, closing the other end frees it. */
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) != 0)
+        return 1;
+    pthread_t sr;
+    pthread_create(&sr, NULL, shut_reader, &sv[0]);
+    usleep(200000);
+    shutdown(sv[0], SHUT_RD);
+    int woke = 0;
+    for (int i = 0; i < 200 && !woke; i++) {
+        woke = __atomic_load_n(&shut_done, __ATOMIC_SEQ_CST);
+        if (!woke)
+            usleep(10000);
+    }
+    int pe = send(sv[1], "x", 1, MSG_NOSIGNAL) < 0 ? errno : 0;
+    struct pollfd spf = {sv[0], POLLIN, 0};
+    int spr = poll(&spf, 1, 0) == 1 && (spf.revents & POLLIN);
+    if (!woke)
+        close(sv[1]);
+    pthread_join(sr, NULL);
+    printf("dt: shut_rd recv=%ld woke=%d peer=%d poll=%d\n", shut_got, woke, pe, spr);
+    close(sv[0]);
+    if (woke)
+        close(sv[1]);
 
     /* Datagrams between two named sockets, in the abstract namespace. */
     struct sockaddr_un da, db, from;

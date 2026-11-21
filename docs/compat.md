@@ -63,7 +63,7 @@ busybox ls -la             un programma installato (vedi "Installare programmi")
 | librerie condivise | il caricatore dinamico della glibc, `mmap` dei file (i byte di un file mappato più volte sono condivisi), `dlopen` |
 | thread | `clone` per i thread, `futex`, `set_tid_address` |
 | rete | socket TCP e UDP, `poll`, `select`, `epoll` (anche edge-triggered: un descrittore pronto torna solo quando gli succede qualcosa di nuovo, come su Linux, non a ogni attesa) |
-| socket locali | `AF_UNIX` di tipo stream, datagram e seqpacket: `socketpair`, `bind`, `listen`, `connect`, `accept`, nomi su un percorso o astratti, descrittori passati con `SCM_RIGHTS`, `SO_PEERCRED`; il nome su un percorso non è un file del volume, ma `stat`, `access` e `unlink` lo vedono |
+| socket locali | `AF_UNIX` di tipo stream, datagram e seqpacket: `socketpair`, `bind`, `listen`, `connect`, `accept`, nomi su un percorso o astratti, descrittori passati con `SCM_RIGHTS`, `SO_PEERCRED`, `shutdown` (anche `SHUT_RD`, che sveglia chi aspetta in lettura sullo stesso socket); il nome su un percorso non è un file del volume, ma `stat`, `access` e `unlink` lo vedono |
 | collegamenti simbolici | `symlink`, `readlink`, `lstat`; i collegamenti fisici (`link`, `linkat`) sono copie del file, perché JustFS non li ha |
 | finestre | Wayland: `WAYLAND_DISPLAY=wayland-0` in `XDG_RUNTIME_DIR=/home/tmp`, servito dal kernel (vedi sotto) |
 | utenti | tutto gira come `root` |
@@ -213,8 +213,10 @@ sopra (un `.exe` la prima volta passa dalla finestra di preparazione di
 Wine). Firefox apre la domanda come finestra modale della sua finestra
 attiva (`Services.ww.activeWindow` in `Prompter.sys.mjs`), quindi come
 dialogo di quella finestra: la scrivania la tiene sopra Firefox (vedi
-*Dialoghi* sopra) e un clic su Firefox non dovrebbe più nasconderla (provato
-con il selettore di Ctrl+O, non ancora con questa domanda). Firefox
+*Dialoghi* sopra) e un clic su Firefox non la nasconde (verificato con un
+`.exe` scaricato: dopo un clic sulla pagina o sul titolo di Firefox, anche
+dopo un clic sulla scrivania, la domanda resta sopra; il selettore di
+Ctrl+O resta sopra anche quando si riporta Firefox davanti dal dock). Firefox
 riconosce un programma da `access(X_OK)`, che in justOS risponde sì per una
 cartella, per un file con il permesso di esecuzione e per quelli che justOS
 apre come programmi anche senza: `.exe`, `.msi`, `.bat`, `.cmd`, `.com`,
@@ -267,6 +269,19 @@ nuove non partivano (`fork() failed: Cannot allocate memory`). Ora le pagine
 restano in comune e il figlio costa solo quelle che cambia prima di
 `execve`. Con 512 MiB Firefox parte, ma la memoria finisce comunque appena
 apre le schede: serve almeno 1 GiB (quello di `make run`).
+
+Alla chiusura Firefox ferma il thread che raccoglie i rapporti della sandbox
+(`SandboxReporter`): fa `shutdown(SHUT_RD)` sul socket `AF_UNIX` seqpacket
+su cui quel thread aspetta in `recvmsg`, e poi lo aspetta con
+`pthread_join`. justOS segnava il lato chiuso solo per l'altra parte (che
+riceveva `EPIPE`) e non svegliava chi leggeva: `recvmsg` restava ferma, il
+thread principale aspettava per sempre e dopo 63 secondi il controllo di
+Firefox lo fermava apposta (`RunWatchdog`, nel giornale
+`page fault at ... (libxul.so+0x6ee9c71) (address 0x0)`). Ora, come in
+Linux, quando una delle due parti chiude un verso della connessione, chi
+legge riceve quello che resta e poi la fine (0) invece di aspettare, e chi
+scrive riceve `EPIPE`. Firefox con 1 GiB, sotto emulazione, ora esce da solo
+in 6-20 secondi.
 
 I programmi Linux con una finestra compaiono tra le applicazioni (e nella
 ricerca) da soli: il launcher legge i file `.desktop` di

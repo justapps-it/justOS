@@ -98,7 +98,7 @@ fi
         'dt: socketpair pong 4 exit=0' 'dt: fd passed 1 12 hello via fd exit=0' \
         'dt: unix server 0 0 peerlen=2 cred=1 got hi exit=7 sock=1' 'dt: unix bind busy 98 unlink 0 again 0' \
         'dt: unix refused 111 missing 2' 'dt: seqpacket 2 3 dgram 2 trunc 1' 'dt: dgram 4 from @dt-b len=7' \
-        'dt: unix eagain 11 eof 0 epipe 32 hup 1' \
+        'dt: shut_rd recv=0 woke=1 peer=32 poll=1' 'dt: unix eagain 11 eof 0 epipe 32 hup 1' \
         'dt: memfd shared pread=shared child=child was here seal=1 link=/memfd:dt (deleted)' 'dt: shared anon 42' \
         'dt: memfd passed from the child exit=0' 'dt: shm_open hello 11 again 2' \
         'dt: nofile finite=1' 'dt: dup2 survives exec sock=1 cloexec=0' 'dt: dup2 exec got k exit=5' \
