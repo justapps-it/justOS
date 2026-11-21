@@ -189,8 +189,8 @@ avida porta a un vicolo cieco.
 | USB (UHCI, OHCI, EHCI, xHCI), tastiera, mouse, tavoletta, chiavette | ✅ |
 | Dischi SATA, NVMe, virtio, schede SD | ✅ |
 | Ethernet (e1000, igb, rtl8139/8169, pcnet, virtio-net) con DHCP | ✅ |
-| Audio (AC'97, HD Audio) | ✅ riproduzione, con un mixer per suoni di sistema e programmi |
-| Audio dei programmi Linux e Windows (PulseAudio) | ✅ riproduzione (Firefox, Wine, `paplay`); manca la registrazione |
+| Audio (AC'97, HD Audio) | ✅ riproduzione, con un mixer per suoni di sistema e programmi; registrazione dall'ingresso HD Audio |
+| Audio dei programmi Linux e Windows (PulseAudio) | ✅ riproduzione e registrazione (Firefox, Wine, `paplay`, `parec`), microfono con il suo permesso; mancano la memoria condivisa e gli eventi |
 | Collegamento a caldo dell'audio (cuffie) | ⬜ |
 | Wi-Fi | ⬜ |
 | Bluetooth | ⬜ |

@@ -329,7 +329,8 @@ pub const ENCODING_PCM: u8 = 1;
 /// The descriptor before each frame: length, channel, offset (high and low
 /// half), flags.
 pub const DESCRIPTOR: usize = 20;
-/// The channel of packets; other channels are playback streams.
+/// The channel of packets; other channels are streams (playback ones from
+/// the client, record ones to it).
 pub const PACKET: u32 = u32::MAX;
 /// The block is in shared memory, not in the frame (we never ask for that).
 pub const FLAG_SHM: u32 = 0xFF00_0000;
@@ -371,6 +372,15 @@ pub fn next_frame(buf: &[u8]) -> Result<Option<(Frame<'_>, usize)>, ()> {
         Frame::Block { channel, offset, seek: flags & SEEK_MASK, data }
     };
     Ok(Some((frame, DESCRIPTOR + len)))
+}
+
+/// Adds a block of sound for record stream `channel`, in its frame, to
+/// `out`.
+pub fn put_block(out: &mut Vec<u8>, channel: u32, data: &[u8]) {
+    for w in [data.len() as u32, channel, 0, 0, 0] {
+        out.extend_from_slice(&w.to_be_bytes());
+    }
+    out.extend_from_slice(data);
 }
 
 /// Adds a packet, in its frame, to `out`.

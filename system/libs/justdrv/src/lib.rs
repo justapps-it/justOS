@@ -822,6 +822,12 @@ pub fn audio_queued(output: Status, queued: AudioQueued) -> Status {
     unsafe { (api().audio_queued)(output as u32, queued) }
 }
 
+/// Registers a sound input (a microphone); returns its number or an error.
+pub fn capture_register(device: u32, desc: &'static CaptureDesc) -> Status {
+    // SAFETY: kernel call with a valid descriptor.
+    unsafe { (api().capture_register)(device, desc) }
+}
+
 pub fn display_register(device: u32, desc: &'static DisplayDesc) -> Status {
     // SAFETY: kernel call with a valid descriptor.
     unsafe { (api().display_register)(device, desc) }
@@ -1071,6 +1077,142 @@ pub mod pcm {
             }
             self.hw.stop();
             st.running = false;
+        }
+    }
+
+    struct CaptureState {
+        /// Capturing was asked for (it goes on after sleep).
+        running: bool,
+        /// The machine sleeps: the device is off.
+        paused: bool,
+        /// Bytes read since the start, bytes of whole laps the device
+        /// wrote, and where it was last seen.
+        read: u64,
+        laps: u64,
+        last: usize,
+    }
+
+    /// The ring a sound device records into: the device writes it in a
+    /// loop while the driver reads behind it. As with [`PcmRing`], the
+    /// driver only says where the device is.
+    pub struct CaptureRing<H: Hardware> {
+        pub hw: H,
+        buf: Dma,
+        size: usize,
+        state: Mutex<CaptureState>,
+        /// Signalled by the driver's interrupt at every period, so a reader
+        /// waiting for sound wakes up at once; without it it polls.
+        pub progress: Event,
+    }
+
+    impl<H: Hardware> CaptureRing<H> {
+        /// A ring of `buf.len()` bytes (a multiple of the frame size).
+        pub fn new(hw: H, buf: Dma) -> CaptureRing<H> {
+            let size = buf.len();
+            let state = CaptureState { running: false, paused: false, read: 0, laps: 0, last: 0 };
+            CaptureRing { hw, buf, size, state: Mutex::new(state), progress: Event::new() }
+        }
+
+        pub fn phys(&self) -> u64 {
+            self.buf.phys()
+        }
+
+        /// Bytes the device has written since the start.
+        fn captured(&self, st: &mut CaptureState) -> u64 {
+            let pos = self.hw.position().min(self.size - 1);
+            if pos < st.last {
+                st.laps += self.size as u64;
+            }
+            st.last = pos;
+            st.laps + pos as u64
+        }
+
+        /// The device records from the start of the ring.
+        fn restart(&self, st: &mut CaptureState) {
+            st.read = 0;
+            st.laps = 0;
+            st.last = 0;
+            self.hw.start();
+        }
+
+        pub fn start(&self) {
+            let mut st = self.state.lock();
+            if !st.running {
+                st.running = true;
+                if !st.paused {
+                    self.restart(&mut st);
+                }
+            }
+        }
+
+        pub fn stop(&self) {
+            let mut st = self.state.lock();
+            if st.running && !st.paused {
+                self.hw.stop();
+            }
+            st.running = false;
+        }
+
+        /// Before sleep: the device stops; what it captured and was not
+        /// read is lost.
+        pub fn pause(&self) {
+            let mut st = self.state.lock();
+            if st.running && !st.paused {
+                self.hw.stop();
+            }
+            st.paused = true;
+        }
+
+        /// After sleep, once the device is set up again: it records on if
+        /// it did before.
+        pub fn unpause(&self) {
+            let mut st = self.state.lock();
+            st.paused = false;
+            if st.running {
+                self.restart(&mut st);
+            }
+            self.progress.signal();
+        }
+
+        fn copy_out(&self, at: u64, out: &mut [u8]) {
+            let ring = self.buf.as_mut_slice();
+            let start = (at % self.size as u64) as usize;
+            let first = out.len().min(self.size - start);
+            out[..first].copy_from_slice(&ring[start..start + first]);
+            let rest = out.len() - first;
+            out[first..].copy_from_slice(&ring[..rest]);
+        }
+
+        /// Copies what the device captured into `out`, whole frames of
+        /// `frame` bytes, waiting up to `wait_ms` for some. Returns how many
+        /// bytes. A reader that fell more than three quarters of the ring
+        /// behind lost what the device wrote over: it goes on from half a
+        /// ring before the device.
+        pub fn read(&self, out: &mut [u8], frame: usize, wait_ms: u64) -> usize {
+            let start = super::time_ms();
+            loop {
+                {
+                    let mut st = self.state.lock();
+                    if st.running && !st.paused {
+                        let captured = self.captured(&mut st);
+                        let behind = captured.saturating_sub(st.read);
+                        if behind > (self.size / 4 * 3) as u64 {
+                            st.read += (behind - (self.size / 2) as u64) / frame as u64 * frame as u64;
+                        }
+                        let n = (captured.saturating_sub(st.read) as usize).min(out.len()) / frame * frame;
+                        if n > 0 {
+                            self.copy_out(st.read, &mut out[..n]);
+                            st.read += n as u64;
+                            return n;
+                        }
+                    }
+                }
+                let waited = super::time_ms() - start;
+                if waited >= wait_ms {
+                    return 0;
+                }
+                self.progress.wait((wait_ms - waited).min(5));
+            }
         }
     }
 }

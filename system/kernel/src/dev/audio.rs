@@ -16,7 +16,8 @@
 //! told when what it writes will be heard ([`Stream::timing`]). With no
 //! output, streams are still consumed in real time: a program that waits
 //! for its sound to be played goes on. When nothing plays, the device plays
-//! what it has queued and stops.
+//! what it has queued and stops. What the mixer mixes also goes to the
+//! recordings of its monitor ([`super::capture`]), which keep it running.
 
 use crate::sync::{IrqLock, Mutex};
 use crate::task::WaitQueue;
@@ -663,9 +664,16 @@ pub fn latency_us() -> u64 {
     END_NS.load(Ordering::Relaxed).saturating_sub(crate::time::uptime_ns()) / 1000
 }
 
-/// Something to play: the system voice or a stream that plays.
+/// Something to play (the system voice or a stream that plays), or
+/// someone who listens to what is played.
 fn busy(now: u64) -> bool {
-    VOICE.lock().is_some() || STREAMS.lock().iter().any(|s| s.st.lock().active(now))
+    VOICE.lock().is_some() || STREAMS.lock().iter().any(|s| s.st.lock().active(now)) || super::capture::monitoring()
+}
+
+/// Someone started listening to the mix: the mixer runs.
+pub fn wake_mixer() {
+    start_mixer();
+    WORK.notify_all();
 }
 
 /// Where the mix goes: an output, by its number.
@@ -810,6 +818,7 @@ fn mixer() {
         let mut mix = alloc::vec![[0i32; 2]; frames];
         mix_voice(&mut mix, p.rate);
         let took = mix_streams(&mut mix, p.rate, now);
+        super::capture::monitor(&mix, p.rate);
         p.write(&render(&mix, p.channels()), frames);
         // What was just written is heard once everything queued before it is.
         let end = crate::time::uptime_ns() + p.queued() * 1_000_000_000 / p.rate as u64;
