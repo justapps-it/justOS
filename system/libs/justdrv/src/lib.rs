@@ -812,6 +812,16 @@ pub fn audio_register(device: u32, desc: &'static AudioDesc) -> Status {
     unsafe { (api().audio_register)(device, desc) }
 }
 
+/// Says how to ask sound output `output` (what [`audio_register`] returned)
+/// how many frames it still has to play (see [`pcm::PcmRing::queued`]).
+pub fn audio_queued(output: Status, queued: AudioQueued) -> Status {
+    if output < 0 {
+        return output;
+    }
+    // SAFETY: kernel call.
+    unsafe { (api().audio_queued)(output as u32, queued) }
+}
+
 pub fn display_register(device: u32, desc: &'static DisplayDesc) -> Status {
     // SAFETY: kernel call with a valid descriptor.
     unsafe { (api().display_register)(device, desc) }
@@ -889,6 +899,9 @@ pub mod pcm {
         /// Bytes of whole laps the device played.
         laps: u64,
         last: usize,
+        /// Up to where (in bytes since the start, like `written`) the part
+        /// of the ring after what was written holds silence.
+        clean: u64,
     }
 
     pub struct PcmRing<H: Hardware> {
@@ -909,7 +922,7 @@ pub mod pcm {
                 hw,
                 buf,
                 size,
-                state: Mutex::new(State { running: false, paused: false, written: 0, laps: 0, last: 0 }),
+                state: Mutex::new(State { running: false, paused: false, written: 0, laps: 0, last: 0, clean: 0 }),
                 progress: Event::new(),
             }
         }
@@ -982,7 +995,7 @@ pub mod pcm {
                     let n = data.len().min(self.size);
                     self.copy_in(0, &data[..n]);
                     data = &data[n..];
-                    *st = State { running: true, paused: false, written: n as u64, laps: 0, last: 0 };
+                    *st = State { running: true, paused: false, written: n as u64, laps: 0, last: 0, clean: self.size as u64 };
                     self.hw.start();
                     continue;
                 }
@@ -1003,7 +1016,32 @@ pub mod pcm {
                 self.copy_in(st.written, &data[..n]);
                 st.written += n as u64;
                 data = &data[n..];
+                self.clean_after(&mut st, played);
             }
+        }
+
+        /// Silence in the free part of the ring, the one the device plays
+        /// after what was written: a writer that keeps little queued and
+        /// comes late lets the device play silence there, not what it
+        /// played a lap before.
+        fn clean_after(&self, st: &mut State, played: u64) {
+            let end = played + self.size as u64;
+            let from = st.clean.max(st.written);
+            if from < end {
+                self.zero(from, (end - from) as usize);
+            }
+            st.clean = end;
+        }
+
+        /// Bytes written and not played yet (0 while the device is
+        /// stopped): how long a sound written now waits.
+        pub fn queued(&self) -> usize {
+            let mut st = self.state.lock();
+            if !st.running || st.paused {
+                return 0;
+            }
+            let played = self.played(&mut st);
+            st.written.saturating_sub(played) as usize
         }
 
         /// Plays what is queued to its end, then stops the device.

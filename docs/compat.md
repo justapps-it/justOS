@@ -340,6 +340,41 @@ Le pagine web (`.html`) e i link si aprono in Firefox quando c'è. Se Firefox
 è già aperto, una seconda pagina non gli si può ancora passare (manca D-Bus):
 una notifica lo dice. Firefox vede solo i file del volume di sistema.
 
+### Audio
+
+I programmi Linux suonano attraverso **PulseAudio**: il kernel ha un
+piccolo server del suo protocollo nativo (`linux/pulse`), su un socket Unix
+come quello di Wayland (`/home/tmp/pulse/native`, che `PULSE_SERVER`
+indica a ogni programma). La `libpulse` di Debian (`libpulse0`, con
+`paplay` e `pactl` di `pulseaudio-utils`) parla con lui senza saperlo:
+Firefox (attraverso cubeb), Wine (`winepulse.drv`) e ogni programma che
+usa PulseAudio direttamente. PulseAudio e non ALSA perché è la prima strada
+che Firefox e Wine provano, e perché un protocollo su un socket si fa come
+il server Wayland, mentre ALSA vorrebbe i dispositivi `/dev/snd` con i loro
+`ioctl` e la memoria condivisa.
+
+Il server ha una sola uscita, `justos`, e accetta flussi di riproduzione
+in quasi ogni formato (interi a 8, 16, 24 e 32 bit, float, A-law, µ-law,
+fino a 32 canali e 384 kHz): li converte in stereo a 16 bit e li passa al
+mixer del kernel (`dev/audio`), che li mescola ai suoni di sistema alla
+frequenza della scheda e applica il volume di sistema. Il volume di un
+flusso vale solo per lui; quello dell'uscita è il volume di sistema
+(`pactl set-sink-volume` lo cambia come le Impostazioni). Il server conta i
+byte come `memblockq` di PulseAudio (richieste, prebuffer, drain,
+underflow), così i programmi riempiono il buffer quanto si aspettano.
+
+Per la sincronia di audio e video conta l'orologio: `GET_PLAYBACK_LATENCY`
+risponde con i campioni che il mixer ha davvero preso dal flusso e la
+latenza dell'uscita (quello che la scheda ha ancora in coda, che i driver
+dicono con `audio_queued`). In Firefox l'orologio di una pagina resta
+entro pochi millisecondi da quello di sistema. Senza scheda audio i flussi
+vengono consumati in tempo reale lo stesso, a 48 kHz, e i programmi non si
+bloccano.
+
+Mancano la registrazione (nessuna sorgente: microfono e monitor), la
+memoria condivisa per i campioni (passano sul socket), i campioni salvati
+nel server e gli eventi di `SUBSCRIBE`.
+
 ## Programmi Windows
 
 I programmi Windows li esegue `winrun`, un programma di justOS
@@ -469,7 +504,8 @@ Google Sans Flex per l'interfaccia (menu, finestre di dialogo, messaggi) e
 DejaVu Sans Mono per i caratteri a larghezza fissa e il Blocco note.
 
 Provati: Blocco note, WordPad, Editor del Registro, winecfg, Task Manager,
-WineMine, `cmd`. Mancano ancora Vulkan e DirectX accelerati, l'audio, gli
+WineMine, `cmd`. Il suono passa da `winepulse.drv` e dal server PulseAudio
+del kernel (vedi sopra). Mancano ancora Vulkan e DirectX accelerati, gli
 appunti condivisi con justOS e le icone nell'area di notifica.
 
 **Programmi a 32 bit.** Wine li esegue nel suo modo "nuovo WoW64": il
@@ -689,3 +725,8 @@ x86_64-w64-mingw32-gcc -O2 -o hello.exe hello.c  # Windows
 ```
 
 poi copiarlo nell'immagine con `justtool fs` (vedi `docs/programmi.md`).
+
+`make test-audio` fa suonare anche `paplay`, insieme a un tono della shell,
+e controlla nella registrazione di QEMU che i due suoni ci siano, mescolati,
+e che il flusso duri quanto il suo file; un secondo caso lo ripete senza
+scheda audio.

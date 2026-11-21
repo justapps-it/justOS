@@ -230,7 +230,7 @@ funzioni sicure:
 | dischi | `block_register` con un `BlockDesc` (lettura, scrittura, flush) |
 | input | `input_event` (tasti come usage HID, movimenti, pulsanti) |
 | rete | `net_register` con un `NetDesc`, `net_receive` per i frame in arrivo |
-| suono | `audio_register` con un `AudioDesc` (scrittura di campioni a 16 bit, svuotamento); `pcm::PcmRing` gestisce il buffer circolare che quasi ogni scheda audio legge in loop |
+| suono | `audio_register` con un `AudioDesc` (scrittura di campioni a 16 bit, svuotamento); `audio_queued` dice al kernel quanti campioni la scheda ha ancora da suonare; `pcm::PcmRing` gestisce il buffer circolare che quasi ogni scheda audio legge in loop |
 | schermo | `display_register` con un `DisplayDesc` (modi, cambio di modo, aggiornamento di un rettangolo); `map_framebuffer` mappa la memoria video in write-combining; `display_heads` e `display_changed` per più monitor (vedi sotto) |
 | sospensione | `power_hooks`: come il dispositivo si ferma prima della sospensione e riparte al risveglio (vedi sotto) |
 
@@ -240,7 +240,11 @@ invece di caricarli e rischiare un errore. L'ABI 2 ha aggiunto MSI, gli
 eventi e i dispositivi figli; i servizi nuovi si aggiungono in fondo alla
 tabella, quindi un driver compilato per l'ABI 2 funziona anche con un
 kernel più recente della stessa ABI (non il contrario: i driver audio e
-video della versione 0.4 chiedono un kernel 0.4).
+video della versione 0.4 chiedono un kernel 0.4). L'ultimo servizio
+aggiunto è `audio_queued`: con lui il mixer del kernel sa quanto suono è
+ancora nella scheda e dà ai programmi un orologio preciso (la latenza che
+PulseAudio riporta); un driver che non lo chiama funziona lo stesso, e il
+kernel stima la coda dal tempo.
 
 Il kernel converte ogni suono al formato dell'uscita (frequenza, canali) e
 applica il volume da sé: un driver audio dichiara un solo formato e lascia

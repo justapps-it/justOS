@@ -79,6 +79,9 @@ STORE    := $(notdir $(wildcard system/store/*))
 # system (it is in the launcher, from its .desktop file), with its Italian
 # language pack and spelling dictionary.
 LINUX_PKGS ?= dash dpkg tar coreutils diffutils grep sed desktop-file-utils libc6 libc-bin libc-l10n libwayland-client0 libxkbcommon0 libgtk-3-0t64 libglib2.0-data librsvg2-common gtk-3-examples firefox-esr firefox-esr-l10n-it hunspell-it
+# Sound: libpulse, through which programs (Firefox, Wine) play on the
+# kernel's PulseAudio server, and its paplay and pactl.
+LINUX_PKGS += libpulse0 pulseaudio-utils
 LINUX_DIST ?= trixie
 # Linux programs speak Italian, like the rest of justOS: debroot.py
 # compiles these glibc locales into the tree and keeps the translations
@@ -93,10 +96,10 @@ LINUX_LOCALES ?= it_IT.UTF-8
 LINUX_SKIP ?= dictionaries-common
 # Wine 10 for Windows programs (unless WINE=0), 64-bit; debroot.py adds
 # the DLLs for 32-bit programs (WoW64) from libwine's i386 package. It
-# runs without the multimedia, camera, scanner, smart card, sound server
-# and OpenCL libraries its packages pull in.
+# runs without the multimedia, camera, scanner, smart card and OpenCL
+# libraries its packages pull in (sound goes through libpulse, above).
 WINE_PKGS := wine wine64 libwine fonts-wine
-WINE_SKIP := libavcodec61,libavformat61,libavutil59,libcapi20-3t64,libgphoto2-6t64,libgphoto2-port12t64,libgstreamer-plugins-base1.0-0,libgstreamer1.0-0,libpcap0.8t64,libpcsclite1,libpulse0,libusb-1.0-0,ocl-icd-libopencl1,libopencl1,libopencl-1.2-1
+WINE_SKIP := libavcodec61,libavformat61,libavutil59,libcapi20-3t64,libgphoto2-6t64,libgphoto2-port12t64,libgstreamer-plugins-base1.0-0,libgstreamer1.0-0,libpcap0.8t64,libpcsclite1,libusb-1.0-0,ocl-icd-libopencl1,libopencl1,libopencl-1.2-1
 comma    := ,
 # With Wine and without, the Linux tree and the system volume's files are
 # kept apart, so that the image and the tests' image (without Wine) do not

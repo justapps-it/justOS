@@ -212,6 +212,10 @@ unsafe extern "C" fn api_audio_register(device: u32, desc: *const AudioDesc) -> 
     dev::audio::register(device, desc)
 }
 
+unsafe extern "C" fn api_audio_queued(output: u32, queued: AudioQueued) -> Status {
+    dev::audio::set_queued(output, queued)
+}
+
 unsafe extern "C" fn api_display_register(device: u32, desc: *const DisplayDesc) -> Status {
     if desc.is_null() {
         return E_INVAL;
@@ -302,4 +306,5 @@ pub static KERNEL_API: KernelApi = KernelApi {
     power_hooks: api_power_hooks,
     display_heads: api_display_heads,
     display_changed: api_display_changed,
+    audio_queued: api_audio_queued,
 };
