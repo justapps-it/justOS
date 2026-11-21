@@ -4,7 +4,8 @@
 //! ```text
 //! sandbox                         the app this program runs as
 //! sandbox run <app_id> <program>  run a program as that app, in its sandbox
-//! sandbox test                    check the sandbox's rules
+//! sandbox test                    check the sandbox's rules and its popup
+//! sandbox ask <perm>              ask for a permission as this app
 //! ```
 
 #![no_std]
@@ -22,6 +23,14 @@ justrt::main!(main);
 
 /// The app the test runs as.
 const TEST_ID: &str = "dev.justos.prova";
+/// The app the popup's checks run as: it starts with no answers at all.
+const FRESH_ID: &str = "dev.justos.nuova";
+/// An app from the Negozio whose manifest lists a permission
+/// (`permissions=files:Immagini`); the session installs it first.
+const STORE_ID: &str = "dev.justos.disegno";
+/// The Linux program the checks ask as, and the app the sandbox makes it.
+const FIREFOX: &str = "sys:/usr/lib/firefox-esr/firefox-esr";
+const FIREFOX_ID: &str = "linux.firefox-esr";
 
 fn main(args: &str) -> i32 {
     let words = justrt::split_args(args);
@@ -50,6 +59,37 @@ fn main(args: &str) -> i32 {
         }
         "test" => test(),
         "probe" => probe(),
+        // For the test: ask twice for a permission as the fresh app (or as
+        // this one). The exit code has a bit for each answer, 1 and 2.
+        "ask" if !w(1).is_empty() => ask_twice(w(1)),
+        // ...or list a folder of the home as it (1: it could).
+        "list" if !w(1).is_empty() => {
+            if app::enter(FRESH_ID, "Nuova").is_err() {
+                return 9;
+            }
+            i32::from(fs::list_dir(w(1)).is_ok())
+        }
+        // ...or as a Linux program, the way the PulseAudio server asks.
+        "ask-as" if !w(2).is_empty() => {
+            let req = format!("{{\"request\":\"{}\",\"program\":\"{}\"}}", w(2), w(1));
+            i32::from(permissions(&req).is_ok_and(|a| a.contains("\"granted\":true")))
+        }
+        // ...or send a notification as the fresh app.
+        "notify" => {
+            if app::enter(FRESH_ID, "Nuova").is_err() {
+                return 9;
+            }
+            let sent = Port::lookup("just.notify").and_then(|p| p.call(b"{\"title\":\"Nuova\",\"text\":\"ciao\"}"));
+            i32::from(sent.is_ok_and(|a| String::from_utf8_lossy(&a).contains("\"ok\":true")))
+        }
+        // What an app was told about a permission, without asking: 0 not
+        // asked, 1 allowed, 2 denied.
+        "state" if !w(1).is_empty() => match app::permission(w(1)) {
+            Ok(None) => 0,
+            Ok(Some(true)) => 1,
+            Ok(Some(false)) => 2,
+            Err(_) => 3,
+        },
         // For the test: does the program run as this app?
         "is" => i32::from(app::id().as_deref() != Some(w(1))),
         // For `updates test`: an app that stays open for a while.
@@ -89,7 +129,7 @@ fn test() -> i32 {
     };
     let forgot = permissions(&format!("{{\"forget\":\"{TEST_ID}\"}}")).is_ok_and(|a| a.contains("true"));
     let listed = permissions("{\"list\":true}").map(|a| a.contains(TEST_ID));
-    let mut failed = failed;
+    let mut failed = failed + i64::from(popup());
     if forgot && listed == Ok(false) {
         println!("  {GREEN}ok{RESET}    answers forgotten");
     } else {
@@ -169,5 +209,148 @@ fn probe() -> i32 {
     let _ = fs::remove("cartella/a");
     let _ = fs::remove("cartella");
     let _ = fs::remove("nota.txt");
+    failed
+}
+
+/// As the fresh app, asks for `perm` twice in a row. Bit 1 of the exit
+/// code is the first answer, bit 2 the second.
+fn ask_twice(perm: &str) -> i32 {
+    if app::enter(FRESH_ID, "Nuova").is_err() {
+        return 9;
+    }
+    let first = app::request(perm) == Ok(true);
+    let second = app::request(perm) == Ok(true);
+    i32::from(first) + 2 * i32::from(second)
+}
+
+/// The question the popup asks now, if one: (app id, name, permission).
+fn pending() -> Option<(String, String, String)> {
+    let a = permissions("{\"pending\":true}").ok()?;
+    let v = justjson::parse(&a)?;
+    let p = v.get("pending");
+    p.get("perm").as_str().map(|perm| (String::from(p.get("app").str()), String::from(p.get("name").str()), String::from(perm)))
+}
+
+/// Waits up to `ms` for the popup to ask something.
+fn wait_pending(ms: u64) -> Option<(String, String, String)> {
+    let until = justrt::time::uptime_ms() + ms;
+    loop {
+        if let Some(p) = pending() {
+            return Some(p);
+        }
+        if justrt::time::uptime_ms() > until {
+            return None;
+        }
+        justrt::time::sleep_ms(50);
+    }
+}
+
+/// Answers the popup as a click on its button would.
+fn answer(choice: &str) -> bool {
+    permissions(&format!("{{\"answer\":\"{choice}\"}}")).is_ok_and(|a| a.contains("\"ok\":true"))
+}
+
+/// What the table keeps for `perm` of app `id`: "allow", "denied_once",
+/// "deny", or "" (nothing).
+fn kept(id: &str, perm: &str) -> String {
+    let Some(v) = permissions("{\"list\":true}").ok().and_then(|a| justjson::parse(&a)) else { return String::from("?") };
+    let found = v.get("apps").as_array().iter().find(|a| a.get("id").str() == id).map(|a| String::from(a.get("perms").get(perm).str()));
+    found.unwrap_or_default()
+}
+
+/// Starts `sandbox <args>`; if the popup is to ask (`asks`: the app's name
+/// and the permission), answers it with `choice`. Returns the program's
+/// exit code, and whether the popup asked as expected (or did not ask, if
+/// nothing was expected).
+fn run_and_answer(args: &str, asks: Option<(&str, &str)>, choice: &str) -> (i64, bool) {
+    let Ok(pid) = process::spawn("sandbox", args) else { return (-1, false) };
+    let as_expected = match asks {
+        Some((name, perm)) => match wait_pending(5000) {
+            Some((_, n, p)) => n == name && p == perm && answer(choice),
+            None => false,
+        },
+        // Nothing to ask: the program ends without a popup.
+        None => wait_pending(1500).is_none() || !answer("dismiss"),
+    };
+    (process::wait(pid).unwrap_or(-1), as_expected)
+}
+
+/// The phone-style rules: nothing at first, the popup, "Non consentire"
+/// once and twice, "Solo questa volta", the settings, Linux programs and
+/// notifications. Returns the number of failures.
+fn popup() -> i32 {
+    let mut failed = 0;
+    let mut check = |what: &str, ok: bool, detail: String| {
+        if ok {
+            println!("  {GREEN}ok{RESET}    {what} {DIM}{detail}{RESET}");
+        } else {
+            println!("  {RED}fail{RESET}  {what} {detail}");
+            failed += 1;
+        }
+    };
+    let _ = permissions(&format!("{{\"forget\":\"{FRESH_ID}\"}}"));
+    let _ = permissions(&format!("{{\"forget\":\"{FIREFOX_ID}\"}}"));
+
+    // A fresh app has nothing, and neither has an app from the Negozio
+    // whose manifest lists a permission: the manifest only says what it
+    // may ask for.
+    let fresh = ["camera", "microphone", "location", "network", "notifications", "files:Immagini", "files:ram:"]
+        .iter()
+        .map(|p| process::spawn("sandbox", &format!("run {FRESH_ID} sandbox state {p}")).and_then(process::wait))
+        .all(|c| c == Ok(0));
+    check("a fresh app has no permission", fresh, String::new());
+    let store = process::spawn("sandbox", &format!("run {STORE_ID} sandbox state files:Immagini")).and_then(process::wait);
+    check("an installed app has none either", store == Ok(0) && kept(STORE_ID, "files:Immagini").is_empty(), format!("{store:?}"));
+
+    // The first request shows the popup and waits; "Non consentire"
+    // denies it, and the same run is not asked again.
+    let (code, asked) = run_and_answer("ask microphone", Some(("Nuova", "microphone")), "deny");
+    check("the popup asks, the app waits", asked, String::new());
+    check("Non consentire: denied, no second popup", code == 0, format!("{code}"));
+    check("denied once", kept(FRESH_ID, "microphone") == "denied_once", kept(FRESH_ID, "microphone"));
+
+    // The next run asks once more; a second "Non consentire" is for good.
+    let (code, asked) = run_and_answer("ask microphone", Some(("Nuova", "microphone")), "deny");
+    check("the next run asks again", asked && code == 0, format!("{code}"));
+    check("denied twice: for good", kept(FRESH_ID, "microphone") == "deny", kept(FRESH_ID, "microphone"));
+    let (code, quiet) = run_and_answer("ask microphone", None, "");
+    check("then no more popups", quiet && code == 0, format!("{code}"));
+
+    // The settings switch it on, and off again (what Impostazioni does).
+    let set = |allow: bool| {
+        let req = format!("{{\"set\":\"microphone\",\"app\":\"{FRESH_ID}\",\"name\":\"Nuova\",\"allow\":{allow}}}");
+        permissions(&req).is_ok_and(|a| a.contains("\"ok\":true"))
+    };
+    let on = set(true);
+    let (code, quiet) = run_and_answer("ask microphone", None, "");
+    check("allowed in the settings", on && quiet && code == 3, format!("{code}"));
+    let off = set(false);
+    let (code, quiet) = run_and_answer("ask microphone", None, "");
+    check("revoked in the settings", off && quiet && code == 0, format!("{code}"));
+
+    // "Solo questa volta": for this run only; a closed popup counts as no
+    // answer, and the next run asks again.
+    let (code, asked) = run_and_answer("ask camera", Some(("Nuova", "camera")), "once");
+    check("Solo questa volta: this run", asked && code == 3, format!("{code}"));
+    let (code, asked) = run_and_answer("ask camera", Some(("Nuova", "camera")), "dismiss");
+    check("closed popup: denied, not kept", asked && code == 0 && kept(FRESH_ID, "camera").is_empty(), format!("{code}"));
+    let (code, asked) = run_and_answer("ask camera", Some(("Nuova", "camera")), "allow");
+    check("Consenti: for good", asked && code == 3 && kept(FRESH_ID, "camera") == "allow", format!("{code}"));
+
+    // A folder of the home asks in the same popup, from the file system.
+    let (code, asked) = run_and_answer("list sys:/home/Documenti", Some(("Nuova", "files:Documenti")), "deny");
+    check("a folder asks too", asked && code == 0, format!("{code}"));
+
+    // A Linux program asks under the name its .desktop file gives it.
+    let (code, asked) = run_and_answer(&format!("ask-as {FIREFOX} microphone"), Some(("Firefox", "microphone")), "deny");
+    check("Firefox asks for the microphone", asked && code == 0, format!("{code}"));
+    check("as linux.firefox-esr", kept(FIREFOX_ID, "microphone") == "denied_once", kept(FIREFOX_ID, "microphone"));
+
+    // Notifications need the permission too.
+    let (code, asked) = run_and_answer("notify", Some(("Nuova", "notifications")), "allow");
+    check("notifications ask first", asked && code == 1, format!("{code}"));
+
+    let _ = permissions(&format!("{{\"forget\":\"{FRESH_ID}\"}}"));
+    let _ = permissions(&format!("{{\"forget\":\"{FIREFOX_ID}\"}}"));
     failed
 }

@@ -287,6 +287,13 @@ sotto per quelli larghi (sfondi, risoluzioni). Il tema si sceglie da due
 anteprime disegnate, scuro e chiaro. Le frecce su e giù cambiano sezione,
 Pag su e Pag giù scorrono.
 
+La sezione *Privacy* ha una scheda con i permessi (fotocamera, microfono,
+cartelle…): un clic apre l'elenco delle app che lo hanno chiesto, ognuna
+con un interruttore. Sotto c'è una scheda per app, con un interruttore per
+permesso e «Chiedi di nuovo», che dimentica le sue risposte. Le app del
+Negozio installate compaiono con i permessi del manifest anche prima di
+averli chiesti. La finestra della domanda è in `gui/apps/prompt.rs`.
+
 La **ricerca** si apre scrivendo (Esc la chiude): ignora maiuscole e
 accenti (`fold`), cerca nelle etichette delle righe e nei nomi delle
 sezioni e mostra i risultati raggruppati per sezione. Le frecce scelgono un

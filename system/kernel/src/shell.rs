@@ -68,7 +68,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("where", "<tid>|busy [campioni]", "dove si trova un thread di un programma Linux (libreria+offset), a campione; busy: i quattro più occupati"),
     ("top", "[secondi]", "in pochi secondi (2): quanto è rimasto inattivo ogni processore, i thread più occupati, le chiamate di sistema dei programmi Linux"),
     ("ports", "", "le porte di messaggi con un nome, e di chi sono"),
-    ("perms", "[allow|deny|ask <app> <permesso>]", "cosa possono usare le app fuori dalla loro sandbox"),
+    ("perms", "[allow|deny|ask <app> <permesso> | who <programma>]", "cosa possono usare le app fuori dalla loro sandbox"),
     ("updates", "[check|install <app>|all|auto on|off]", "gli aggiornamenti delle app installate"),
     ("sysupdate", "[check|install [file]|rollback|cancel]", "gli aggiornamenti di justOS: i due slot di sistema"),
     ("install-system", "[list | <disco> [--yes-erase <codice>]]", "installa justOS su un disco di questo computer, cancellandolo"),
@@ -843,19 +843,23 @@ impl Shell {
                             "" => println!("{}", g.id),
                             name => println!("{name} {DIM}{}{RESET}", g.id),
                         }
-                        for (p, allow) in g.perms {
-                            let (mark, word) = if allow { ("\x1b[92m+", "allowed") } else { ("\x1b[91m-", "denied") };
+                        for (p, answer) in g.perms {
+                            let (mark, word) = match answer {
+                                crate::sandbox::Answer::Allow => ("\x1b[92m+", "allowed"),
+                                crate::sandbox::Answer::DeniedOnce => ("\x1b[93m?", "denied once (asks again)"),
+                                crate::sandbox::Answer::Deny => ("\x1b[91m-", "denied"),
+                            };
                             println!("  {mark}{RESET} {p:<22} {DIM}{word}{RESET}");
                         }
                     }
                 }
                 (Some(op @ ("allow" | "deny" | "ask")), Some(id), Some(perm)) => {
                     if !crate::sandbox::valid_id(id) || !crate::sandbox::known(perm) {
-                        println!("{ERR}perms: not an app id or a permission (files:<folder>, files:<disk>:, camera, microphone, location, network){RESET}");
+                        println!("{ERR}perms: not an app id or a permission (files:<folder>, files:<disk>:, camera, microphone, location, network, notifications){RESET}");
                     } else {
                         let answer = match op {
-                            "allow" => Some(true),
-                            "deny" => Some(false),
+                            "allow" => Some(crate::sandbox::Answer::Allow),
+                            "deny" => Some(crate::sandbox::Answer::Deny),
                             _ => None,
                         };
                         crate::sandbox::set(id, "", perm, answer);
@@ -866,7 +870,19 @@ impl Shell {
                         println!("{DIM}nothing known about {id}{RESET}");
                     }
                 }
-                _ => println!("usage: perms | perms allow|deny|ask <app_id> <permission> | perms forget <app_id>"),
+                // Who a process, or a Linux program file, is to the
+                // sandbox: the name and icon its questions show.
+                (Some("who"), Some(what), None) => match what.parse::<u32>() {
+                    Ok(pid) => match crate::sandbox::who(pid) {
+                        Some(a) => println!("{} {DIM}{} {}{RESET}", a.name, a.id, a.icon),
+                        None => println!("{DIM}a program of the system: it may use everything{RESET}"),
+                    },
+                    Err(_) => {
+                        let a = crate::sandbox::linux_app(what, None);
+                        println!("{} {DIM}{} {}{RESET}", a.name, a.id, a.icon);
+                    }
+                },
+                _ => println!("usage: perms | perms allow|deny|ask <app_id> <permission> | perms forget <app_id> | perms who <pid|program>"),
             },
             "updates" => {
                 use crate::appupdate as up;

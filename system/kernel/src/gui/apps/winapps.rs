@@ -193,6 +193,12 @@ pub fn icon_for_class(class: &str) -> Option<String> {
     programs().into_iter().find(|p| !p.class.is_empty() && p.class.eq_ignore_ascii_case(class) && p.icon != "window").map(|p| p.icon)
 }
 
+/// The name and icon of a Windows program by its window class, as the
+/// launcher shows it ("Blocco note"), for the sandbox's questions.
+pub fn face_for_class(class: &str) -> Option<(String, String)> {
+    programs().into_iter().find(|p| !p.class.is_empty() && p.class.eq_ignore_ascii_case(class)).map(|p| (p.name, p.icon))
+}
+
 // ----------------------------------------------------------------------------
 // New programs
 

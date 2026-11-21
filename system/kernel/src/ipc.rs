@@ -210,17 +210,25 @@ pub fn start_services() {
 
 /// `just.permissions`, the sandbox's table ([`crate::sandbox`]):
 ///
-/// - `{"request": "camera"}`: may the sending app use it? Asks the user
-///   the first time. `{"granted": true}`; programs without a sandbox may
-///   always.
+/// - `{"request": "camera"}`: may the sending app use it? The first time
+///   the user is asked in the popup, and the answer waits for theirs.
+///   `{"granted": true}`; programs without a sandbox may always.
 /// - `{"check": "files:Immagini"}`: `{"state": "allow" | "deny" | "ask"}`,
 ///   without asking.
 ///
 /// And from programs without a sandbox only (the system's tools):
-/// `{"list": true}` (every answer), `{"set": perm, "app": id, "allow":
-/// true | false | null}` and `{"forget": id}`.
+/// `{"list": true}` (every answer: `"allow"`, `"denied_once"` or
+/// `"deny"`), `{"set": perm, "app": id, "allow": true | false | null}`,
+/// `{"forget": id}`; `{"request": perm, "for": pid}` asks as the PulseAudio
+/// server does for process `pid`, and `{"request": perm, "program":
+/// "sys:/usr/bin/…"}` as that Linux program would; `{"pending": true}` says
+/// which question the popup asks (`{"pending": {"app", "name", "perm"}}`
+/// or null), and `{"answer": "allow" | "once" | "deny" | "dismiss"}`
+/// answers it as its buttons do (for `sandbox test`).
+///
+/// A question waits in a thread of its own, so that the service answers
+/// others meanwhile.
 fn permissions_service() {
-    use crate::sandbox;
     use justjson::Value;
     let port = match create(0, Some("just.permissions")) {
         Ok(p) => p,
@@ -229,59 +237,122 @@ fn permissions_service() {
             return;
         }
     };
-    let error = |e: &str| Value::object(alloc::vec![("error", Value::string(e))]);
     loop {
         let Ok(m) = recv(port, 0, None, &|| false) else { continue };
-        let app = crate::user::app_of(m.sender);
         let v = justjson::parse_bytes(&m.data).unwrap_or(Value::Null);
-        let answer = if let Some(perm) = v.get("request").as_str().or(v.get("check").as_str()) {
-            if !sandbox::known(perm) {
-                error("permesso sconosciuto")
-            } else if v.get("request").as_str().is_some() {
-                let granted = app.as_ref().is_none_or(|a| sandbox::allowed(a, perm));
-                Value::object(alloc::vec![("granted", Value::Bool(granted))])
-            } else {
-                let state = match app.as_ref().map(|a| sandbox::state(&a.id, perm)) {
-                    None | Some(Some(true)) => "allow",
-                    Some(Some(false)) => "deny",
-                    Some(None) => "ask",
-                };
-                Value::object(alloc::vec![("state", Value::string(state))])
+        match permissions_answer(&v, m.sender) {
+            Ok(answer) => reply(m.reply, &answer),
+            Err((app, pid, perm)) => {
+                // The user is asked: the answer comes from another thread.
+                let to = m.reply;
+                let asked = crate::task::spawn("just.permissions.ask", move || {
+                    let granted = crate::sandbox::allowed(&app, pid, &perm);
+                    reply(to, &Value::object(alloc::vec![("granted", Value::Bool(granted))]));
+                });
+                if asked.is_none() {
+                    reply(m.reply, &Value::object(alloc::vec![("granted", Value::Bool(false))]));
+                }
             }
-        } else if app.is_some() {
-            error("solo i programmi di sistema")
-        } else if v.get("list").as_bool() == Some(true) {
-            let apps = sandbox::all()
-                .into_iter()
-                .map(|g| {
-                    let perms = g.perms.iter().map(|(p, allow)| (p.as_str(), Value::Bool(*allow))).collect();
-                    Value::object(alloc::vec![("id", Value::string(&g.id)), ("name", Value::string(&g.name)), ("perms", Value::object(perms))])
-                })
-                .collect();
-            Value::object(alloc::vec![("apps", Value::Arr(apps))])
-        } else if let Some(perm) = v.get("set").as_str() {
-            let id = v.get("app").str();
-            if !sandbox::valid_id(id) || !sandbox::known(perm) {
-                error("app o permesso non validi")
-            } else {
-                sandbox::set(id, v.get("name").str(), perm, v.get("allow").as_bool());
-                Value::object(alloc::vec![("ok", Value::Bool(true))])
-            }
-        } else if let Some(id) = v.get("forget").as_str() {
-            Value::object(alloc::vec![("ok", Value::Bool(sandbox::forget(id)))])
-        } else {
-            error("atteso {\"request\": …} o {\"check\": …}")
-        };
-        if let Some(r) = m.reply {
-            let _ = send(r, alloc::format!("{answer}").into_bytes(), 0, None);
-            drop_sender(r);
         }
     }
 }
 
+/// Sends `answer` back on reply port `to`, if there is one.
+fn reply(to: Option<u32>, answer: &justjson::Value) {
+    if let Some(r) = to {
+        let _ = send(r, alloc::format!("{answer}").into_bytes(), 0, None);
+        drop_sender(r);
+    }
+}
+
+/// What `just.permissions` answers to request `v` from process `sender`
+/// at once; `Err` with the app, the asking process and the permission when
+/// the user has to be asked first.
+fn permissions_answer(v: &justjson::Value, sender: u32) -> Result<justjson::Value, (crate::sandbox::App, u32, String)> {
+    use crate::sandbox::{self, Answer, Choice};
+    use justjson::Value;
+    let error = |e: &str| Value::object(alloc::vec![("error", Value::string(e))]);
+    let system = crate::user::app_of(sender).is_none();
+    if let Some(perm) = v.get("request").as_str() {
+        if !sandbox::known(perm) {
+            return Ok(error("permesso sconosciuto"));
+        }
+        // On behalf of another process, or as a Linux program: only for
+        // the system's tools.
+        let (app, pid) = match (v.get("for").as_i64().filter(|p| *p > 0), v.get("program").as_str()) {
+            (Some(pid), _) if system => (sandbox::who(pid as u32), pid as u32),
+            (_, Some(program)) if system => (Some(sandbox::linux_app(program, None)), sender),
+            (None, None) => (sandbox::who(sender), sender),
+            _ => return Ok(error("solo i programmi di sistema")),
+        };
+        let Some(app) = app else { return Ok(Value::object(alloc::vec![("granted", Value::Bool(true))])) };
+        return match sandbox::settled(&app, pid, perm) {
+            Some(granted) => Ok(Value::object(alloc::vec![("granted", Value::Bool(granted))])),
+            None => Err((app, pid, String::from(perm))),
+        };
+    }
+    if let Some(perm) = v.get("check").as_str() {
+        if !sandbox::known(perm) {
+            return Ok(error("permesso sconosciuto"));
+        }
+        let state = match sandbox::who(sender).map(|a| sandbox::settled(&a, sender, perm)) {
+            None | Some(Some(true)) => "allow",
+            Some(Some(false)) => "deny",
+            Some(None) => "ask",
+        };
+        return Ok(Value::object(alloc::vec![("state", Value::string(state))]));
+    }
+    if !system {
+        return Ok(error("solo i programmi di sistema"));
+    }
+    if v.get("list").as_bool() == Some(true) {
+        let apps = sandbox::all()
+            .into_iter()
+            .map(|g| {
+                let perms = g.perms.iter().map(|(p, a)| (p.as_str(), Value::string(a.key()))).collect();
+                Value::object(alloc::vec![("id", Value::string(&g.id)), ("name", Value::string(&g.name)), ("perms", Value::object(perms))])
+            })
+            .collect();
+        return Ok(Value::object(alloc::vec![("apps", Value::Arr(apps))]));
+    }
+    if let Some(perm) = v.get("set").as_str() {
+        let id = v.get("app").str();
+        if !sandbox::valid_id(id) || !sandbox::known(perm) {
+            return Ok(error("app o permesso non validi"));
+        }
+        let answer = v.get("allow").as_bool().map(|a| if a { Answer::Allow } else { Answer::Deny });
+        sandbox::set(id, v.get("name").str(), perm, answer);
+        return Ok(Value::object(alloc::vec![("ok", Value::Bool(true))]));
+    }
+    if let Some(id) = v.get("forget").as_str() {
+        return Ok(Value::object(alloc::vec![("ok", Value::Bool(sandbox::forget(id)))]));
+    }
+    if v.get("pending").as_bool() == Some(true) {
+        let pending = match crate::gui::permission_pending() {
+            Some((id, name, perm)) => {
+                Value::object(alloc::vec![("app", Value::string(&id)), ("name", Value::string(&name)), ("perm", Value::string(&perm))])
+            }
+            None => Value::Null,
+        };
+        return Ok(Value::object(alloc::vec![("pending", pending)]));
+    }
+    if let Some(choice) = v.get("answer").as_str() {
+        let choice = match choice {
+            "allow" => Choice::Allow,
+            "once" => Choice::Once,
+            "deny" => Choice::Deny,
+            _ => Choice::Dismiss,
+        };
+        return Ok(Value::object(alloc::vec![("ok", Value::Bool(crate::gui::answer_permission(choice)))]));
+    }
+    Ok(error("atteso {\"request\": …} o {\"check\": …}"))
+}
+
 /// `just.notify`: `{"title": "…", "text": "…"}` shows a notification on the
 /// desktop, under the sending program's name if there is no title. Answers
-/// `{"ok":true}`, or `{"ok":false,"error":"…"}`.
+/// `{"ok":true}`, or `{"ok":false,"error":"…"}`. An app needs the
+/// permission "notifications": the first one it sends asks the user (in a
+/// thread of its own, as the service goes on), and without it nothing shows.
 fn notify_service() {
     let port = match create(0, Some("just.notify")) {
         Ok(p) => p,
@@ -292,20 +363,48 @@ fn notify_service() {
     };
     loop {
         let Ok(m) = recv(port, 0, None, &|| false) else { continue };
-        let answer = match justjson::parse_bytes(&m.data) {
-            Some(v) if v.get("text").as_str().is_some() => {
-                let from = crate::user::app_of(m.sender).map(|a| a.name).or_else(|| crate::user::process_name(m.sender)).unwrap_or_default();
-                let title = v.get("title").as_str().filter(|t| !t.is_empty()).unwrap_or(&from);
-                let text = v.get("text").str();
-                crate::debug!("ipc", "notification from {} ({}): {title}: {text}", from, m.sender);
-                crate::gui::notify(title, text, "window");
-                String::from("{\"ok\":true}")
-            }
-            _ => String::from("{\"ok\":false,\"error\":\"atteso {\\\"title\\\": …, \\\"text\\\": …}\"}"),
+        let Some(v) = justjson::parse_bytes(&m.data).filter(|v| v.get("text").as_str().is_some()) else {
+            send_text(m.reply, "{\"ok\":false,\"error\":\"atteso {\\\"title\\\": …, \\\"text\\\": …}\"}");
+            continue;
         };
-        if let Some(r) = m.reply {
-            let _ = send(r, answer.into_bytes(), 0, None);
-            drop_sender(r);
+        let app = crate::user::app_of(m.sender);
+        let from = app.as_ref().map(|a| a.name.clone()).or_else(|| crate::user::process_name(m.sender)).unwrap_or_default();
+        let title = String::from(v.get("title").as_str().filter(|t| !t.is_empty()).unwrap_or(&from));
+        let text = String::from(v.get("text").str());
+        match app {
+            Some(app) if crate::sandbox::settled(&app, m.sender, "notifications").is_none() => {
+                let (to, sender) = (m.reply, m.sender);
+                let asked = crate::task::spawn("just.notify.ask", move || {
+                    let ok = crate::sandbox::allowed(&app, sender, "notifications");
+                    notify_if(ok, &from, sender, &title, &text, to);
+                });
+                if asked.is_none() {
+                    send_text(m.reply, "{\"ok\":false,\"error\":\"permesso negato\"}");
+                }
+            }
+            Some(app) => {
+                let ok = crate::sandbox::settled(&app, m.sender, "notifications") == Some(true);
+                notify_if(ok, &from, m.sender, &title, &text, m.reply);
+            }
+            None => notify_if(true, &from, m.sender, &title, &text, m.reply),
         }
+    }
+}
+
+/// Shows the notification if `ok`, and answers on `to`.
+fn notify_if(ok: bool, from: &str, sender: u32, title: &str, text: &str, to: Option<u32>) {
+    if !ok {
+        send_text(to, "{\"ok\":false,\"error\":\"permesso negato\"}");
+        return;
+    }
+    crate::debug!("ipc", "notification from {} ({}): {title}: {text}", from, sender);
+    crate::gui::notify(title, text, "window");
+    send_text(to, "{\"ok\":true}");
+}
+
+fn send_text(to: Option<u32>, answer: &str) {
+    if let Some(r) = to {
+        let _ = send(r, answer.as_bytes().to_vec(), 0, None);
+        drop_sender(r);
     }
 }

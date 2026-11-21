@@ -2,7 +2,9 @@
 //! the left a search field and the list of sections; at the right the
 //! section chosen, as cards of rows: a label (with a line that explains it)
 //! on the left, its control on the right. Privacy says what each app may use
-//! outside its sandbox ([`crate::sandbox`]).
+//! outside its sandbox ([`crate::sandbox`]): a row per permission, which
+//! opens the apps that asked for it ("Fotocamera: le app che la usano"),
+//! then a card per app with a switch for each of its permissions.
 //!
 //! A section is a list of cards, each a list of [`Row`]s
 //! ([`Prefs::cards`]); [`Prefs::page`] lays them out, and drawing, clicks,
@@ -18,7 +20,7 @@ use crate::gui::settings;
 use crate::gui::text::{self, Font};
 use crate::gui::ui;
 use crate::gui::wm::{Action, App, GAP};
-use crate::sandbox::Grants;
+use crate::sandbox::Answer;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -181,7 +183,7 @@ impl Section {
     /// A few words under the title, if any.
     fn intro(self) -> &'static str {
         match self {
-            Section::Privacy => "Le app del Negozio vedono solo la propria cartella. Qui scegli a cos'altro possono accedere.",
+            Section::Privacy => "Le app non hanno nessun permesso finché non lo consenti tu: la prima volta che ne serve uno, te lo chiedono. Qui cambi idea.",
             _ => "",
         }
     }
@@ -240,6 +242,10 @@ enum Ctl {
     Forget(usize),
     /// Permission `j` of app `i`, on or off.
     Perm(usize, usize),
+    /// A permission: the apps that asked for it, on a page of their own.
+    PermView(String),
+    /// Back from that page to all of Privacy.
+    Back,
     /// A search result: the section it is in, and the row's label.
     Go(Section, String),
 }
@@ -341,8 +347,10 @@ pub struct Prefs {
     modes: Vec<DisplayMode>,
     /// The volume is being dragged.
     sliding: bool,
-    /// What the apps were allowed.
-    grants: Vec<Grants>,
+    /// The apps and their permissions, and the permission whose apps are
+    /// shown (None: all of Privacy).
+    privacy: Vec<AppPerms>,
+    privacy_view: Option<String>,
     scroll: i32,
     max_scroll: i32,
     /// The content pane's height at the last drawing.
@@ -353,6 +361,50 @@ pub struct Prefs {
     /// until when; `reveal`: scroll to it at the next drawing.
     flash: Option<(String, u64)>,
     reveal: bool,
+}
+
+/// An app as Privacy shows it: its permissions with what the user said
+/// (None: not asked yet, but its manifest says it may ask).
+#[derive(Clone)]
+struct AppPerms {
+    id: String,
+    name: String,
+    perms: Vec<(String, Option<Answer>)>,
+}
+
+/// The apps the user answered something about, and the installed apps
+/// whose manifest lists permissions, by name.
+fn privacy_apps() -> Vec<AppPerms> {
+    let mut v: Vec<AppPerms> = crate::sandbox::all()
+        .into_iter()
+        .map(|g| AppPerms { id: g.id, name: g.name, perms: g.perms.into_iter().map(|(p, a)| (p, Some(a))).collect() })
+        .collect();
+    for p in crate::store::installed_all().into_iter().filter(|p| p.native && !p.permissions.is_empty()) {
+        let i = match v.iter().position(|a| a.id == p.app_id) {
+            Some(i) => i,
+            None => {
+                v.push(AppPerms { id: p.app_id.clone(), name: p.name.clone(), perms: Vec::new() });
+                v.len() - 1
+            }
+        };
+        for perm in p.permissions {
+            if !v[i].perms.iter().any(|q| q.0 == perm) {
+                v[i].perms.push((perm, None));
+            }
+        }
+    }
+    v.sort_by_key(|a| fold(if a.name.is_empty() { &a.id } else { &a.name }));
+    v
+}
+
+/// What the user said about a permission, as its row says it.
+fn state_word(answer: Option<Answer>) -> &'static str {
+    match answer {
+        Some(Answer::Allow) => "Consentito",
+        Some(Answer::DeniedOnce) => "Negato una volta: lo chiederà ancora una volta",
+        Some(Answer::Deny) => "Negato",
+        None => "Non ancora chiesto: lo chiederà quando serve",
+    }
 }
 
 /// `s` in lower case without accents, for the search.
@@ -369,17 +421,6 @@ fn fold(s: &str) -> String {
             ch => ch,
         })
         .collect()
-}
-
-/// `s` with a capital first letter.
-fn capitalised(s: &str) -> String {
-    let mut out = String::new();
-    let mut chars = s.chars();
-    if let Some(first) = chars.next() {
-        out.extend(first.to_uppercase());
-        out.push_str(chars.as_str());
-    }
-    out
 }
 
 /// The width of a button with `label`.
@@ -517,7 +558,8 @@ impl Prefs {
             screens: None,
             modes,
             sliding: false,
-            grants: crate::sandbox::all(),
+            privacy: privacy_apps(),
+            privacy_view: None,
             scroll: 0,
             max_scroll: 0,
             view_h: 0,
@@ -600,25 +642,75 @@ impl Prefs {
                     if settings::has_password() { "Chiesta per sbloccare il computer" } else { "Nessuna: il computer si sblocca senza" };
                 vec![card(vec![row(L_PASSWORD, pw, Ctl::Password), row("Blocca dopo", "Senza usare il computer", Ctl::LockAfter)])]
             }
-            Section::Privacy => {
-                if self.grants.is_empty() {
-                    return vec![card(vec![row("Nessuna app ha ancora chiesto qualcosa.", "", Ctl::Text)])];
+            Section::Privacy => match &self.privacy_view {
+                Some(perm) => self.perm_cards(perm),
+                None => self.privacy_cards(),
+            },
+        }
+    }
+
+    /// All of Privacy: a card of the permissions, each opening the apps
+    /// that asked for it, then a card per app with its switches.
+    fn privacy_cards(&self) -> Vec<Card> {
+        let mut kinds: Vec<String> = crate::sandbox::DEVICES.iter().map(|d| String::from(d.0)).collect();
+        for a in &self.privacy {
+            for (p, _) in &a.perms {
+                if !kinds.contains(p) {
+                    kinds.push(p.clone());
                 }
-                self.grants
-                    .iter()
-                    .enumerate()
-                    .map(|(i, g)| {
-                        let name = if g.name.is_empty() { g.id.as_str() } else { g.name.as_str() };
-                        let mut rows = vec![row(name, &g.id, Ctl::Forget(i))];
-                        for (j, (perm, allow)) in g.perms.iter().enumerate() {
-                            let label = capitalised(&crate::sandbox::describe(perm));
-                            rows.push(row(&label, if *allow { "consentito" } else { "negato" }, Ctl::Perm(i, j)));
-                        }
-                        card(rows)
-                    })
-                    .collect()
             }
         }
+        let mut cards =
+            vec![card(kinds.iter().map(|p| row(&crate::sandbox::title(p), &self.summary(p), Ctl::PermView(p.clone()))).collect())];
+        if self.privacy.is_empty() {
+            cards.push(card(vec![row("Nessuna app ha ancora chiesto qualcosa.", "", Ctl::Text)]));
+        }
+        for (i, a) in self.privacy.iter().enumerate() {
+            let name = if a.name.is_empty() { a.id.as_str() } else { a.name.as_str() };
+            let mut rows = vec![row(name, &a.id, Ctl::Forget(i))];
+            for (j, (perm, answer)) in a.perms.iter().enumerate() {
+                rows.push(row(&crate::sandbox::title(perm), state_word(*answer), Ctl::Perm(i, j)));
+            }
+            cards.push(card(rows));
+        }
+        cards
+    }
+
+    /// The page of one permission: the apps that asked for it (or may),
+    /// each with its switch.
+    fn perm_cards(&self, perm: &str) -> Vec<Card> {
+        let mut rows = Vec::new();
+        for (i, a) in self.privacy.iter().enumerate() {
+            if let Some(j) = a.perms.iter().position(|(p, _)| p == perm) {
+                let name = if a.name.is_empty() { a.id.as_str() } else { a.name.as_str() };
+                rows.push(row(name, state_word(a.perms[j].1), Ctl::Perm(i, j)));
+            }
+        }
+        if rows.is_empty() {
+            rows.push(row("Nessuna app l'ha chiesto.", "Quando un'app lo chiederà, la troverai qui.", Ctl::Text));
+        }
+        vec![card(vec![row("Tutti i permessi", "Torna a Privacy", Ctl::Back)]), card(rows)]
+    }
+
+    /// How many apps were allowed permission `perm`, and how many denied.
+    fn summary(&self, perm: &str) -> String {
+        let answers: Vec<Option<Answer>> = self.privacy.iter().filter_map(|a| a.perms.iter().find(|p| p.0 == perm).map(|p| p.1)).collect();
+        if answers.is_empty() {
+            return String::from("Nessuna app l'ha chiesto");
+        }
+        let allowed = answers.iter().filter(|a| **a == Some(Answer::Allow)).count();
+        let denied = answers.iter().filter(|a| matches!(a, Some(Answer::Deny | Answer::DeniedOnce))).count();
+        let mut parts = Vec::new();
+        if allowed > 0 {
+            parts.push(format!("{allowed} app {}", if allowed == 1 { "consentita" } else { "consentite" }));
+        }
+        if denied > 0 {
+            parts.push(format!("{denied} {}", if denied == 1 { "negata" } else { "negate" }));
+        }
+        if parts.is_empty() {
+            return format!("{} app, non ancora chiesto", answers.len());
+        }
+        parts.join(", ")
     }
 
     /// The rows whose label (or section) has what is typed in the search
@@ -695,6 +787,8 @@ impl Prefs {
             Ctl::Setup => (button_w("Ripeti"), 34),
             Ctl::Test => (button_w("Prova"), 34),
             Ctl::Forget(_) => (button_w("Chiedi di nuovo"), 34),
+            Ctl::Back => (button_w("Indietro"), 34),
+            Ctl::PermView(_) => (text::width(Font::Heading, "›"), bh),
             Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify | Ctl::Mirror => (52, 30),
             Ctl::Swap => (button_w("Scambia"), 34),
             Ctl::Monitors => {
@@ -758,8 +852,11 @@ impl Prefs {
         let x = main.x + (main.w - w) / 2;
         let top = main.y - self.scroll;
         let searching = !self.query.trim().is_empty();
+        let view = self.privacy_view.as_deref().filter(|_| self.section == Section::Privacy && !searching);
         let (title, cards) = if searching {
             (format!("Risultati per “{}”", self.query.trim()), self.results())
+        } else if let Some(perm) = view {
+            (crate::sandbox::title(perm), self.cards(self.section))
         } else {
             (String::from(self.section.name()), self.cards(self.section))
         };
@@ -767,8 +864,12 @@ impl Prefs {
         let (bh, _) = text::metrics(Font::Body);
         let title_y = top + 22;
         let mut y = title_y + dh + 16;
-        let intro = match self.section.intro() {
-            s if !searching && !s.is_empty() => text::wrap(Font::Body, s, w - 8),
+        let intro = match (view, self.section.intro()) {
+            (Some(perm), _) => {
+                let s = format!("Le app che possono chiedere di {}. Spento: negato, senza più domande.", crate::sandbox::describe(perm));
+                text::wrap(Font::Body, &s, w - 8)
+            }
+            (None, s) if !searching && !s.is_empty() => text::wrap(Font::Body, s, w - 8),
             _ => Vec::new(),
         };
         let intro_y = y - 4;
@@ -805,7 +906,9 @@ impl Prefs {
                 let (f, b) = field_and_button(r, "Imposta");
                 vec![f, b]
             }
-            Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify => vec![r],
+            Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify | Ctl::Back => vec![r],
+            // The whole row opens the permission's page.
+            Ctl::PermView(_) => vec![p.r],
             Ctl::Swap | Ctl::Mirror => vec![r],
             // Mirrored, no monitor is the primary: nothing to click.
             Ctl::Monitors if crate::gui::monitor_choice().2 => Vec::new(),
@@ -927,11 +1030,17 @@ impl Prefs {
             Ctl::Setup => ui::button(c, r, "Ripeti", false, hot(0)),
             Ctl::Test => ui::button(c, r, "Prova", false, hot(0)),
             Ctl::Forget(_) => ui::button(c, r, "Chiedi di nuovo", false, hot(0)),
+            Ctl::Back => ui::button(c, r, "Indietro", false, hot(0)),
+            Ctl::PermView(_) => {
+                let (hh, _) = text::metrics(Font::Heading);
+                let color = if hot(0) { ui::text() } else { ui::text_dim() };
+                text::draw(c, Font::Heading, r.x, r.y + (r.h - hh) / 2 - 1, "›", color);
+            }
             Ctl::Chime => ui::toggle(c, r, settings::get().startup_sound),
             Ctl::DockCompact => ui::toggle(c, r, settings::dock_compact()),
             Ctl::DockMagnify => ui::toggle(c, r, settings::dock_magnify()),
             Ctl::Perm(a, j) => {
-                let on = self.grants.get(*a).and_then(|g| g.perms.get(*j)).is_some_and(|(_, allow)| *allow);
+                let on = self.privacy.get(*a).and_then(|g| g.perms.get(*j)).is_some_and(|(_, answer)| *answer == Some(Answer::Allow));
                 ui::toggle(c, r, on);
             }
             Ctl::Volume => {
@@ -1077,7 +1186,8 @@ impl Prefs {
         self.scroll = 0;
         self.hot = None;
         if s == Section::Privacy {
-            self.grants = crate::sandbox::all();
+            self.privacy = privacy_apps();
+            self.privacy_view = None;
         }
     }
 
@@ -1215,18 +1325,31 @@ impl Prefs {
             }
             Ctl::LockAfter => settings::update(|s| s.lock_after = LOCK_AFTER[k].0),
             Ctl::Forget(i) => {
-                if let Some(g) = self.grants.get(*i) {
+                if let Some(g) = self.privacy.get(*i) {
                     crate::sandbox::forget(&g.id);
                 }
-                self.grants = crate::sandbox::all();
+                self.privacy = privacy_apps();
             }
             Ctl::Perm(i, j) => {
-                if let Some(g) = self.grants.get(*i) {
-                    if let Some((perm, allow)) = g.perms.get(*j) {
-                        crate::sandbox::set(&g.id, &g.name, perm, Some(!allow));
+                // On is "Consenti"; off is denied for good, without
+                // questions, until it is switched on again.
+                if let Some(g) = self.privacy.get(*i) {
+                    if let Some((perm, answer)) = g.perms.get(*j) {
+                        let next = if *answer == Some(Answer::Allow) { Answer::Deny } else { Answer::Allow };
+                        crate::sandbox::set(&g.id, &g.name, perm, Some(next));
                     }
                 }
-                self.grants = crate::sandbox::all();
+                self.privacy = privacy_apps();
+            }
+            Ctl::PermView(perm) => {
+                self.privacy_view = Some(perm.clone());
+                self.scroll = 0;
+                self.hot = None;
+            }
+            Ctl::Back => {
+                self.privacy_view = None;
+                self.scroll = 0;
+                self.hot = None;
             }
             Ctl::Info(_) | Ctl::Text | Ctl::Go(..) => {}
         }
@@ -1382,7 +1505,7 @@ impl App for Prefs {
                 Target::Side(_) | Target::Result(_) => true,
                 Target::Ctl(i, k) => match page.rows[i].row.ctl {
                     Ctl::Name | Ctl::Device | Ctl::Password => k == 1,
-                    Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Modes | Ctl::Swap | Ctl::Monitors => true,
+                    Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Modes | Ctl::Swap | Ctl::Monitors | Ctl::Back | Ctl::PermView(_) => true,
                     _ => false,
                 },
                 Target::Search => false,

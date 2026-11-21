@@ -123,10 +123,32 @@ struct Opening {
 /// Windows mapped since the desktop last looked.
 static NEW: IrqLock<Vec<Opening>> = IrqLock::new(Vec::new());
 
-/// Asks the desktop to show a window; `id` is its toplevel's surface.
-pub fn open(win: Arc<Mutex<Win>>, inbox: Arc<Inbox>, id: u32, icon: String) {
+/// The windows shown, with the process whose client made each: a question
+/// of the sandbox about a process opens over its window.
+static OWNERS: IrqLock<Vec<(u32, alloc::sync::Weak<Mutex<Win>>)>> = IrqLock::new(Vec::new());
+
+/// Asks the desktop to show a window of the client of process `pid`; `id`
+/// is its toplevel's surface.
+pub fn open(win: Arc<Mutex<Win>>, inbox: Arc<Inbox>, id: u32, icon: String, pid: u32) {
+    {
+        let mut owners = OWNERS.lock();
+        owners.retain(|(_, w)| w.strong_count() > 0);
+        owners.push((pid, Arc::downgrade(&win)));
+    }
     NEW.lock().push(Opening { win, inbox, id, icon });
     crate::dev::input::wake_gui_soon();
+}
+
+/// The key ([`App::ident`]) of a window still open of one of the processes
+/// `pids` (the first that has one).
+pub fn ident_for(pids: &[u32]) -> Option<u64> {
+    let owners: Vec<(u32, Arc<Mutex<Win>>)> = OWNERS.lock().iter().filter_map(|(p, w)| Some((*p, w.upgrade()?))).collect();
+    pids.iter().find_map(|pid| {
+        owners.iter().find_map(|(p, w)| {
+            let w = w.lock();
+            (p == pid && !w.ended).then_some(w.key)
+        })
+    })
 }
 
 /// New windows for the desktop to open.

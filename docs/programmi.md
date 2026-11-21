@@ -230,7 +230,8 @@ Un'app può:
 - leggere le app, i caratteri, i certificati, i suoni e le icone di sistema;
 - usare le cartelle della home (`files:Immagini`, `files:Documenti`…) o un
   altro disco (`files:ram:`) dopo che l'utente ha detto sì: la prima volta
-  il sistema mostra la domanda e sospende la chiamata;
+  il sistema mostra la domanda e sospende la chiamata finché l'utente non
+  risponde;
 - aprire o salvare il file che l'utente sceglie nel selettore, senza altri
   permessi:
 
@@ -242,16 +243,41 @@ match justrt::app::pick_save("Disegno.qoi") {
 }
 ```
 
-Il resto restituisce `Denied`. Fotocamera, microfono, posizione e rete si
-chiedono al servizio `just.permissions`: `justrt::app::request("camera")`
-restituisce `Ok(true)` se l'utente consente, `permission("camera")` dice la
-risposta già data senza chiedere. Le risposte stanno in
-`sys:/system/permissions.json`; si cambiano in *Impostazioni → Sistema →
-Privacy delle app* o con `perms` nel terminale (`perms allow
-dev.justos.disegno files:Immagini`, `perms forget <app>`). Per provare un
-programma nella sandbox: `sandbox run <app_id> <programma>`.
+Il resto restituisce `Denied`. Fotocamera, microfono, posizione, rete e
+notifiche si chiedono al servizio `just.permissions`:
+`justrt::app::request("camera")` restituisce `Ok(true)` se l'utente
+consente, `permission("camera")` dice la risposta già data senza chiedere.
+Una notifica (`just.notify`) di un'app chiede prima il permesso
+`notifications`.
 
-I programmi Linux e Windows non sono (ancora) nella sandbox.
+Come su un telefono, **un'app appena installata non ha nessun permesso**:
+il manifest dice solo che cosa potrà chiedere. Alla prima richiesta compare
+una finestra al centro dell'app, con la sua icona, il suo nome e la domanda
+(«Consentire a Disegno di usare la fotocamera?») e tre pulsanti:
+
+- **Consenti**: vale per sempre;
+- **Solo questa volta**: vale finché l'app resta aperta;
+- **Non consentire** (quello scelto all'inizio, anche con Esc): l'app non
+  lo ha per il resto di questa volta e la prossima volta il sistema chiede
+  di nuovo; dopo due no di fila resta negato finché l'utente non lo cambia
+  in Impostazioni.
+
+Chiudere la finestra nega solo per questa volta, senza contare come un no.
+Le app di sistema non hanno sandbox e non chiedono; il file scelto nel
+selettore vale come consenso. Le risposte stanno in
+`sys:/system/permissions.json`; si cambiano in *Impostazioni → Privacy*,
+per app o per permesso, o con `perms` nel terminale (`perms allow
+dev.justos.disegno files:Immagini`, `perms deny <app> camera`, `perms forget
+<app>`). Per provare un programma nella sandbox: `sandbox run <app_id>
+<programma>`.
+
+I programmi Linux e Windows non sono (ancora) nella sandbox per i file, ma
+fotocamera e microfono valgono anche per loro: hanno l'identità
+`linux.<programma>` o `windows.<programma>`, con il nome e l'icona del loro
+file `.desktop` (Firefox è «Firefox»), e `sandbox::device_allowed(pid,
+permesso)` chiede per loro. Oggi però justOS non dà ancora a Linux né un
+microfono (PulseAudio non registra) né una fotocamera (non c'è V4L): `perms
+who <pid|programma>` mostra con che nome chiederebbe.
 
 ## Programmi con una finestra
 
@@ -341,7 +367,8 @@ Per metterne uno nel Negozio basta una cartella `system/store/<nome>` con il
 programma, un file `info` e un'icona `icon.qoi` di 128 pixel: il `Makefile`
 li copia in `sys:/store/<nome>`. Nel file `info` la riga
 `permissions=files:Immagini,camera` dichiara i permessi che l'app potrà
-chiedere: il Negozio li mostra nella sua pagina.
+chiedere: il Negozio li mostra nella sua pagina, ma installarla non ne dà
+nessuno.
 
 ### Aggiornamenti delle app
 

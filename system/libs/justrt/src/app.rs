@@ -70,9 +70,12 @@ pub fn pick_save(name: &str) -> Result<String> {
     pick(sys::PICK_SAVE, name)
 }
 
-/// Asks for a permission: `camera`, `microphone`, `location`, `network`
-/// or `files:<home folder>`. The system asks the user the first time and
-/// remembers; true if allowed.
+/// Asks for a permission: `camera`, `microphone`, `location`, `network`,
+/// `notifications` or `files:<home folder>`. An app starts with none of
+/// them: the system shows its dialog and the call waits for the answer.
+/// "Consenti" is kept, "Solo questa volta" lasts while the app runs, and a
+/// "Non consentire" lasts this run, then becomes final after a second one.
+/// True if allowed.
 pub fn request(permission: &str) -> Result<bool> {
     let answer = ask(&format!("{{\"request\":\"{permission}\"}}"))?;
     Ok(answer.contains("\"granted\":true"))

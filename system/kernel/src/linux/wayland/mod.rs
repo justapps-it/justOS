@@ -24,7 +24,7 @@ mod keymap;
 mod window;
 mod wire;
 
-pub use window::take_new;
+pub use window::{ident_for, take_new};
 
 use super::fd::{Desc, Kind};
 use super::shm::Shm;
@@ -1407,7 +1407,7 @@ impl Client {
         }
         self.compose(id, None);
         crate::info!("wayland", "window \"{title}\" {w}x{h} of process {}", self.pid);
-        window::open(win, self.inbox.clone(), id, icon);
+        window::open(win, self.inbox.clone(), id, icon, self.pid);
     }
 
     /// The content size of a toplevel: its window geometry, or its surface
