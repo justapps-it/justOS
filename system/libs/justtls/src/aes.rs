@@ -84,6 +84,57 @@ impl Aes {
             }
         }
     }
+
+    /// The inverse of [`Aes::encrypt`] (Wi-Fi's key unwrap needs it).
+    pub fn decrypt(&self, b: &mut [u8; 16]) {
+        let inv = inv_sbox();
+        let n = self.rk.len() - 1;
+        for round in (1..=n).rev() {
+            for i in 0..16 {
+                b[i] ^= self.rk[round][i];
+            }
+            if round != n {
+                for c in 0..4 {
+                    let a = [b[4 * c], b[4 * c + 1], b[4 * c + 2], b[4 * c + 3]];
+                    for r in 0..4 {
+                        b[4 * c + r] =
+                            gmul8(a[r], 14) ^ gmul8(a[(r + 1) % 4], 11) ^ gmul8(a[(r + 2) % 4], 13) ^ gmul8(a[(r + 3) % 4], 9);
+                    }
+                }
+            }
+            // InvShiftRows and InvSubBytes.
+            let s = *b;
+            for c in 0..4 {
+                for r in 0..4 {
+                    b[4 * ((c + r) % 4) + r] = inv[s[4 * c + r] as usize];
+                }
+            }
+        }
+        for i in 0..16 {
+            b[i] ^= self.rk[0][i];
+        }
+    }
+}
+
+fn inv_sbox() -> [u8; 256] {
+    let mut inv = [0u8; 256];
+    for (i, &s) in SBOX.iter().enumerate() {
+        inv[s as usize] = i as u8;
+    }
+    inv
+}
+
+/// a * b in GF(2^8).
+fn gmul8(mut a: u8, mut b: u8) -> u8 {
+    let mut p = 0;
+    while b != 0 {
+        if b & 1 == 1 {
+            p ^= a;
+        }
+        a = xtime(a);
+        b >>= 1;
+    }
+    p
 }
 
 /// Multiplication in GF(2^128) as GCM defines it.

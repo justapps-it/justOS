@@ -263,6 +263,73 @@ pub fn keypair(curve: Curve, random: &[u8]) -> (Limbs, Vec<u8>) {
     (k, out)
 }
 
+/// A curve as a group, for protocols that compute with points themselves
+/// (Wi-Fi's SAE). Numbers in and out are plain (not Montgomery form).
+pub struct Group {
+    c: Ctx,
+}
+
+/// A point of a [`Group`].
+#[derive(Clone)]
+pub struct Point(Pt);
+
+impl Group {
+    pub fn new(curve: Curve) -> Group {
+        Group { c: Ctx::new(curve) }
+    }
+
+    /// The field's prime p, as Montgomery arithmetic.
+    pub fn field(&self) -> &Mont {
+        &self.c.f
+    }
+
+    /// The group's order.
+    pub fn order(&self) -> &[u64] {
+        &self.c.n
+    }
+
+    /// The curve's b (plain).
+    pub fn b(&self) -> Limbs {
+        self.c.f.from(&self.c.b)
+    }
+
+    /// Bytes of a coordinate.
+    pub fn len(&self) -> usize {
+        self.c.len
+    }
+
+    /// The point (x, y), if it is on the curve.
+    pub fn point(&self, x: &[u64], y: &[u64]) -> Option<Point> {
+        let mut b = alloc::vec![4u8];
+        b.extend(bigint::to_be(x, self.c.len));
+        b.extend(bigint::to_be(y, self.c.len));
+        self.c.decode(&b).map(Point)
+    }
+
+    /// Affine (x, y); None for the point at infinity.
+    pub fn affine(&self, p: &Point) -> Option<(Limbs, Limbs)> {
+        self.c.affine(&p.0)
+    }
+
+    pub fn add(&self, a: &Point, b: &Point) -> Point {
+        Point(self.c.add(&a.0, &b.0))
+    }
+
+    pub fn mul(&self, k: &[u64], p: &Point) -> Point {
+        Point(self.c.mul(k, &p.0))
+    }
+
+    /// -p.
+    pub fn neg(&self, p: &Point) -> Point {
+        let zero = bigint::resize(&[0], self.c.f.m.len());
+        Point(Pt { x: p.0.x.clone(), y: self.c.f.sub(&zero, &p.0.y), z: p.0.z.clone() })
+    }
+
+    pub fn is_infinity(&self, p: &Point) -> bool {
+        Ctx::is_inf(&p.0)
+    }
+}
+
 /// The shared secret (x coordinate) of `k` and the peer's point.
 pub fn shared(curve: Curve, k: &[u64], peer: &[u8]) -> Option<Vec<u8>> {
     let c = Ctx::new(curve);

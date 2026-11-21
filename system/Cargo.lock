@@ -245,6 +245,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "justwifi"
+version = "0.10.0"
+dependencies = [
+ "justtls",
+]
+
+[[package]]
 name = "justzip"
 version = "0.10.0"
 
