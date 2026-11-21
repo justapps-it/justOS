@@ -2,7 +2,13 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ![La scrivania di justOS](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/scrivania.png)
 
-## Novità della 0.9
+## Novità della 0.9.1
+
+- **I programmi Linux hanno l'audio**: Firefox (YouTube, i siti, i suoni delle pagine) suona attraverso un piccolo server PulseAudio dentro il kernel, mescolato ai suoni di sistema e al volume delle Impostazioni. Senza scheda audio i programmi non si bloccano.
+- **Firefox si presenta ai siti come Firefox per Windows**: le pagine di download propongono la versione `.exe`, che si avvia con un doppio clic grazie a Wine.
+- I pacchetti `.deb` di Debian si installano con un doppio clic (o `deb install` nel Terminale), se le loro dipendenze sono già nel sistema.
+
+## Novità della 0.9.0
 
 - **La barra si trasforma**: invece di aggiungere una seconda barra, il dock stesso diventa un'isola al centro in basso per quello che succede (una notifica, il volume o la luminosità, un programma che si avvia, una canzone o un timer appena partiti, un timer che suona). Appena ci passi sopra con il puntatore torna la barra delle app; quando te ne vai l'isola ricompare.
 - **Il dock non scatta più**: passandoci sopra, lo sfondo resta fermo e le icone crescono sul posto.
@@ -21,6 +27,7 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ## Cosa non va ancora
 
+- Non si registra ancora dal microfono; l'audio dei programmi Windows con Wine non è ancora provato.
 - Molti programmi Windows a 32 bit e quelli grandi (Steam, per esempio) si fermano: la compatibilità è agli inizi.
 - Mancano Wi-Fi, Bluetooth e l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware, alla risoluzione scelta dal firmware, con un solo monitor.
 - La sospensione s2idle è provata in QEMU, non ancora su portatili veri; la retroilluminazione resta accesa (lo schermo diventa nero).

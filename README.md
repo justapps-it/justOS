@@ -50,7 +50,7 @@ onestà cosa funziona e cosa no.
 | **Avvio** | JustBoot: loader scritti da zero per BIOS (MBR e secondo stadio in assembly) e per UEFI (applicazione EFI in Rust). La stessa immagine parte da chiavetta USB, disco o CD live. |
 | **Desktop** | Dock con menu di sistema e stato che diventa un'isola per notifiche, volume, programmi che si avviano, musica e timer; Applicazioni, centro di controllo, centro notifiche, ricerca globale anche dentro i file (Ctrl+Spazio), desktop virtuali, snap delle finestre, tema scuro e chiaro, HiDPI a 2×, più monitor. |
 | **App** | File (con le anteprime delle immagini), Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi. |
-| **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con il dizionario italiano. I programmi con un file `.desktop` compaiono in Applicazioni. |
+| **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con l'audio e il dizionario italiano, e si presenta ai siti come Firefox per Windows, così propongono i programmi Windows da scaricare. I programmi con un file `.desktop` compaiono in Applicazioni. |
 | **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS. |
 | **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione (in RAM, o s2idle sui portatili senza S3). |
 | **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
@@ -155,7 +155,7 @@ dischi su cui installare justOS.
 |---|---|---|
 | Avvio BIOS e UEFI, kernel multiprocessore, JustFS | Funziona | Provato in QEMU; fino a 16 processori. |
 | Desktop e app di base | Funziona | Dock, ricerca, desktop virtuali, tema scuro e chiaro, HiDPI. |
-| Firefox ESR e programmi Linux | Funziona | Glibc di Debian, GTK 3, Wayland, in italiano. Niente X11, niente audio (in arrivo), niente accelerazione 3D (quindi niente WebGL), niente DRM Widevine. |
+| Firefox ESR e programmi Linux | Funziona | Glibc di Debian, GTK 3, Wayland, in italiano, con l'audio. Niente X11, niente accelerazione 3D (quindi niente WebGL), niente DRM Widevine. |
 | Programmi Windows | In parte | Wine 10 a 64 e 32 bit, console e finestre. Mancano DirectX accelerato e l'audio; i programmi grandi e recenti spesso non partono ancora. Non si garantisce che un dato programma funzioni. |
 | Aggiornamenti A/B del sistema | Funziona | Provati in QEMU (`make test-update`), con ritorno indietro. |
 | Hardware reale | In parte | Molti driver sono provati solo in QEMU; dettagli in [docs/driver.md](docs/driver.md#hardware-supportato). |
