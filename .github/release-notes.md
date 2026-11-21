@@ -2,6 +2,17 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ![La scrivania di justOS](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/scrivania.png)
 
+## Novità della 0.10.0
+
+- **Permessi come su un telefono**: le app non ricevono più nessun permesso quando le installi. La prima volta che una vuole una cartella, la rete, la fotocamera, il microfono o mandare notifiche, compare un popup al centro della sua finestra con *Consenti*, *Solo questa volta* e *Non consentire* (già selezionato, anche con Esc). Dopo due *Non consentire* di fila l'app non chiede più. In **Impostazioni → Privacy** vedi ogni permesso e ogni app, con un interruttore per cambiare idea e *Chiedi di nuovo*.
+- **Anche Firefox chiede il microfono**, con il suo nome e la sua icona, come i programmi Linux e Windows.
+- **Il microfono funziona**: la scheda audio registra, e Firefox, `parec` e i programmi Windows ricevono il suono.
+- **I programmi Windows hanno l'audio**: con Wine suonano (WASAPI e waveOut) e registrano.
+- **I pacchetti `.deb` portano con sé quello che gli serve**: con un doppio clic justOS cerca nell'archivio di Debian le dipendenze che mancano, ti dice cosa aggiunge («Servono anche 9 pacchetti, 9,7 MB») e le installa. L'indice è verificato con la firma di Debian e ogni file con la sua impronta SHA-256. Nel Terminale c'è anche `deb get <nome>`: `deb get figlet`, `deb get cowsay`.
+- Gli script che iniziano con `#!` (Perl, Python, shell) partono dal Terminale.
+
+![Firefox chiede il microfono](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/permessi.png)
+
 ## Novità della 0.9.1
 
 - **I programmi Linux hanno l'audio**: Firefox (YouTube, i siti, i suoni delle pagine) suona attraverso un piccolo server PulseAudio dentro il kernel, mescolato ai suoni di sistema e al volume delle Impostazioni. Senza scheda audio i programmi non si bloccano.
@@ -27,7 +38,8 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ## Cosa non va ancora
 
-- Non si registra ancora dal microfono; l'audio dei programmi Windows con Wine non è ancora provato.
+- Dall'archivio di Debian arrivano solo i pacchetti della release (trixie): gli aggiornamenti di sicurezza usciti dopo non ancora, perché quegli archivi sono compressi in xz.
+- La fotocamera non è ancora disponibile per i programmi Linux.
 - Molti programmi Windows a 32 bit e quelli grandi (Steam, per esempio) si fermano: la compatibilità è agli inizi.
 - Mancano Wi-Fi, Bluetooth e l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware, alla risoluzione scelta dal firmware, con un solo monitor.
 - La sospensione s2idle è provata in QEMU, non ancora su portatili veri; la retroilluminazione resta accesa (lo schermo diventa nero).

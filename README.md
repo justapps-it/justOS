@@ -50,13 +50,13 @@ onestà cosa funziona e cosa no.
 | **Avvio** | JustBoot: loader scritti da zero per BIOS (MBR e secondo stadio in assembly) e per UEFI (applicazione EFI in Rust). La stessa immagine parte da chiavetta USB, disco o CD live. |
 | **Desktop** | Dock con menu di sistema e stato che diventa un'isola per notifiche, volume, programmi che si avviano, musica e timer; Applicazioni, centro di controllo, centro notifiche, ricerca globale anche dentro i file (Ctrl+Spazio), desktop virtuali, snap delle finestre, tema scuro e chiaro, HiDPI a 2×, più monitor. |
 | **App** | File (con le anteprime delle immagini), Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi. |
-| **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con l'audio e il dizionario italiano, e si presenta ai siti come Firefox per Windows, così propongono i programmi Windows da scaricare. I programmi con un file `.desktop` compaiono in Applicazioni. |
-| **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS. |
+| **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con l'audio e il dizionario italiano, e si presenta ai siti come Firefox per Windows, così propongono i programmi Windows da scaricare. I programmi con un file `.desktop` compaiono in Applicazioni. Un pacchetto `.deb` si installa con un doppio clic insieme alle dipendenze che gli mancano, scaricate dall'archivio di Debian e controllate con la sua firma; `deb get <nome>` installa per nome. |
+| **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS e l'audio. |
 | **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione (in RAM, o s2idle sui portatili senza S3). |
 | **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
 | **Installazione** | Dalla chiavetta o dal CD justOS si installa sul disco del computer, con scelta del disco, conferma e barra di avanzamento. |
 | **Primo avvio** | Configurazione guidata in 10 passi: aspetto, tastiera, rete, account, nome del dispositivo, privacy e sfondo. |
-| **Sicurezza** | Le app di justOS hanno un'identità e una sandbox, e chiedono il permesso per cartelle, rete, fotocamera e microfono. Password con sale e blocco automatico dello schermo. |
+| **Sicurezza** | Permessi come su un telefono: nessuna app ne riceve di base, e la prima volta che una ne vuole uno (una cartella, la rete, la fotocamera, il microfono, le notifiche) compare un popup con *Consenti*, *Solo questa volta* e *Non consentire*; in Impostazioni → Privacy si cambia idea. Vale anche per Firefox e i programmi Linux e Windows che usano il microfono. Password con sale e blocco automatico dello schermo. |
 
 ## Com'è
 
@@ -75,6 +75,11 @@ onestà cosa funziona e cosa no.
 <td><img src="docs/screenshots/lanciatore.png" alt="Applicazioni: tutte le app con la ricerca" width="100%"><br><sub>Applicazioni (Ctrl+Spazio).</sub></td>
 <td><img src="docs/screenshots/impostazioni-chiaro.png" alt="Impostazioni con il tema chiaro" width="100%"><br><sub>Impostazioni, tema chiaro.</sub></td>
 <td><img src="docs/screenshots/isola.png" alt="Il dock diventato un'isola mentre Firefox si avvia" width="100%"><br><sub>Il dock diventa un'isola mentre Firefox si avvia.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/permessi.png" alt="Popup che chiede se consentire a Firefox di usare il microfono" width="100%"><br><sub>Un permesso, chiesto come su un telefono.</sub></td>
+<td><img src="docs/screenshots/pacchetti.png" alt="Installazione di cowsay con 9 pacchetti dall'archivio di Debian" width="100%"><br><sub>Un .deb con le sue dipendenze da Debian.</sub></td>
+<td></td>
 </tr>
 </table>
 
@@ -155,8 +160,8 @@ dischi su cui installare justOS.
 |---|---|---|
 | Avvio BIOS e UEFI, kernel multiprocessore, JustFS | Funziona | Provato in QEMU; fino a 16 processori. |
 | Desktop e app di base | Funziona | Dock, ricerca, desktop virtuali, tema scuro e chiaro, HiDPI. |
-| Firefox ESR e programmi Linux | Funziona | Glibc di Debian, GTK 3, Wayland, in italiano, con l'audio. Niente X11, niente accelerazione 3D (quindi niente WebGL), niente DRM Widevine. |
-| Programmi Windows | In parte | Wine 10 a 64 e 32 bit, console e finestre. Mancano DirectX accelerato e l'audio; i programmi grandi e recenti spesso non partono ancora. Non si garantisce che un dato programma funzioni. |
+| Firefox ESR e programmi Linux | Funziona | Glibc di Debian, GTK 3, Wayland, in italiano, con l'audio e il microfono. Niente X11, niente accelerazione 3D (quindi niente WebGL), niente DRM Widevine. |
+| Programmi Windows | In parte | Wine 10 a 64 e 32 bit, console e finestre. Con l'audio, anche dal microfono. Manca DirectX accelerato; i programmi grandi e recenti spesso non partono ancora. Non si garantisce che un dato programma funzioni. |
 | Aggiornamenti A/B del sistema | Funziona | Provati in QEMU (`make test-update`), con ritorno indietro. |
 | Hardware reale | In parte | Molti driver sono provati solo in QEMU; dettagli in [docs/driver.md](docs/driver.md#hardware-supportato). |
 | App Android | In corso | Interprete Dalvik per programmi semplici e driver binder; le app vere non girano. |

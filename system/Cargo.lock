@@ -143,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "just-kernel"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justaml",
  "justdeb",
@@ -158,11 +158,11 @@ dependencies = [
 
 [[package]]
 name = "justaml"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "justdeb"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justtls",
 ]
@@ -177,26 +177,26 @@ dependencies = [
 
 [[package]]
 name = "justdk"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "justdrv"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justdk",
 ]
 
 [[package]]
 name = "justfs"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "justgfx"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "justimage"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justgfx",
  "justzip",
@@ -204,26 +204,26 @@ dependencies = [
 
 [[package]]
 name = "justjson"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "justmath"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "justrt"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justdk",
 ]
 
 [[package]]
 name = "justtls"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "justui"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justdk",
  "justgfx",
@@ -232,21 +232,21 @@ dependencies = [
 
 [[package]]
 name = "justusb"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justdrv",
 ]
 
 [[package]]
 name = "justvirtio"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "justdrv",
 ]
 
 [[package]]
 name = "justzip"
-version = "0.9.1"
+version = "0.10.0"
 
 [[package]]
 name = "nvme"

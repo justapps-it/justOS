@@ -3,7 +3,7 @@ resolver = "2"
 members = ["kernel", "libs/*", "drivers/*", "apps/*", "store/*"]
 
 [workspace.package]
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 publish = false
 authors = ["Matthias Peterlini"]
