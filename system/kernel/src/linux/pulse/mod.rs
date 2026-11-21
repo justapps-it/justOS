@@ -226,31 +226,18 @@ fn update_props(props: &mut Props, mode: u32, new: Props) {
 }
 
 /// May the client's program record from the microphone? It needs the
-/// microphone permission of justOS's sandbox, asked once in the usual
-/// dialog and remembered: a program in a sandbox under its app; a Linux
-/// program, which has none, under a name made from its program
-/// (`linux.firefox-esr`), so that Impostazioni lists it with the apps.
-/// Linux programs read the user's files freely, but the microphone is only
-/// theirs through this server. Who the program is, the kernel says; the
-/// client's own name is only shown in the dialog.
-fn may_record(pid: u32, shown: Option<&str>) -> bool {
-    let Some(app) = crate::user::app_of(pid).or_else(|| linux_app(pid, shown)) else { return false };
-    let allowed = crate::sandbox::allowed(&app, "microphone");
+/// microphone permission of justOS's sandbox, asked in the usual popup the
+/// first time ([`crate::sandbox::device_allowed`]): an app under its own
+/// name, a Linux program as `linux.<file>` and a Windows one as
+/// `windows.<program>`, with the name and icon of its .desktop file, so that
+/// Impostazioni lists it with the apps. Linux programs read the user's files
+/// freely, but the microphone is only theirs through this server.
+fn may_record(pid: u32) -> bool {
+    let allowed = crate::sandbox::device_allowed(pid, "microphone");
     if !allowed {
-        crate::debug!("pulse", "client {pid}: {} may not use the microphone", app.id);
+        crate::debug!("pulse", "client {pid}: may not use the microphone");
     }
     allowed
-}
-
-/// A Linux program as the sandbox's table knows it.
-fn linux_app(pid: u32, shown: Option<&str>) -> Option<crate::sandbox::App> {
-    let program = crate::user::process_name(pid)?;
-    let name: alloc::string::String =
-        program.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c.to_ascii_lowercase() } else { '-' }).collect();
-    let name = name.trim_matches('-');
-    let id = alloc::format!("linux.{}", if name.is_empty() { "program" } else { name });
-    let shown = alloc::string::String::from(shown.filter(|s| !s.is_empty()).unwrap_or(&program));
-    Some(crate::sandbox::App { id, name: shown, icon: alloc::string::String::from("window") })
 }
 
 /// The keys of a REMOVE_*_PROPLIST command (up to a null string).
@@ -856,7 +843,7 @@ impl Client {
         } else {
             info::source(source_index, source_name.as_deref()).ok_or(ERR_NOENTITY)?
         };
-        if source == Source::Mic && !may_record(self.pid, tag::prop(&props, "application.name")) {
+        if source == Source::Mic && !may_record(self.pid) {
             return Err(ERR_ACCESS);
         }
         let channels = spec.channels as usize;
@@ -1029,7 +1016,7 @@ impl Client {
                     // the program that records (not while holding the list).
                     let (client, rec) = (o.client, o.rec.clone());
                     drop(outputs);
-                    if client != self.index || !may_record(self.pid, None) {
+                    if client != self.index || !may_record(self.pid) {
                         return Err(ERR_ACCESS);
                     }
                     rec.set_source(s);

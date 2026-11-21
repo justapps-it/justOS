@@ -42,6 +42,7 @@ export WINEDEBUG=-all,err+mmdevapi,err+winmm
 perms allow linux.wine64 microphone
 perms allow linux.wine64-preloader microphone
 perms allow linux.sndtest-exe microphone
+perms allow windows.sndtest microphone
 cd sys:/usr/lib/wine
 ./wine64 wineboot --init
 @sleep 200

@@ -242,10 +242,8 @@ pub fn check(path: &Path, write: bool) -> Result<(), Error> {
 /// kernel's services that hand devices to programs (the PulseAudio server
 /// before it records): an app or a Linux or Windows program is asked about
 /// in the popup the first time, and waits for the answer; the system's own
-/// programs may. Nothing hands a microphone or a camera to Linux programs
-/// yet (the PulseAudio server has no source): it calls this once it
-/// records.
-#[allow(dead_code)]
+/// programs may. The PulseAudio server calls it before it records; nothing
+/// hands a camera to Linux programs yet.
 pub fn device_allowed(pid: u32, perm: &str) -> bool {
     match who(pid) {
         Some(app) => allowed(&app, pid, perm),
