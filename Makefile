@@ -27,6 +27,8 @@
 #   make test-acpi     power button, a laptop's battery and sensors (AML),
 #                   sleep and wake-up
 #   make test-net      TCP, HTTP and HTTPS against servers on this machine
+#   make test-wifi     Wi-Fi against simulated access points (a test radio over
+#                   a virtio card; not part of test: the real card needs the PC)
 #   make test-linux    Linux programs with threads, sockets, poll (C, Rust, Go)
 #   make test-wayland  a Wayland client's window on the desktop: drawing,
 #                   pointer, keyboard, a popup
@@ -153,7 +155,7 @@ ifeq ($(PROFILE),release)
 CARGO_PROFILE := --release
 endif
 
-.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-net test-linux test-wayland test-winprep test-wine-audio test-gtk test-update shots assets check updates clean $(PACKAGES) shots-install test-install
+.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-net test-wifi test-linux test-wayland test-winprep test-wine-audio test-gtk test-update shots assets check updates clean $(PACKAGES) shots-install test-install
 
 all: image
 
@@ -288,6 +290,9 @@ test-acpi: test-image
 
 test-net: test-image
 	scripts/test-net.sh $(TEST_IMAGE)
+
+test-wifi: test-image
+	scripts/test-wifi.sh $(TEST_IMAGE)
 
 test-linux: test-image
 	scripts/test-linux.sh $(TEST_IMAGE)

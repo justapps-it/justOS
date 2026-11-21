@@ -206,6 +206,47 @@ pub fn start_services() {
     if crate::task::spawn("just.permissions", permissions_service).is_none() {
         crate::warn!("ipc", "could not start just.permissions");
     }
+    if crate::task::spawn("just.net", net_service).is_none() {
+        crate::warn!("ipc", "could not start just.net");
+    }
+}
+
+/// `just.net`, the network settings, for the system's programs (an app in a
+/// sandbox gets `{"error": …}`):
+///
+/// - `{"wifi": "status"}`: `{"present", "state", "text", "ssid", "channel",
+///   "rssi", "address"}`;
+/// - `{"wifi": "scan", "wait": true}`: `{"networks": [{"ssid", "security",
+///   "password", "rssi", "bars", "channel", "saved", "connected"}]}`
+///   (without `wait`, what was heard lately);
+/// - `{"wifi": "connect", "ssid": …, "password": …, "wait": true}`: joins
+///   (a known network without the password), and remembers it once joined;
+/// - `{"wifi": "disconnect"}`, `{"wifi": "forget", "ssid": …}`;
+/// - `{"wifi": "saved"}`: the names of the known networks (never their
+///   passwords, which stay in `sys:/system/wifi.json`).
+fn net_service() {
+    use justjson::Value;
+    let port = match create(0, Some("just.net")) {
+        Ok(p) => p,
+        Err(e) => {
+            crate::warn!("ipc", "just.net: {}", e.as_str());
+            return;
+        }
+    };
+    loop {
+        let Ok(m) = recv(port, 0, None, &|| false) else { continue };
+        let v = justjson::parse_bytes(&m.data).unwrap_or(Value::Null);
+        if crate::user::app_of(m.sender).is_some() {
+            reply(m.reply, &Value::object(alloc::vec![("error", Value::string("solo i programmi di sistema"))]));
+            continue;
+        }
+        // Connecting and scanning take seconds: answered from a thread.
+        let to = m.reply;
+        let asked = crate::task::spawn_big("just.net.ask", 128 * 1024, move || reply(to, &crate::net::wifi::request(&v)));
+        if asked.is_none() {
+            reply(m.reply, &Value::object(alloc::vec![("error", Value::string("occupato"))]));
+        }
+    }
 }
 
 /// `just.permissions`, the sandbox's table ([`crate::sandbox`]):

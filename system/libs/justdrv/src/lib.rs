@@ -822,6 +822,18 @@ pub fn audio_queued(output: Status, queued: AudioQueued) -> Status {
     unsafe { (api().audio_queued)(output as u32, queued) }
 }
 
+/// Registers a Wi-Fi radio; returns its number or an error.
+pub fn wifi_register(device: u32, desc: &'static WifiDesc) -> Status {
+    // SAFETY: kernel call with a valid descriptor.
+    unsafe { (api().wifi_register)(device, desc) }
+}
+
+/// A received 802.11 frame, its channel and signal strength (dBm).
+pub fn wifi_receive(radio: u32, frame: &[u8], channel: u8, rssi: i8) {
+    // SAFETY: kernel call with a valid buffer.
+    unsafe { (api().wifi_receive)(radio, frame.as_ptr(), frame.len(), channel as u32, rssi as i32) }
+}
+
 /// Registers a sound input (a microphone); returns its number or an error.
 pub fn capture_register(device: u32, desc: &'static CaptureDesc) -> Status {
     // SAFETY: kernel call with a valid descriptor.

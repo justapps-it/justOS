@@ -153,6 +153,7 @@ dependencies = [
  "justimage",
  "justjson",
  "justtls",
+ "justwifi",
  "justzip",
 ]
 

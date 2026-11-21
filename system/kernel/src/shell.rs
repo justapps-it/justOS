@@ -77,6 +77,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("irq", "", "le linee di interrupt e gli interrupt a messaggio"),
     ("net", "", "interfacce di rete e indirizzi"),
     ("ping", "<host> [numero]", "manda richieste ICMP echo"),
+    ("wifi", "[scan | connect <rete> [password] | disconnect | forget <rete> | saved | sim <netN>]", "reti Wi-Fi: cerca, connetti, dimentica"),
     ("host", "<nome>", "cerca l'indirizzo di un nome di host"),
     ("fetch", "<url> [file]", "scarica dal web (http e https)"),
     ("sha256", "<file>", "la somma SHA-256 di un file"),
@@ -710,6 +711,7 @@ impl Shell {
                     }
                 }
             }
+            "wifi" => wifi_command(&rest),
             "ping" => {
                 if need(1, "<host> [count]") {
                     let count: u16 = rest.get(1).and_then(|c| c.parse().ok()).unwrap_or(4);
@@ -2187,4 +2189,114 @@ fn owner_driver(d: &dev::Device) -> String {
         parent = p.info.parent;
     }
     String::from("—")
+}
+
+/// `wifi`: the Wi-Fi station (see [`crate::net::wifi`]).
+fn wifi_command(rest: &[&str]) {
+    use crate::net::wifi;
+    use justwifi::sta::State;
+    let sub = rest.first().copied().unwrap_or("status");
+    if sub != "sim" && !wifi::present() {
+        println!("{ERR}no Wi-Fi card{RESET} {DIM}(drivers: rtw8852be; for tests: wifi sim net<N>){RESET}");
+        return;
+    }
+    match sub {
+        "status" => {
+            let Some(s) = wifi::status() else { return };
+            println!("{BOLD}wifi{}{RESET}  {}  {DIM}net{}{RESET}", s.radio, justwifi::sta::mac_text(&s.mac), s.iface);
+            if let Some(r) = dev::wifi::list().into_iter().find(|r| r.index == s.radio) {
+                let card = match r.sim {
+                    Some(n) => alloc::format!("test radio over net{n}"),
+                    None => dev::get(r.device).map(|d| d.description()).unwrap_or_default(),
+                };
+                println!("      {DIM}{card}; frames received {}, sent {}{RESET}", r.rx, r.tx);
+            }
+            match s.state {
+                State::Connected => {
+                    println!("      connected to \"{}\"  channel {}  {} dBm  {}", s.ssid, s.channel, s.rssi, s.security.map(|x| x.name()).unwrap_or(""));
+                    match crate::net::config(s.iface) {
+                        Some((c, true)) => println!("      address {} gateway {}", c.ip, c.gateway),
+                        _ => println!("      {DIM}waiting for an address (DHCP){RESET}"),
+                    }
+                }
+                State::Idle => match s.failure {
+                    Some(f) => println!("      not connected {DIM}({}){RESET}", wifi::failure_en(f)),
+                    None => println!("      not connected"),
+                },
+                st => println!("      {st:?} \"{}\"", s.ssid),
+            }
+        }
+        "scan" => {
+            wifi::scan();
+            wifi::wait_scan(8000);
+            let nets = wifi::networks();
+            if nets.is_empty() {
+                println!("no networks heard");
+            }
+            for n in nets {
+                let bars: String = (0..4).map(|i| if i < n.bars { '#' } else { '.' }).collect();
+                let mark = if n.connected { "  connected" } else if n.saved { "  saved" } else { "" };
+                println!("  {:<24} ch {:>3}  {:>4} dBm  {bars}  {}{mark}", n.name, n.channel, n.rssi, n.security.name());
+            }
+        }
+        "connect" => {
+            let Some(ssid) = rest.get(1) else {
+                println!("usage: wifi connect <network> [password]");
+                return;
+            };
+            if let Err(e) = wifi::connect(ssid, rest.get(2).copied()) {
+                println!("{ERR}{e}{RESET}");
+                return;
+            }
+            match wifi::wait_connected(25_000) {
+                Ok(()) => {
+                    let iface = wifi::status().map(|s| s.iface).unwrap_or(0);
+                    print!("connected to \"{ssid}\"");
+                    let until = time::uptime_ms() + 8000;
+                    while time::uptime_ms() < until && !matches!(crate::net::config(iface), Some((_, true))) {
+                        task::sleep_ms(100);
+                    }
+                    match crate::net::config(iface) {
+                        Some((c, true)) => println!(", address {}", c.ip),
+                        _ => println!(", {WARN}no address yet{RESET}"),
+                    }
+                }
+                Err(f) => println!("{ERR}\"{ssid}\": {}{RESET}", wifi::failure_en(f)),
+            }
+        }
+        "disconnect" => {
+            wifi::disconnect();
+            println!("disconnected");
+        }
+        "auto" => {
+            wifi::resume_auto();
+            println!("joining known networks again");
+        }
+        "forget" => match rest.get(1) {
+            Some(ssid) if wifi::forget(ssid) => println!("forgot \"{ssid}\""),
+            Some(ssid) => println!("{WARN}\"{ssid}\" is not a known network{RESET}"),
+            None => println!("usage: wifi forget <network>"),
+        },
+        "saved" => {
+            let list = wifi::saved();
+            if list.is_empty() {
+                println!("no known networks");
+            }
+            for s in list {
+                let kind = if s.password.is_some() { "with password" } else { "open" };
+                println!("  {:<24} {DIM}{kind}{RESET}", String::from_utf8_lossy(&s.ssid));
+            }
+        }
+        "sim" => {
+            let Some(n) = rest.get(1).and_then(|t| t.trim_start_matches("net").parse::<u32>().ok()) else {
+                println!("usage: wifi sim net<N>   (the test radio over an Ethernet card, for make test-wifi)");
+                return;
+            };
+            match wifi::sim(n) {
+                Ok(r) => println!("wifi{r}: test radio over net{n}"),
+                Err(e) => println!("{ERR}net{n}: {e}{RESET}"),
+            }
+        }
+        _ => println!("usage: wifi [status | scan | connect <network> [password] | disconnect | auto | forget <network> | saved | sim net<N>]"),
+    }
 }

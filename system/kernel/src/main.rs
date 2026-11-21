@@ -166,6 +166,7 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
     driver::start_monitor();
     host::load();
     net::start();
+    net::wifi::start();
     ipc::start_services();
     appupdate::start();
     gui::boot_progress(82);

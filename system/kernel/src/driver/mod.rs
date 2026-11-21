@@ -308,6 +308,7 @@ impl Manager {
         dev::irq::detach(id, None);
         dev::block::device_gone(id);
         dev::net::remove_device(id);
+        dev::wifi::remove_device(id);
         dev::audio::remove_device(id);
         dev::capture::remove_device(id);
         dev::display::remove_device(id);

@@ -20,6 +20,7 @@ pub mod net;
 pub mod pci;
 pub mod platform;
 pub mod pm;
+pub mod wifi;
 
 use crate::sync::IrqLock;
 use alloc::string::String;

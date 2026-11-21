@@ -4,6 +4,7 @@
 
 pub mod http;
 pub mod tcp;
+pub mod wifi;
 
 use crate::dev::net as nic;
 use crate::sync::IrqLock;
@@ -70,6 +71,8 @@ struct Iface {
     server: Ip,
     /// A request sent while bound (the computer's name changed): its id.
     renewing: Option<u32>,
+    /// The link was up when last looked at.
+    link: bool,
 }
 
 struct Stack {
@@ -170,7 +173,11 @@ fn send_arp(iface: u32, op: u16, target_mac: Mac, target_ip: Ip) {
 fn route(dst: Ip) -> Option<(u32, Mac)> {
     let (iface, hop) = {
         let s = STACK.lock();
-        let (&n, i) = s.ifaces.iter().find(|(_, i)| i.dhcp == Dhcp::Bound || i.config.ip != Ip::ANY)?;
+        let has = |i: &&Iface| i.dhcp == Dhcp::Bound || i.config.ip != Ip::ANY;
+        let on_link = |i: &&Iface| i.config.mask != Ip::ANY && dst.u32() & i.config.mask.u32() == i.config.ip.u32() & i.config.mask.u32();
+        // The interface whose network the destination is on, or else the
+        // first one with an address (its gateway).
+        let (&n, i) = s.ifaces.iter().find(|(_, i)| has(i) && on_link(i)).or_else(|| s.ifaces.iter().find(|(_, i)| has(i)))?;
         let c = i.config;
         if dst == Ip::BROADCAST {
             return Some((n, BROADCAST_MAC));
@@ -461,6 +468,7 @@ fn dhcp_due() -> Option<u64> {
         .lock()
         .ifaces
         .values()
+        .filter(|i| i.link)
         .filter_map(|i| match i.dhcp {
             Dhcp::Idle => Some(0),
             Dhcp::Discovering { since, .. } | Dhcp::Requesting { since, .. } if i.attempts < DHCP_ATTEMPTS => Some(since + 3001),
@@ -476,6 +484,11 @@ pub fn start() {
     task::spawn("netd", || loop {
         let mut busy = false;
         for info in nic::list() {
+            if info.claimed {
+                // Wi-Fi's (the test radio's carrier): not an IP interface.
+                STACK.lock().ifaces.remove(&info.index);
+                continue;
+            }
             let start_dhcp = {
                 let mut s = STACK.lock();
                 let iface =
@@ -486,14 +499,31 @@ pub fn start() {
                         attempts: 0,
                         server: Ip::ANY,
                         renewing: None,
+                        link: info.link,
                     });
+                if iface.link != info.link {
+                    // Joined a network or left it: the address (if any) was
+                    // that network's; ask afresh once the link is up.
+                    iface.link = info.link;
+                    iface.config = Config::default();
+                    iface.dhcp = Dhcp::Idle;
+                    iface.attempts = 0;
+                    iface.server = Ip::ANY;
+                    iface.renewing = None;
+                    crate::info!("net", "net{}: link {}", info.index, if info.link { "up" } else { "down" });
+                    EVENTS.notify_all();
+                }
                 let now = time::uptime_ms();
+                if !info.link {
+                    false
+                } else {
                 match iface.dhcp {
                     Dhcp::Idle => true,
                     Dhcp::Discovering { since, .. } | Dhcp::Requesting { since, .. } => {
                         now - since > 3000 && iface.attempts < DHCP_ATTEMPTS
                     }
                     Dhcp::Bound => false,
+                }
                 }
             };
             if start_dhcp {

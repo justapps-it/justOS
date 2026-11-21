@@ -22,6 +22,7 @@ justjson.workspace = true
 justimage.workspace = true
 justaml.workspace = true
 justdeb.workspace = true
+justwifi.workspace = true
 
 [lints]
 workspace = true
