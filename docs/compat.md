@@ -317,6 +317,14 @@ usa il dizionario di `hunspell-it` (`/usr/share/hunspell`, dove lo cerca il
 Firefox di Debian); `dictionaries-common`, che lo registrerebbe per altri
 programmi con script Perl, resta fuori (`LINUX_SKIP`).
 
+Ai siti Firefox si presenta come Firefox su Windows 10 a 64 bit
+(`general.useragent.override`, `general.platform.override` e
+`general.oscpu.override` in `/etc/firefox-esr/justos.js`): le pagine di
+download propongono così la versione per Windows di programmi, driver e
+giochi, che qui gira con Wine, invece di quella per Linux, che di rado si
+installa. Il numero di versione nella stringa segue quello di Firefox (140)
+e va cambiato con lui.
+
 Alla chiusura Firefox ferma il thread che raccoglie i rapporti della sandbox
 (`SandboxReporter`): fa `shutdown(SHUT_RD)` sul socket `AF_UNIX` seqpacket
 su cui quel thread aspetta in `recvmsg`, e poi lo aspetta con
