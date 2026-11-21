@@ -1,0 +1,8 @@
+# Gli archivi di Debian da cui justOS prende i pacchetti che servono a un
+# .deb (doppio clic, o «deb install» nel Terminale) e quelli di «deb get».
+# Il formato è quello di apt: deb <indirizzo> <versione> <componenti>.
+# Gli indici devono essere firmati con una chiave di
+# /usr/share/keyrings/debian-archive-keyring.pgp o di /etc/apt/trusted.gpg.d.
+deb https://deb.debian.org/debian trixie main
+deb https://deb.debian.org/debian trixie-updates main
+deb https://deb.debian.org/debian-security trixie-security main

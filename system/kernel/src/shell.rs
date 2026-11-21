@@ -95,7 +95,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("shutdown", "", "spegne il computer (anche: off)"),
     ("suspend", "[idle | ram] [secondi] | check", "sospende con la memoria accesa (anche: sleep): in RAM (S3) o a corrente accesa (s2idle); si risveglia con un tasto, con il pulsante o dopo i secondi dati"),
     ("install", "[nome]", "installa un programma dal Negozio (anche: pkg); un .deb lo passa a dpkg"),
-    ("deb", "[list | install <file.deb> | remove <nome>]", "i pacchetti Debian installati con dpkg (il doppio clic su un .deb fa lo stesso, con una finestra)"),
+    ("deb", "[list | install [-y] <file.deb> | get [-y] <nome> | update | remove <nome>]", "i pacchetti Debian: installa un .deb con quello che gli serve dall'archivio di Debian (come apt), o un pacchetto per nome; il doppio clic su un .deb fa lo stesso, con una finestra"),
     ("uninstall", "<nome>", "rimuove un programma installato dal Negozio"),
     ("play", "<file.wav> | stop", "riproduce un file audio"),
     ("tone", "[hz] [ms]", "suona una nota (senza valori: 440 Hz per 500 ms)"),
@@ -1331,9 +1331,15 @@ impl Shell {
     }
 
     /// `deb list`: the packages installed from .deb files; `deb install
-    /// <file>` and `deb remove <name>` run dpkg through the Linux layer.
+    /// <file>` installs one with what it needs from Debian's archive (as
+    /// `apt install ./file.deb`), `deb get <name>` a package of the archive,
+    /// `deb update` fetches the archive's index again, `deb remove <name>`
+    /// takes one away. dpkg runs through the Linux layer.
     fn deb(&self, args: &[&str]) {
         use crate::gui::debinst;
+        // "-y" / "--si": no question before downloading.
+        let yes = args.iter().any(|a| matches!(*a, "-y" | "--yes" | "--si" | "--sì"));
+        let args: Vec<&str> = args.iter().copied().filter(|a| !matches!(*a, "-y" | "--yes" | "--si" | "--sì")).collect();
         match (args.first().copied(), args.get(1).copied()) {
             (None, _) | (Some("list"), _) => {
                 let list = debinst::user_packages();
@@ -1346,17 +1352,104 @@ impl Shell {
             }
             (Some("install"), Some(file)) => {
                 let Some(p) = self.path(file) else { return };
-                match debinst::install_blocking(&alloc::format!("{p}")) {
-                    Ok(log) => println!("{log}"),
-                    Err(e) => println!("{ERR}{file}: {e}{RESET}"),
+                let mut shown = String::new();
+                let r = debinst::prepare_file(&alloc::format!("{p}"), &mut |s| Self::index_step(&mut shown, &s));
+                self.deb_install(file, r, yes);
+            }
+            (Some("get"), Some(name)) => {
+                let mut shown = String::new();
+                let r = debinst::prepare_name(name, &mut |s| Self::index_step(&mut shown, &s));
+                self.deb_install(name, r, yes);
+            }
+            (Some("update"), _) => {
+                let mut shown = String::new();
+                match crate::apt::load(true, &mut |s| Self::index_step(&mut shown, &s)) {
+                    Ok((index, sources)) => println!("{} pacchetti in {} archivi", index.len(), sources.len()),
+                    Err(e) => println!("{ERR}{e}{RESET}"),
                 }
             }
             (Some("remove"), Some(name)) => match debinst::remove(name) {
                 Ok(log) => println!("{log}"),
                 Err(e) => println!("{ERR}{name}: {e}{RESET}"),
             },
-            _ => println!("usage: deb [list | install <file.deb> | remove <name>]"),
+            _ => println!("usage: deb [list | install [-y] <file.deb> | get [-y] <name> | update | remove <name>]"),
         }
+    }
+
+    /// A line for each new step of fetching the archive's index (not for
+    /// every piece of it that arrives).
+    fn index_step(shown: &mut String, step: &crate::apt::Step<'_>) {
+        let line = match step {
+            crate::apt::Step::Index(name, _, total) => alloc::format!("Scarico l'indice di {name} ({})…", crate::gui::debinst::size_text(total.div_ceil(1024))),
+            crate::apt::Step::Reading => String::from("Leggo l'indice dei pacchetti…"),
+        };
+        if *shown != line {
+            println!("{DIM}{line}{RESET}");
+            *shown = line;
+        }
+    }
+
+    /// Says what an installation will add, asks (unless `yes`), installs.
+    fn deb_install(&self, what: &str, prepared: Result<crate::gui::debinst::Prepared, String>, yes: bool) {
+        use crate::gui::debinst;
+        let p = match prepared {
+            Ok(p) => p,
+            Err(e) => return println!("{ERR}{what}: {e}{RESET}"),
+        };
+        println!("{BOLD}{}{RESET} {} {DIM}· {}{RESET}", p.info.name, p.info.version, p.info.short);
+        if let Some(sum) = p.summary() {
+            println!("{WARN}{sum}{RESET} {DIM}({} una volta installati){RESET}", debinst::size_text(p.installed_kib()));
+            let names = p.names();
+            if !names.is_empty() {
+                println!("  {names}");
+            }
+            if !yes && !self.ask("Continuare? [s/N] ") {
+                return println!("Annullato.");
+            }
+        }
+        let mut last = String::new();
+        let r = debinst::install_prepared(&p, &mut |_, doing| {
+            // The downloads, one line each; dpkg's steps come with its log.
+            if doing.starts_with("Scarico") && doing != last {
+                println!("{DIM}{doing}{RESET}");
+                last = String::from(doing);
+            }
+        });
+        match r {
+            Ok(log) => {
+                println!("{log}");
+                println!("{OK}{}{RESET}", debinst::installed_text(&p.info.name));
+            }
+            Err((why, detail)) if detail.is_empty() => println!("{ERR}{what}: {why}{RESET}"),
+            Err((why, detail)) => println!("{ERR}{what}: {why} ({detail}){RESET}"),
+        }
+    }
+
+    /// Asks a yes-or-no question on the console: yes only for "s", "si",
+    /// "sì", "y" or "yes".
+    fn ask(&self, question: &str) -> bool {
+        print!("{question}");
+        crate::console::set_cursor_visible(true);
+        let mut answer = String::new();
+        loop {
+            let ev = input::read_key();
+            match ev.key {
+                Key::Enter => break,
+                Key::Char('c') if ev.ctrl => {
+                    answer.clear();
+                    break;
+                }
+                Key::Char(c) if !ev.ctrl => {
+                    answer.push(c);
+                    print!("{c}");
+                }
+                Key::Backspace if answer.pop().is_some() => print!("\x08 \x08"),
+                _ => {}
+            }
+        }
+        crate::console::set_cursor_visible(false);
+        println!();
+        matches!(answer.trim().to_lowercase().as_str(), "s" | "si" | "sì" | "y" | "yes")
     }
 
     /// Installs a program into `sys:/apps`, so it can be run by name: from

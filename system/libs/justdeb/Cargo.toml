@@ -1,0 +1,13 @@
+[package]
+name = "justdeb"
+description = "Debian archives for justOS: versions, control files, relations, signed indexes (OpenPGP) and a dependency resolver (no_std)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+
+[dependencies]
+justtls.workspace = true
+
+[lints]
+workspace = true

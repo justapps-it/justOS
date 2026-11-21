@@ -21,6 +21,7 @@ justzip.workspace = true
 justjson.workspace = true
 justimage.workspace = true
 justaml.workspace = true
+justdeb.workspace = true
 
 [lints]
 workspace = true

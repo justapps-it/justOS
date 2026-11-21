@@ -141,6 +141,7 @@ chiamate `WIN_CREATE`/`WIN_PRESENT`/`WIN_EVENT`.
 | Negozio grafico con installazione in un clic | ✅ (`sys:/store`, pacchetti `.app`) |
 | Aggiornamenti delle app in background | ✅ indice firmato Ed25519, servizio `just.updates`, sezione Aggiornamenti del Negozio |
 | Permessi in stile mobile | ✅ cartelle, dischi, fotocamera, microfono, posizione, rete (`just.permissions`) |
+| Pacchetti Debian (`.deb`) | ✅ con le dipendenze dall'archivio di Debian, come `apt install ./file.deb`: indice firmato (RSA ed Ed25519, chiavi di `debian-archive-keyring`), file controllati con SHA-256; `deb get <nome>` nel Terminale (`kernel/src/apt.rs`, `libs/justdeb`) |
 | Programmi Linux (ELF) | ✅ statici e dinamici con la glibc di Debian, finestre Wayland, GTK 3, Firefox ESR; in italiano, con la localizzazione `it_IT.UTF-8` e le traduzioni (`kernel/src/linux`, `make test-linux`, `make test-gtk`) |
 | Programmi Windows (PE) | 🟡 Wine 10 per i programmi a 64 e a 32 bit, console e finestre, di serie nell'immagine di disco (doppio clic su un `.exe`); `winrun` per quelli semplici e nel CD live |
 | Android (DEX/APK) | 🟡 `dalvik`, programmi semplici; driver binder e `/dev/ashmem` per il sistema Android vero (`kernel/src/linux/binder.rs`, `ashmem.rs`) |
@@ -172,6 +173,15 @@ dichiarare, come per ogni sistema non commerciale.
 
 Manca: la firma anche per i programmi Linux e Windows (oggi solo HTTPS) e
 il ritorno alla versione precedente.
+
+**Pacchetti Debian.** Un `.deb` prende da solo quello che gli manca
+dall'archivio di Debian 13 (vedi `compat.md`, "Pacchetti Debian"). Manca:
+gli aggiornamenti dei pacchetti installati (un `deb upgrade`), il controllo
+delle autofirme e delle revoche delle chiavi, lo `.xz` (oggi `.gz` o
+l'indice non compresso: per questo `trixie-updates` e `trixie-security`,
+che hanno solo lo `.xz`, si saltano), gli altri componenti (`contrib`, `non-free`) se non
+aggiunti a mano, e il ritorno indietro del risolutore quando una scelta
+avida porta a un vicolo cieco.
 ## 3. Plug and play
 
 | Cosa | Stato |

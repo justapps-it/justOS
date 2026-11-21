@@ -647,10 +647,13 @@ Un doppio clic su un `.deb` apre la finestra «Installazione»
 il pacchetto con `dpkg-deb -f` (gzip, xz o zstd: li apre `dpkg`), ne mostra
 nome, versione, descrizione e spazio, e controlla che sia per amd64 (o
 `all`), che le sue dipendenze ci siano, nelle versioni chieste (`>=`, `<<`,
-`=`…), e che ci sia spazio. Se manca un pacchetto la finestra lo nomina e
-non installa niente: i pacchetti mancanti non si scaricano (ancora) da soli.
-Con «Installa» parte `dpkg -i` attraverso il livello Linux, script del
-pacchetto compresi, con una barra. Alla fine, se il pacchetto porta un
+`=`…), e che ci sia spazio. Se mancano dei pacchetti li prende
+dall'archivio di Debian, come `apt install ./file.deb`: la finestra dice
+«Servono anche 12 pacchetti, 34 MB da scaricare», con i nomi, e aspetta
+«Installa». Con «Installa» scarica i pacchetti che servono (con una barra),
+poi parte `dpkg -i` attraverso il livello Linux, script del pacchetto
+compresi: prima le dipendenze, nell'ordine giusto, poi il file. Se qualcosa
+va storto, i pacchetti nuovi si tolgono di nuovo. Alla fine, se il pacchetto porta un
 `.desktop`, «Apri» avvia il programma, che è anche nel launcher; sennò la
 finestra dice il comando da digitare nel Terminale.
 
@@ -658,13 +661,78 @@ Dal Terminale:
 
 ```
 deb                        i pacchetti installati da un .deb (anche: deb list)
-deb install hello.deb      installa, con gli stessi controlli della finestra
+deb install hello.deb      installa, con gli stessi controlli della finestra; se
+                           servono altri pacchetti li elenca e chiede
+                           «Continuare? [s/N]» (con -y o --si non chiede)
+deb get cowsay             installa un pacchetto dell'archivio, per nome
+deb update                 scarica di nuovo l'indice dell'archivio
 deb remove hello           lo toglie (dpkg --purge); quelli del sistema restano
 install hello.deb          come deb install
 ```
 
-I programmi dei pacchetti vanno in `/usr/bin`: la shell li trova per nome
-dopo i suoi comandi, i programmi di `sys:/apps` e quelli di BusyBox.
+#### Le dipendenze dall'archivio di Debian
+
+Il codice è in `system/kernel/src/apt.rs` (scaricare, controllare, la
+cache) e nella libreria `system/libs/justdeb` (con i test: `make check`):
+
+- **Gli archivi** sono quelli di `/etc/apt/sources.list` (e
+  `sources.list.d/*.list` o `*.sources`, il formato deb822): di serie
+  `trixie`, `trixie-updates` e `trixie-security` di `deb.debian.org`,
+  componente `main`, per amd64.
+- **La firma.** Di ogni archivio si scarica `InRelease`, in HTTPS, e se ne
+  controlla la firma OpenPGP con le chiavi di `debian-archive-keyring`
+  (nell'immagine: `/usr/share/keyrings/debian-archive-keyring.pgp`) e di
+  `/etc/apt/trusted.gpg.d`: RSA (PKCS#1 v1.5) ed Ed25519, con SHA-256, 384
+  o 512 (`justdeb::pgp`, sopra `justtls`). Un indice senza una firma valida
+  si rifiuta, e anche uno scaduto (`Valid-Until`). Cosa non si controlla:
+  le chiavi si prendono come sono nel file, senza guardarne le
+  autofirme, la scadenza o le revoche (il portachiavi è quello di Debian,
+  nell'immagine, e lo si aggiorna con l'immagine).
+- **L'indice.** `Packages.gz` (o `Packages`, non compresso) si scarica per
+  hash (`by-hash/SHA256`, se no per nome), se ne controllano dimensione e
+  SHA-256 con quelli di `InRelease`, e se ne tengono solo i campi che
+  servono, in `/var/cache/justos-apt`, per un giorno. Senza rete si usa
+  la cache vecchia. Leggerlo, su `trixie` (quasi 69.000 pacchetti, 13 MB
+  compressi), prende qualche secondo nell'emulatore. **Limite:**
+  `trixie-updates` e `trixie-security` sui server di Debian hanno l'indice
+  solo in `.xz` (il `Packages` non compresso è elencato in `InRelease` ma
+  non c'è), e justOS lo `.xz` non lo apre ancora: quei due archivi si
+  saltano (una riga nel giornale) e si usa solo `trixie`. I pacchetti
+  vengono quindi dalla versione del rilascio, senza gli aggiornamenti di
+  sicurezza usciti dopo; un archivio che non si può leggere è un errore
+  solo se non se ne legge nessuno.
+- **La scelta dei pacchetti** (`justdeb::resolve`): `Depends` e
+  `Pre-Depends`, le alternative (`a | b`), le versioni (`>=`, `<<`, `=`…,
+  con il confronto di dpkg: epoca, `~`, revisione), i pacchetti virtuali
+  (`Provides`), Multi-Arch di base (`:any`, `all` e `amd64`). Si preferisce
+  quello che c'è già, poi la versione più nuova; un pacchetto installato
+  troppo vecchio si aggiorna. `Conflicts` e `Breaks`, in tutte e due le
+  direzioni, fermano l'installazione con un messaggio (««a» non va
+  d'accordo con «b», che è installato»). Non c'è il ritorno indietro di apt
+  quando una scelta porta a un vicolo cieco: si sceglie una volta, in modo
+  avido; per i pacchetti di Debian finora basta.
+- **I file.** Ogni `.deb` si scarica in `/home/.cache/debinst/archives` e
+  se ne controllano dimensione e SHA-256 con l'indice firmato; poi `dpkg -i`
+  li installa a gruppi (un `Pre-Depends` chiude un gruppo, così il pacchetto
+  richiesto c'è, configurato, prima di chi ne ha bisogno), in ordine di
+  dipendenza, e per ultimo il file aperto.
+
+`make test-compat` lo prova con un piccolo archivio fatto al momento
+(`scripts/compat/aptarchive.py`, firmato con una chiave di prova messa
+nell'immagine in `/etc/apt/trusted.gpg.d`), servito dal computer su cui gira
+QEMU (10.0.2.2): un `.deb` con un `Pre-Depends`, una dipendenza con
+versione e alternativa e un pacchetto virtuale si installa con le sue tre
+dipendenze e il suo programma legge il file di una di esse; `deb get`
+installa un pacchetto per nome; un conflitto, un file cambiato e un indice
+firmato da una chiave sconosciuta si rifiutano.
+
+I programmi dei pacchetti vanno in `/usr/bin` (o `/usr/games`, come
+`cowsay`): la shell li trova per nome dopo i suoi comandi, i programmi di
+`sys:/apps` e quelli di BusyBox. Uno script che comincia con `#!` (Perl,
+Python, sh: `cowsay` è in Perl) parte con il suo interprete, come su Linux.
+Le descrizioni dei terminali (`ncurses-base`, che Debian dà per scontato e
+nessun pacchetto chiede) sono nell'immagine, così partono anche i programmi
+con curses, come `sl`.
 `hello` di Debian si chiama come l'app `hello` di justOS, quindi parte con
 `sys:/usr/bin/hello`; la finestra, alla fine, dice già cosa digitare.
 
@@ -688,7 +756,7 @@ parte, la sua icona salta nel dock finché non arriva la finestra.
 | programma Linux da riga di comando | si apre nel Terminale | come prima |
 | `.desktop` | parte il programma del suo `Exec` | verificato |
 | AppImage | si estrae e parte da lì (`--appimage-extract-and-run`: FUSE non c'è); ci vuole un po' | verificato con una AppImage |
-| `.deb` | la finestra «Installazione» lo legge, controlla dipendenze e spazio, e con «Installa» lo installa `dpkg` (vedi "Pacchetti Debian") | verificato con screenshot: `hello` di Debian 13 (barra, poi il comando da digitare), `xarchiver` (GTK 3: «Apri» apre la sua finestra, ed è nel launcher), `sl` (mancano `libncurses6` e `libtinfo6`: la finestra li nomina, niente scritto); dal Terminale anche un `.deb` con membri zstd; non verificati il tema chiaro, «Aggiorna», un pacchetto con script che falliscono, lo spazio che manca |
+| `.deb` | la finestra «Installazione» lo legge, controlla dipendenze e spazio, prende dall'archivio di Debian i pacchetti che mancano e con «Installa» lo installa `dpkg` (vedi "Pacchetti Debian") | verificato con screenshot: `hello` di Debian 13 (barra, poi il comando da digitare), `xarchiver` (GTK 3: «Apri» apre la sua finestra, ed è nel launcher), `sl` (mancano `libncurses6` e `libtinfo6`: la finestra dice «Servono anche 2 pacchetti, 443 kB da scaricare», li scarica da `deb.debian.org` e li installa, e `sl` parte), `cowsay` (9 pacchetti, 9,7 MB, Perl compreso: il programma parte); `deb get -y figlet` dal Terminale; dal Terminale anche un `.deb` con membri zstd; non verificati il tema chiaro, «Aggiorna», un pacchetto con script che falliscono, lo spazio che manca |
 | `.html`, `.htm` e link | si aprono in Firefox, se c'è; sennò i file nell'editor, e per i link una notifica dice che serve Firefox | verificato con un file .html; se Firefox è già aperto una seconda pagina non gli si può passare (manca D-Bus): una notifica dice di aprirla da Firefox (Ctrl+O) (verificato) |
 | `.dmg`, programmi Mach-O, cartelle `.app` di macOS | "Le app per macOS non funzionano su justOS." | non funziona |
 | `.pkg` | l'installatore lo scompatta, come prima | come prima |

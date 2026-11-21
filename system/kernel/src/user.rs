@@ -223,6 +223,15 @@ pub fn spawn(path: &Path, args: &str, cwd: Path) -> Result<u32, Error> {
 /// program; "NAME=value" sets one, "NAME=" leaves a default out). The
 /// programs it starts get them too. Returns its process id.
 pub fn spawn_env(path: &Path, args: &str, cwd: Path, env: Vec<String>) -> Result<u32, Error> {
+    // One level, as Linux: an interpreter that is a script itself is not
+    // followed further.
+    match script(path, args)? {
+        Some((interpreter, args)) => spawn_file(&interpreter, &args, cwd, env),
+        None => spawn_file(path, args, cwd, env),
+    }
+}
+
+fn spawn_file(path: &Path, args: &str, cwd: Path, env: Vec<String>) -> Result<u32, Error> {
     let name = path.name();
     let (app, cwd) = app_for(path, cwd);
     let mut magic = [0u8; 4];
@@ -246,6 +255,36 @@ pub fn spawn_env(path: &Path, args: &str, cwd: Path, env: Vec<String>) -> Result
     let kind = if name.to_ascii_lowercase().ends_with(".app") { Kind::Native } else { Kind::Linux };
     let shown = if kind == Kind::Native { &name[..name.len() - 4] } else { name };
     start(image, String::from(shown), args, cwd, kind, path, app, env)
+}
+
+/// A script that starts with `#!` (Debian's packages bring many, in Perl,
+/// Python or sh: cowsay, for one) runs as Linux does it: its interpreter,
+/// with the optional argument of that line, then the script's own Linux
+/// path, then the arguments. The interpreter is looked up on the script's
+/// volume. None for anything else.
+fn script(path: &Path, args: &str) -> Result<Option<(Path, String)>, Error> {
+    let mut head = [0u8; 256];
+    let n = fs::read_at(path, 0, &mut head).map_err(fs_error)?;
+    if n < 3 || head[..2] != *b"#!" {
+        return Ok(None);
+    }
+    let line = head[2..n].split(|&b| b == b'\n').next().unwrap_or_default();
+    let line = core::str::from_utf8(line).map_err(|_| Error::BadProgram)?.trim();
+    let (interpreter, extra) = line.split_once(char::is_whitespace).map_or((line, ""), |(i, a)| (i, a.trim()));
+    if !interpreter.starts_with('/') {
+        return Err(Error::BadProgram);
+    }
+    let program = Path::parse(interpreter, &Path::root(&path.volume)).map_err(fs_error)?;
+    let inner = crate::linux::show_path(path);
+    let file = if inner.contains(char::is_whitespace) { alloc::format!("\"{inner}\"") } else { inner };
+    let mut all = String::new();
+    for part in [extra, &file, args] {
+        if !part.is_empty() {
+            all.push_str(if all.is_empty() { "" } else { " " });
+            all.push_str(part);
+        }
+    }
+    Ok(Some((program, all)))
 }
 
 #[allow(clippy::too_many_arguments)]

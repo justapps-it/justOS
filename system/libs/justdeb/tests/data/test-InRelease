@@ -1,0 +1,19 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: justOS tests
+Suite: test
+Codename: test
+Date: Sat, 21 Nov 2026 02:10:46 UTC
+Description: a line with trailing spaces
+- - a line that starts with a dash
+- -----a line that looks like armor
+SHA256:
+ 0000000000000000000000000000000000000000000000000000000000000000 10 main/binary-amd64/Packages
+-----BEGIN PGP SIGNATURE-----
+
+iHUEARYKAB0WIQQw2sMW9RZ3eFvYpR+qGO1/RlJlqQUCawFqpgAKCRCqGO1/RlJl
+qQl7AQCau60dmR1OYvjc75vsCntiGEwxT9iMCAEZo93KSoCKvgD/ab/6zjhAnbK8
+eniHgB3UIeXAV97iX54jKJdvn+G2fgQ=
+=LMyN
+-----END PGP SIGNATURE-----

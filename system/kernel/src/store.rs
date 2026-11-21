@@ -740,7 +740,7 @@ fn install_mac(data: &[u8], name: &str) -> Result<String, String> {
 }
 
 /// Makes a directory and those above it (those that exist are kept).
-fn make_dirs(dir: &str) {
+pub fn make_dirs(dir: &str) {
     let mut at = String::new();
     for part in dir.split('/') {
         if !at.is_empty() && !at.ends_with('/') {

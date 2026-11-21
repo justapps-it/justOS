@@ -146,6 +146,7 @@ name = "just-kernel"
 version = "0.9.1"
 dependencies = [
  "justaml",
+ "justdeb",
  "justdk",
  "justfs",
  "justgfx",
@@ -158,6 +159,13 @@ dependencies = [
 [[package]]
 name = "justaml"
 version = "0.9.1"
+
+[[package]]
+name = "justdeb"
+version = "0.9.1"
+dependencies = [
+ "justtls",
+]
 
 [[package]]
 name = "justdex"

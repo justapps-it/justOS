@@ -6,9 +6,17 @@
 # justOS and checks that they run: the Linux ABI, the Windows loader (winrun),
 # the Dalvik interpreter, `install` and the BusyBox applets.
 #
-# Needs musl-gcc (musl-tools) and x86_64-w64-mingw32-gcc (mingw-w64). If either
-# is missing, that half is skipped (and noted), so the script still checks what
-# it can.
+# With the Linux program it also checks the .deb installer's dependencies
+# (src/apt.rs): a small Debian archive (scripts/compat/aptarchive.py, signed
+# with a test key that goes into the image's /etc/apt/trusted.gpg.d) is
+# served from this machine, justOS reaches it at 10.0.2.2 through QEMU's user
+# network; a .deb that depends on packages of it is installed, with them, and
+# its program runs; a conflict, a corrupted download and an index signed by
+# an unknown key are refused.
+#
+# Needs musl-gcc (musl-tools) and x86_64-w64-mingw32-gcc (mingw-w64), and gpg
+# for the archive. If one is missing, that part is skipped (and noted), so the
+# script still checks what it can.
 #
 # Usage: scripts/test-compat.sh <image>
 # Prints the lines missing from the session and exits non-zero if any;
@@ -18,7 +26,8 @@ IMAGE=${1:?usage: test-compat.sh <image>}
 HERE=$(dirname "$0")
 JUSTTOOL=${JUSTTOOL:-$HERE/../tools/target/release/justtool}
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+PIDS=
+trap 'for p in $PIDS; do kill "$p" 2>/dev/null; done; rm -rf "$WORK"' EXIT
 cp --sparse=always "$IMAGE" "$WORK/justos.img" || exit 2
 "$JUSTTOOL" fs "$WORK/justos.img" mkdir /home/compat >/dev/null 2>&1
 
@@ -74,6 +83,27 @@ EOF
 fi
 [ $have_linux = 0 ] && echo "  note: musl-gcc not available, skipping the Linux program"
 
+# The archive for `deb install` with dependencies and `deb get`.
+have_apt=0
+if [ $have_linux = 1 ] && command -v gpg >/dev/null 2>&1; then
+    mkdir -p "$WORK/aptbin"
+    printf '#include <stdio.h>\nint main(void) { char b[128]; FILE *f = fopen("/usr/share/aptlib/greeting.txt", "r");\n if (!f) { puts("aptapp: no aptlib"); return 1; }\n if (fgets(b, sizeof b, f)) printf("aptapp: %%s", b); return 0; }\n' > "$WORK/aptapp.c"
+    printf '#include <stdio.h>\nint main(void) { puts("aptother: runs"); return 0; }\n' > "$WORK/aptother.c"
+    P_APT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+    if musl-gcc -static -Os -o "$WORK/aptbin/aptapp" "$WORK/aptapp.c" && musl-gcc -static -Os -o "$WORK/aptbin/aptother" "$WORK/aptother.c" &&
+        python3 "$HERE/compat/aptarchive.py" "$WORK/www" "$WORK/aptbin" "$WORK/aptlocal" "$WORK/apt-test.asc"; then
+        (cd "$WORK/www" && exec python3 -m http.server "$P_APT" --bind 127.0.0.1 >/dev/null 2>&1) & PIDS="$PIDS $!"
+        echo "deb http://10.0.2.2:$P_APT/debian test main" > "$WORK/sources.list"
+        "$JUSTTOOL" fs "$WORK/justos.img" put "$WORK/sources.list" /etc/apt/sources.list >/dev/null &&
+            "$JUSTTOOL" fs "$WORK/justos.img" mkdir /etc/apt/trusted.gpg.d >/dev/null 2>&1
+        "$JUSTTOOL" fs "$WORK/justos.img" put "$WORK/apt-test.asc" /etc/apt/trusted.gpg.d/justos-test.asc >/dev/null &&
+            "$JUSTTOOL" fs "$WORK/justos.img" put "$WORK/aptlocal/aptapp_1.0_amd64.deb" /home/compat/aptapp_1.0_amd64.deb >/dev/null &&
+            "$JUSTTOOL" fs "$WORK/justos.img" put "$WORK/aptlocal/aptbad_1.0_amd64.deb" /home/compat/aptbad_1.0_amd64.deb >/dev/null &&
+            have_apt=1
+    fi
+fi
+[ $have_linux = 1 ] && [ $have_apt = 0 ] && echo "  note: gpg not available (or the archive failed), skipping the .deb dependencies"
+
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     cat > "$WORK/whello.c" <<'EOF'
 #include <stdio.h>
@@ -121,6 +151,18 @@ DEX=$HERE/../system/libs/justdex/tests
     echo 'seq 1 3'
     echo 'grep linux t.lua'
     [ $have_linux = 1 ] && { echo './lhello one two'; echo 'install debhello_1.0_amd64.deb'; echo 'debhello from-deb'; }
+    # The question before the download is answered with "s".
+    [ $have_apt = 1 ] && cat <<EOF
+deb install aptapp_1.0_amd64.deb
+s
+aptapp
+deb get -y aptother
+aptother
+deb install -y aptbad_1.0_amd64.deb
+deb get -y aptcorrupt
+write sys:/etc/apt/sources.list deb http://10.0.2.2:$P_APT/debian untrusted main
+deb update
+EOF
     # wtest reads a number from the keyboard: the line after it.
     [ $have_windows = 1 ] && { echo 'whello.exe alpha beta'; echo 'wtest.exe'; echo '21'; echo 'wgui.exe'; echo '@sleep 2'; }
     echo 'lua t.lua'
@@ -144,6 +186,16 @@ DEX=$HERE/../system/libs/justdex/tests
     echo 'I/selftest: label clic 2'
     echo 'I/selftest: destroyed after 2 clicks'
     [ $have_linux = 1 ] && { echo 'linux: heap ok'; echo 'linux: float=3.142'; echo 'linux: read back: written by a linux program'; echo 'linux: argv[1]=from-deb'; }
+    [ $have_apt = 1 ] && cat <<EOF
+Servono anche 3 pacchetti
+aptpre, aptlib, aptprov
+aptapp: greeting from aptlib 1.2
+«aptother» è installato
+aptother: runs
+«aptbad» non va d'accordo con «debhello», che è installato
+«aptcorrupt» scaricato non corrisponde all'indice firmato
+l'indice di 10.0.2.2:$P_APT untrusted non ha una firma valida di Debian
+EOF
     [ $have_windows = 1 ] && cat <<'EOF'
 windows: squares 0 1 4 9
 windows: float=2.718
@@ -166,6 +218,8 @@ wgui: quit 7
 EOF
 } > "$WORK/expect.txt"
 
+# The archive's packages take a few more dpkg runs.
+[ $have_apt = 1 ] && export QEMU_TIMEOUT=${QEMU_TIMEOUT:-300}
 STEP_WAIT=${STEP_WAIT:-2} "$HERE/test.sh" "$WORK/justos.img" "$WORK/session.txt" > "$WORK/out.txt" 2>&1
 STATUS=$?
 FAILED=0
@@ -185,6 +239,6 @@ elif [ $FAILED = 1 ]; then
     sed -n '/cd sys:\/home\/compat/,$p' "$WORK/out.txt" | tail -n 150 | sed 's/^/    | /'
 fi
 if [ $FAILED = 0 ]; then
-    echo "  ok    compat ($(grep -c . "$WORK/expect.txt") checks, linux=$have_linux windows=$have_windows)"
+    echo "  ok    compat ($(grep -c . "$WORK/expect.txt") checks, linux=$have_linux windows=$have_windows apt=$have_apt)"
 fi
 exit $FAILED

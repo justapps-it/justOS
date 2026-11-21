@@ -12,6 +12,7 @@ extern crate alloc;
 
 mod acpi;
 mod appupdate;
+mod apt;
 mod arch;
 mod boot;
 mod console;

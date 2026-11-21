@@ -82,6 +82,12 @@ LINUX_PKGS ?= dash dpkg tar coreutils diffutils grep sed desktop-file-utils libc
 # Sound: libpulse, through which programs (Firefox, Wine) play on the
 # kernel's PulseAudio server, and its paplay and pactl.
 LINUX_PKGS += libpulse0 pulseaudio-utils
+# The keys of Debian's archive: with them the kernel checks the signed index
+# a .deb's missing dependencies come from (src/apt.rs). And ncurses-base,
+# the terminal descriptions (terminfo: xterm, linux): it is Essential, so
+# no package says it needs it, and a curses program from a .deb (sl) would
+# not start without it.
+LINUX_PKGS += debian-archive-keyring ncurses-base
 LINUX_DIST ?= trixie
 # Linux programs speak Italian, like the rest of justOS: debroot.py
 # compiles these glibc locales into the tree and keeps the translations
@@ -323,7 +329,7 @@ photos:
 	tools/assets/gen_thumbs.py rootfs/system/gui/wallpapers
 
 check:
-	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p justdk -p justfs -p justgfx -p justimage -p justmath -p justtls -p justzip -p justjson -p justdex -p justaml
+	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p justdk -p justfs -p justgfx -p justimage -p justmath -p justtls -p justzip -p justjson -p justdex -p justaml -p justdeb
 	cd tools && $(CARGO) test --release
 
 updates: live-root tools $(BUILD)/justos-$(VERSION).slot
