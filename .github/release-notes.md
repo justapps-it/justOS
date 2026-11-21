@@ -8,6 +8,7 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 - **Il dock non scatta più**: passandoci sopra, lo sfondo resta fermo e le icone crescono sul posto.
 - **Più monitor**: con una scheda video che ne gestisce più di uno (per ora virtio-gpu nelle macchine virtuali), la scrivania si allarga su tutti; orologio e dock stanno sul monitor principale, le finestre passano da uno all'altro e si ingrandiscono sul loro. In Impostazioni → Schermo si sceglie il principale, l'ordine o la duplicazione, e la scelta resta.
 - **Firefox apre le schede anche con 1 GiB di memoria**: un processo figlio condivide le pagine del padre finché uno dei due non scrive (`fork` copy-on-write), invece di copiarle tutte subito.
+- **Firefox si chiude davvero**: prima, alla chiusura, restava bloccato un minuto e poi si fermava con un errore; ora esce da solo.
 - **Sospensione anche sui portatili senza S3** (Modern Standby): s2idle, con i dispositivi fermi, lo schermo nero e i processori nel loro stato di riposo più profondo; si risveglia con il tasto di accensione, il coperchio, la tastiera o la sveglia.
 - **Anteprime in File**: le immagini PNG, JPEG, GIF e QOI si vedono come miniature; il Visualizzatore apre anche PNG, JPEG e GIF.
 - **La ricerca guarda anche dentro i file**: con Ctrl+Spazio, dopo i risultati per nome, la sezione *Contenuto* mostra i file di testo che contengono quello che scrivi, con la riga trovata.
