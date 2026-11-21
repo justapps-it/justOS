@@ -240,9 +240,9 @@ pub struct Queue {
     msgs: IrqLock<VecDeque<Msg>>,
     /// Bytes waiting.
     bytes: AtomicUsize,
-    /// No more writing: once the queue is empty, readers see the end.
+    /// Its writer shut its side (SHUT_WR) or closed.
     shut_write: AtomicBool,
-    /// No reader any more: writers get EPIPE.
+    /// Its reader shut its side (SHUT_RD) or closed.
     shut_read: AtomicBool,
     /// Told whenever messages come or go, or an end shuts: readers and
     /// writers of this direction wait on it.
@@ -272,6 +272,14 @@ impl Queue {
 
     fn is_empty(&self) -> bool {
         self.msgs.lock().is_empty()
+    }
+
+    /// Shut by either end. As on Linux, the reader then gets what is left
+    /// and after that the end (0) instead of waiting, and the writer gets
+    /// EPIPE. A reader's own SHUT_RD wakes it from a blocking read too:
+    /// Firefox stops a thread that waits in recvmsg that way.
+    fn shut(&self) -> bool {
+        self.shut_write.load(Ordering::Relaxed) || self.shut_read.load(Ordering::Relaxed)
     }
 
     /// Drops what is waiting (closing the descriptors in it).
@@ -374,7 +382,7 @@ impl Conn {
 
     /// Something to read, or the other end closed.
     pub fn ready(&self) -> bool {
-        !self.end.rx.is_empty() || self.end.rx.shut_write.load(Ordering::Relaxed)
+        !self.end.rx.is_empty() || self.end.rx.shut()
     }
 
     /// Moves what arrived to `buf` and its descriptors to `fds`. False once
@@ -391,13 +399,13 @@ impl Conn {
             self.end.rx.bytes.fetch_sub(n.min(self.end.rx.waiting()), Ordering::Relaxed);
             self.end.rx.wq.notify_all();
         }
-        !(self.end.rx.shut_write.load(Ordering::Relaxed) && self.end.rx.is_empty())
+        !(self.end.rx.shut() && self.end.rx.is_empty())
     }
 
     /// Sends bytes and descriptors (these with the first byte). False if
     /// the other end is gone.
     pub fn send(&self, data: Vec<u8>, fds: Vec<Arc<Desc>>) -> bool {
-        if self.end.tx.shut_read.load(Ordering::Relaxed) {
+        if self.end.tx.shut() {
             return false;
         }
         self.end.tx.push(Msg { data, off: 0, fds, from: None });
@@ -707,14 +715,14 @@ impl Unix {
             }
             let mut fds = Some(fds);
             loop {
-                if tx.shut_read.load(Ordering::Relaxed) {
+                if tx.shut() {
                     return broken(0);
                 }
                 if tx.waiting() + data.len() <= CAP || tx.is_empty() {
                     tx.push(Msg { data: data.to_vec(), off: 0, fds: fds.take().unwrap(), from: from.clone() });
                     return data.len() as i64;
                 }
-                let ready = || tx.shut_read.load(Ordering::Relaxed) || tx.waiting() + data.len() <= CAP;
+                let ready = || tx.shut() || tx.waiting() + data.len() <= CAP;
                 if let Err(e) = pause(nb, &tx.wq, ready) {
                     return e;
                 }
@@ -723,7 +731,7 @@ impl Unix {
         let mut fds = Some(fds);
         let mut done = 0;
         while done < data.len() {
-            if tx.shut_read.load(Ordering::Relaxed) {
+            if tx.shut() {
                 return broken(done);
             }
             let room = CAP.saturating_sub(tx.waiting());
@@ -733,7 +741,7 @@ impl Unix {
                 done += n;
                 continue;
             }
-            let ready = || tx.shut_read.load(Ordering::Relaxed) || tx.waiting() < CAP;
+            let ready = || tx.shut() || tx.waiting() < CAP;
             if let Err(e) = pause(nb, &tx.wq, ready) {
                 return if done > 0 { done as i64 } else { e };
             }
@@ -821,12 +829,12 @@ impl Unix {
                     }
                 }
             }
-            if rx.shut_write.load(Ordering::Relaxed) && rx.is_empty() {
+            if rx.shut() && rx.is_empty() {
                 // The end: what was read so far, or 0.
                 got.full = got.n;
                 return Ok(got);
             }
-            let ready = || !rx.is_empty() || rx.shut_write.load(Ordering::Relaxed);
+            let ready = || !rx.is_empty() || rx.shut();
             if let Err(e) = pause(nb, &rx.wq, ready) {
                 if got.n > 0 {
                     got.full = got.n;
@@ -903,8 +911,10 @@ impl Unix {
     pub fn readiness(&self) -> (bool, bool, bool) {
         match &*self.state.lock() {
             St::Connected(e) => {
-                let ended = e.rx.shut_write.load(Ordering::Relaxed);
-                let gone = e.tx.shut_read.load(Ordering::Relaxed);
+                // Hang-up once both directions are shut (Linux: both
+                // shutdown bits of this end).
+                let ended = e.rx.shut();
+                let gone = e.tx.shut();
                 (!e.rx.is_empty() || ended, e.tx.waiting() < CAP || gone, ended && gone)
             }
             St::Listening(l) => (!l.backlog.lock().is_empty(), false, false),
