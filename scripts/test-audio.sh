@@ -60,7 +60,8 @@ volume
 shutdown
 EOT
 
-# The recording cases: parec refused, then allowed; the monitor while the
+# The recording cases: parec refused, then allowed (it asks as the program
+# its run started with, dash running rec.sh: sandbox::who); the monitor while the
 # tone plays, then the microphone for 3 and 8 s (rec.sh stops parec after
 # so many seconds: timeout would need alarm()).
 cat > "$WORK/rec.txt" <<EOT
@@ -69,10 +70,10 @@ display
 cd sys:/home/lt
 pactl list sources short
 @sleep 8
-perms deny linux.parec microphone
+perms deny linux.dash microphone
 dash rec.sh 2 --file-format=wav denied.wav
 @sleep 5
-perms allow linux.parec microphone
+perms allow linux.dash microphone
 tone 440 10000
 dash rec.sh 3 -d justos.monitor --file-format=wav mon.wav
 @sleep 5
@@ -194,7 +195,7 @@ check_rec() {
     done
     grep -q "^0.justos-mic.justos.s16le 2ch" "$WORK/out.txt" || problems="$problems [no justos-mic source]"
     grep -q "^1.justos.monitor.justos.s16le 2ch" "$WORK/out.txt" || problems="$problems [no monitor source]"
-    grep -q "pulse: client [0-9]*: linux.parec may not use the microphone" "$WORK/out.txt" || problems="$problems [parec was not refused the microphone]"
+    grep -q "pulse: client [0-9]*: linux.dash may not use the microphone" "$WORK/out.txt" || problems="$problems [parec was not refused the microphone]"
     [ "$(grep -c 'pulse: client [0-9]*: record stream 0 from justos-mic' "$WORK/out.txt")" = 2 ] || problems="$problems [not two microphone recordings]"
     # Frames sent and milliseconds, per stream, in order: monitor, 3 s, 8 s.
     sed -n 's/.*record stream 0 closed after \([0-9]*\) ms, \([0-9]*\) frames sent.*/\1 \2/p' "$WORK/out.txt" > "$WORK/streams.txt"

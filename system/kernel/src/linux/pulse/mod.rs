@@ -235,7 +235,8 @@ fn update_props(props: &mut Props, mode: u32, new: Props) {
 fn may_record(pid: u32) -> bool {
     let allowed = crate::sandbox::device_allowed(pid, "microphone");
     if !allowed {
-        crate::debug!("pulse", "client {pid}: may not use the microphone");
+        let who = crate::sandbox::who(pid).map_or_else(|| alloc::string::String::from("?"), |a| a.id);
+        crate::debug!("pulse", "client {pid}: {who} may not use the microphone");
     }
     allowed
 }
