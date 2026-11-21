@@ -379,9 +379,38 @@ entro pochi millisecondi da quello di sistema. Senza scheda audio i flussi
 vengono consumati in tempo reale lo stesso, a 48 kHz, e i programmi non si
 bloccano.
 
-Mancano la registrazione (nessuna sorgente: microfono e monitor), la
-memoria condivisa per i campioni (passano sul socket), i campioni salvati
-nel server e gli eventi di `SUBSCRIBE`.
+Il server **registra** anche, da due sorgenti: `justos-mic`, il
+microfono (la predefinita), e `justos.monitor`, quello che l'uscita suona.
+Un flusso di registrazione (`CREATE_RECORD_STREAM`: `parec`, `getUserMedia`
+di Firefox, la cattura WASAPI di Wine) diventa una registrazione del kernel
+(`dev/capture`), che riceve il suono convertito alla frequenza del flusso;
+il server lo manda al programma nel formato che ha chiesto, a frammenti
+della dimensione che ha chiesto (`fragsize`, con `adjust_latency` come
+PulseAudio). Il microfono è il primo ingresso di una scheda (il driver
+`hda` registra da microfono o ingresso di linea); senza ingresso il
+microfono dà silenzio al ritmo dell'orologio, a 48 kHz, così i programmi
+non restano ad aspettare. Il monitor riceve il mix del mixer, con i suoni
+di sistema, e tiene il mixer in moto anche quando nessuno suona. Ci sono
+le informazioni sulle sorgenti e sui flussi (`pactl list sources`,
+`pactl list source-outputs`), la latenza (`GET_RECORD_LATENCY`), il volume
+e il muto del microfono e di ogni flusso, cork, flush e lo spostamento di
+un flusso da una sorgente all'altra.
+
+Il microfono chiede il **permesso del microfono** di justOS, come le app:
+la prima volta compare «*parec* vuole usare il microfono — Consenti / Non
+consentire», la risposta resta e *Impostazioni → Privacy delle app* la
+mostra. I programmi Linux non hanno una sandbox (leggono i file
+dell'utente come su Linux), ma il microfono passa solo da questo server,
+quindi il permesso si può chiedere lì: il programma è riconosciuto dal
+kernel per il suo eseguibile, con l'id `linux.<programma>`
+(`linux.firefox-esr`, `linux.parec`; dalla shell
+`perms allow linux.parec microphone`), e il nome che il client dice di sé
+serve solo per il testo della finestra. Senza schermo, la richiesta è
+negata. Il monitor non chiede permessi: è il suono che l'utente sente già.
+
+Mancano la memoria condivisa per i campioni (passano sul socket), i
+campioni salvati nel server e gli eventi di `SUBSCRIBE` (accettato, ma non
+manda nulla: Firefox e Wine non ne hanno bisogno).
 
 ## Programmi Windows
 
@@ -513,7 +542,9 @@ DejaVu Sans Mono per i caratteri a larghezza fissa e il Blocco note.
 
 Provati: Blocco note, WordPad, Editor del Registro, winecfg, Task Manager,
 WineMine, `cmd`. Il suono passa da `winepulse.drv` e dal server PulseAudio
-del kernel (vedi sopra). Mancano ancora Vulkan e DirectX accelerati, gli
+del kernel (vedi sopra), in uscita (WASAPI, `waveOut`) e in entrata (la
+cattura di WASAPI, dal microfono, con il suo permesso): lo prova
+`make test-wine-audio`. Mancano ancora Vulkan e DirectX accelerati, gli
 appunti condivisi con justOS e le icone nell'area di notifica.
 
 **Programmi a 32 bit.** Wine li esegue nel suo modo "nuovo WoW64": il
@@ -737,4 +768,21 @@ poi copiarlo nell'immagine con `justtool fs` (vedi `docs/programmi.md`).
 `make test-audio` fa suonare anche `paplay`, insieme a un tono della shell,
 e controlla nella registrazione di QEMU che i due suoni ci siano, mescolati,
 e che il flusso duri quanto il suo file; un secondo caso lo ripete senza
-scheda audio.
+scheda audio. Due casi registrano con `parec`: `linux-rec` su una scheda
+con ingresso (`hda-duplex`), in cui QEMU fa entrare un tono a 1000 Hz da
+un file (il driver audio «disk» di SDL), e `linux-rec-nocard` senza
+scheda. `parec` deve essere prima rifiutato (permesso negato con `perms`)
+e poi, consentito, registrare il tono (o il silenzio) alla frequenza
+chiesta, misurata fra una registrazione di 3 s e una di 8 s; il monitor
+deve avere il tono della shell. Con la scheda la frequenza misurata sta
+qualche punto percentuale sopra (QEMU tiene il suo tempo per i dispositivi
+audio), senza scheda è quella dell'orologio.
+
+Wine non è nell'immagine dei test, quindi il suo suono si prova a mano con
+`make test-wine-audio` (circa 6 minuti, quasi tutti per preparare `C:`):
+un programma Windows (`scripts/compat/sndtest.c`) suona 2 s a 660 Hz con
+WASAPI (float a 32 bit, il formato di Wine), 2 s a 880 Hz con `waveOut`
+(16 bit) e registra 3 s con la cattura di WASAPI dal microfono, in cui
+QEMU fa entrare il tono a 1000 Hz; lo script controlla i due toni in
+quello che la scheda ha suonato, l'orologio di WASAPI e il tono nella
+registrazione.

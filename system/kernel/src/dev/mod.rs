@@ -10,6 +10,7 @@
 //! gone, so a stale id can never reach a newer device.
 
 pub mod audio;
+pub mod capture;
 pub mod block;
 pub mod display;
 pub mod input;

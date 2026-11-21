@@ -19,6 +19,8 @@
 #   make test-compat   run a Linux and a Windows program on justOS and check them
 #   make test-winprep  the first Windows program gets justOS's preparation window
 #                   (needs the image with Wine, by hand, not part of test)
+#   make test-wine-audio  a Windows program plays and records through Wine
+#                   (the same: the image with Wine, by hand)
 #   make test-audio    play sounds on every emulated sound card and check them
 #   make test-display  switch the resolution on every emulated display, and
 #                   wake up with the picture back
@@ -145,7 +147,7 @@ ifeq ($(PROFILE),release)
 CARGO_PROFILE := --release
 endif
 
-.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-net test-linux test-wayland test-winprep test-gtk test-update shots assets check updates clean $(PACKAGES) shots-install test-install
+.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-net test-linux test-wayland test-winprep test-wine-audio test-gtk test-update shots assets check updates clean $(PACKAGES) shots-install test-install
 
 all: image
 
@@ -290,6 +292,10 @@ test-wayland: test-image
 # Needs the image with Wine (about 5 minutes under emulation), so it is not part of `test`.
 test-winprep: image
 	scripts/test-winprep.sh $(BUILD)/justos.img
+
+# The same: Wine's sound (winepulse.drv), playing and recording.
+test-wine-audio: image
+	scripts/test-wine-audio.sh $(BUILD)/justos.img
 
 test-gtk: test-image
 	scripts/test-gtk.sh $(TEST_IMAGE)

@@ -309,6 +309,7 @@ impl Manager {
         dev::block::device_gone(id);
         dev::net::remove_device(id);
         dev::audio::remove_device(id);
+        dev::capture::remove_device(id);
         dev::display::remove_device(id);
         if let Some(i) = self.loaded.iter().position(|l| l.devices.contains(&id)) {
             let l = &mut self.loaded[i];

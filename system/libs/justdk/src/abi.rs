@@ -304,6 +304,32 @@ pub struct AudioDesc {
     pub name: [u8; 40],
 }
 
+/// Starts capturing (`on` 1: the device fills its buffer from now on) or
+/// stops (`on` 0). Captured frames wait in the driver until read.
+pub type AudioCapture = unsafe extern "C" fn(ctx: *mut c_void, on: u32) -> Status;
+/// Copies up to `frames` captured frames (interleaved signed 16-bit,
+/// `channels` per frame) into `samples`, the oldest first. Waits for some
+/// to arrive, about one period at most; returns how many it copied (0: none
+/// came, or the device is not capturing).
+pub type AudioRead = unsafe extern "C" fn(ctx: *mut c_void, samples: *mut i16, frames: usize) -> Status;
+
+/// A sound input (a microphone, a line in) a driver hands to the kernel.
+/// The kernel converts what it reads to what programs ask for and applies
+/// the input volume itself; the driver leaves its own gain at 0 dB. Calls
+/// are serialised.
+#[repr(C)]
+pub struct CaptureDesc {
+    pub ctx: *mut c_void,
+    /// Frames per second.
+    pub rate: u32,
+    /// Samples per frame (1 or 2).
+    pub channels: u32,
+    pub capture: AudioCapture,
+    pub read: AudioRead,
+    /// Name of the input ("HD Audio, mic"), NUL-padded.
+    pub name: [u8; 40],
+}
+
 // ----------------------------------------------------------------------------
 // Displays
 
@@ -522,6 +548,10 @@ pub struct KernelApi {
     /// (sounds start and stop at once) and tells programs exactly when what
     /// they write will be heard. Without it the kernel counts by the clock.
     pub audio_queued: unsafe extern "C" fn(output: u32, queued: AudioQueued) -> Status,
+    // Recording
+    /// Registers a sound input (see [`CaptureDesc`]); returns its number.
+    /// The kernel starts it only while a program records.
+    pub capture_register: unsafe extern "C" fn(device: u32, desc: *const CaptureDesc) -> Status,
 }
 
 // ----------------------------------------------------------------------------

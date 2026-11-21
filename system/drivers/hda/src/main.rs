@@ -1,5 +1,6 @@
 //! Intel High Definition Audio driver: plays sound through the analog
-//! outputs of the first codec that has them.
+//! outputs of the first codec that has them, and records from its best
+//! analog input (a microphone, else the line in).
 //!
 //! The controller talks to its codecs through two rings in memory (CORB for
 //! commands, RIRB for answers). The driver walks the codec's widgets, finds
@@ -7,7 +8,10 @@
 //! back to a digital-to-analog converter through mixers and selectors. Every
 //! amplifier on the way is unmuted at 0 dB and every converter listens to
 //! one output stream: 48 kHz, 16-bit stereo, played from a ring of four
-//! periods.
+//! periods. Recording goes the other way: from the input pin through
+//! selectors to an analog-to-digital converter, which feeds the first input
+//! stream, in the same format, into a ring of its own while a program
+//! records.
 
 #![no_std]
 #![no_main]
@@ -17,14 +21,14 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::vec::Vec;
-use justdrv::pcm::{Hardware, PcmRing};
-use justdrv::{AudioDesc, DeviceInfo, Dma, Mmio, Pci, Status, E_IO, E_NODEV, E_NOMEM, OK, RES_MEMORY};
+use justdrv::pcm::{CaptureRing, Hardware, PcmRing};
+use justdrv::{AudioDesc, CaptureDesc, DeviceInfo, Dma, Mmio, Pci, Status, E_IO, E_NODEV, E_NOMEM, OK, RES_MEMORY};
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 justdrv::driver! {
     name: "hda",
-    version: "1.1.0",
+    version: "1.2.0",
     probe: probe,
 }
 
@@ -88,6 +92,7 @@ const P_IN_AMP: u32 = 0x0D;
 const P_VENDOR: u32 = 0x00;
 
 const W_OUTPUT: u32 = 0;
+const W_INPUT: u32 = 1;
 const W_MIXER: u32 = 2;
 const W_SELECTOR: u32 = 3;
 const W_PIN: u32 = 4;
@@ -98,6 +103,12 @@ const RATE: u32 = 48_000;
 const STREAM_TAG: u32 = 1;
 const PERIODS: usize = 4;
 const PERIOD_BYTES: usize = 4096 * 4;
+/// Recording has a tag of its own (some controllers want them different
+/// in the two directions) and shorter periods, read as they fill: 170 ms
+/// in all.
+const CAPTURE_TAG: u32 = 2;
+const CAPTURE_PERIODS: usize = 8;
+const CAPTURE_PERIOD_BYTES: usize = 4096;
 
 struct Controller {
     regs: Mmio,
@@ -304,6 +315,88 @@ impl Codec<'_> {
         (kinds, dacs)
     }
 
+    /// What an input pin records, if it is an analog one connected to
+    /// something: a microphone, the line in or the auxiliary input, with
+    /// a rank (the lower, the better to record from).
+    fn input_kind(&self, pin: u32) -> Option<(u32, &'static str)> {
+        if self.caps(pin) & (1 << 9) != 0 || self.hda.param(self.addr, pin, P_PIN_CAPS) & (1 << 5) == 0 {
+            return None; // digital, or cannot input
+        }
+        let config = self.hda.command(self.addr, pin, GET_CONFIG_DEFAULT << 8).unwrap_or(0);
+        if config >> 30 == 1 {
+            return None; // nothing is connected to it
+        }
+        match (config >> 20) & 0xF {
+            0xA => Some((0, "mic")),
+            8 => Some((1, "line in")),
+            9 => Some((2, "aux in")),
+            _ => None,
+        }
+    }
+
+    /// Finds a path from `node` (a converter, or a mixer or selector on the
+    /// way) to an input pin of rank `want`: the nodes on the way, each with
+    /// the index of the input taken, and the pin.
+    fn path_to_pin(&self, node: u32, want: u32, depth: u32, path: &mut Vec<(u32, u32)>) -> Option<u32> {
+        if depth > 6 {
+            return None;
+        }
+        for (i, c) in self.hda.connections(self.addr, node).into_iter().enumerate() {
+            if c < self.first || c >= self.first + self.count || path.iter().any(|&(n, _)| n == c) {
+                continue;
+            }
+            path.push((node, i as u32));
+            match self.kind(c) {
+                W_PIN if self.input_kind(c).is_some_and(|(rank, _)| rank == want) => return Some(c),
+                W_MIXER | W_SELECTOR => {
+                    if let Some(pin) = self.path_to_pin(c, want, depth + 1, path) {
+                        return Some(pin);
+                    }
+                }
+                _ => {}
+            }
+            path.pop();
+        }
+        None
+    }
+
+    /// Sets up the best input to record from, on the first analog
+    /// converter that reaches it. Returns its kind.
+    fn setup_input(&self) -> Option<&'static str> {
+        let adcs: Vec<u32> =
+            (self.first..self.first + self.count).filter(|&n| self.kind(n) == W_INPUT && self.caps(n) & (1 << 9) == 0).collect();
+        for want in 0..3 {
+            for &adc in &adcs {
+                let mut path = Vec::new();
+                let Some(pin) = self.path_to_pin(adc, want, 0, &mut path) else { continue };
+                // Power, route and unmute everything from the pin to the
+                // converter; a converter's amplifier is on its inputs, like
+                // a mixer's.
+                for &(n, input) in &path {
+                    self.verb(n, SET_POWER, 0);
+                    if self.hda.connections(self.addr, n).len() > 1 && self.kind(n) != W_MIXER {
+                        self.verb(n, SET_SELECT, input);
+                    }
+                    if self.kind(n) == W_MIXER || n == adc {
+                        self.unmute(n, Some(input));
+                    }
+                    self.unmute(n, None);
+                }
+                // Input on, with a microphone's bias voltage at 80 % where
+                // the pin has one, and the pin's boost at 0 dB.
+                let pin_caps = self.hda.param(self.addr, pin, P_PIN_CAPS);
+                let vref = if want == 0 && pin_caps & (1 << 12) != 0 { 4 } else { 0 };
+                self.verb(pin, SET_POWER, 0);
+                self.verb(pin, SET_PIN_CONTROL, 0x20 | vref);
+                self.unmute(pin, Some(0));
+                self.verb(adc, SET_STREAM, CAPTURE_TAG << 4);
+                self.hda.command(self.addr, adc, SET_FORMAT << 16 | FORMAT as u32);
+                return self.input_kind(pin).map(|(_, kind)| kind);
+            }
+        }
+        None
+    }
+
     /// Is something plugged into a jack? (Not used to route: every output
     /// plays; logged for information.)
     #[allow(dead_code)]
@@ -351,6 +444,9 @@ unsafe impl Sync for Stream {}
 
 struct Device {
     ring: PcmRing<Stream>,
+    /// The input stream, if the codec has an input to record from.
+    capture: Option<CaptureRing<Stream>>,
+    capture_bdl: u64,
     /// Used at probe and after sleep only (one thread at a time).
     hda: Controller,
     pci: Pci,
@@ -367,6 +463,9 @@ unsafe extern "C" fn suspend(ctx: *mut c_void) -> Status {
     // SAFETY: ctx is the leaked Device.
     let d = unsafe { &*(ctx as *const Device) };
     d.ring.pause();
+    if let Some(c) = &d.capture {
+        c.pause();
+    }
     let regs = &d.hda.regs;
     regs.write32(INTCTL, 0);
     regs.write8(CORBCTL, 0);
@@ -391,9 +490,13 @@ unsafe extern "C" fn resume(ctx: *mut c_void) -> Status {
         let widgets = d.hda.param(addr, afg, P_NODE_COUNT);
         let codec = Codec { hda: &d.hda, addr, afg, first: (widgets >> 16) & 0xFF, count: widgets & 0xFF };
         let (_, dacs) = codec.setup_outputs();
-        setup_stream(&d.ring.hw, d.bdl);
+        setup_stream(&d.ring.hw, d.bdl, STREAM_TAG, PERIODS * PERIOD_BYTES, PERIODS);
+        if let Some(c) = &d.capture {
+            codec.setup_input();
+            setup_stream(&c.hw, d.capture_bdl, CAPTURE_TAG, CAPTURE_PERIODS * CAPTURE_PERIOD_BYTES, CAPTURE_PERIODS);
+        }
         if d.has_irq.load(Ordering::Relaxed) {
-            regs.write32(INTCTL, 1 << 31 | 1 << d.inputs as u32);
+            regs.write32(INTCTL, interrupts(d.inputs, d.capture.is_some()));
         }
         if dacs.is_empty() {
             E_IO
@@ -404,7 +507,16 @@ unsafe extern "C" fn resume(ctx: *mut c_void) -> Status {
         E_IO
     };
     d.ring.unpause();
+    if let Some(c) = &d.capture {
+        c.unpause();
+    }
     st
+}
+
+/// The interrupts wanted: the controller's, the output stream's and, when
+/// recording, the first input stream's.
+fn interrupts(inputs: u16, capture: bool) -> u32 {
+    1 << 31 | 1 << inputs as u32 | capture as u32
 }
 
 /// Intel: traffic class 0 for the stream DMA (TCSEL).
@@ -413,8 +525,9 @@ fn set_tcsel(pci: Pci) {
     pci.write32(0x44, v & !7);
 }
 
-/// The output stream reset and pointed at its buffer list.
-fn setup_stream(stream: &Stream, bdl: u64) {
+/// A stream reset and pointed at its buffer list (`periods` entries,
+/// `bytes` in all), with stream tag `tag`.
+fn setup_stream(stream: &Stream, bdl: u64, tag: u32, bytes: usize, periods: usize) {
     let (regs, base) = (&stream.regs, stream.base);
     stream.set_ctl(CTL_RESET);
     justdrv::wait_until(10, || stream.ctl() & CTL_RESET != 0);
@@ -422,10 +535,25 @@ fn setup_stream(stream: &Stream, bdl: u64) {
     justdrv::wait_until(10, || stream.ctl() & CTL_RESET == 0);
     regs.write32(base + SD_BDPL, bdl as u32);
     regs.write32(base + SD_BDPU, (bdl >> 32) as u32);
-    regs.write32(base + SD_CBL, (PERIODS * PERIOD_BYTES) as u32);
-    regs.write16(base + SD_LVI, (PERIODS - 1) as u16);
+    regs.write32(base + SD_CBL, bytes as u32);
+    regs.write16(base + SD_LVI, (periods - 1) as u16);
     regs.write16(base + SD_FMT, FORMAT);
-    stream.set_ctl(STREAM_TAG << 20);
+    stream.set_ctl(tag << 20);
+}
+
+/// A buffer of `periods` periods of `bytes` each and its descriptor list,
+/// with an interrupt at the end of each period. The list is kept for good:
+/// it must outlive the stream.
+fn buffers(periods: usize, bytes: usize) -> Option<(Dma, u64)> {
+    let (buf, bdl) = (Dma::new(periods * bytes)?, Dma::new(4096)?);
+    for i in 0..periods {
+        bdl.write::<u64>(i * 16, buf.phys() + (i * bytes) as u64);
+        bdl.write::<u32>(i * 16 + 8, bytes as u32);
+        bdl.write::<u32>(i * 16 + 12, 1); // interrupt on completion
+    }
+    let phys = bdl.phys();
+    core::mem::forget(bdl);
+    Some((buf, phys))
 }
 
 unsafe extern "C" fn write(ctx: *mut c_void, samples: *const i16, frames: usize) -> Status {
@@ -447,14 +575,48 @@ unsafe extern "C" fn queued(ctx: *mut c_void) -> usize {
     unsafe { &*(ctx as *const Device) }.ring.queued() / 4
 }
 
+/// Starts (`on` 1) or stops recording.
+unsafe extern "C" fn capture(ctx: *mut c_void, on: u32) -> Status {
+    // SAFETY: ctx is the leaked Device.
+    let d = unsafe { &*(ctx as *const Device) };
+    let Some(c) = &d.capture else { return E_NODEV };
+    if on != 0 {
+        c.start();
+    } else {
+        c.stop();
+    }
+    OK
+}
+
+unsafe extern "C" fn read(ctx: *mut c_void, samples: *mut i16, frames: usize) -> Status {
+    // SAFETY: ctx is the leaked Device; samples has room for frames * 2
+    // values.
+    let d = unsafe { &*(ctx as *const Device) };
+    let Some(c) = &d.capture else { return 0 };
+    let bytes = unsafe { core::slice::from_raw_parts_mut(samples as *mut u8, frames * 4) };
+    // A frame is four bytes; about two of the capture's periods at most.
+    (c.read(bytes, 4, 50) / 4) as Status
+}
+
+/// A stream's "buffer completed" status, cleared; true if it was set.
+fn completed(s: &Stream) -> bool {
+    let sts = s.regs.read8(s.base + SD_STS);
+    if sts & STS_BCIS == 0 {
+        return false;
+    }
+    s.regs.write8(s.base + SD_STS, sts & 0x1C);
+    true
+}
+
 unsafe extern "C" fn irq(ctx: *mut c_void) {
     // SAFETY: ctx is the leaked Device.
     let d = unsafe { &*(ctx as *const Device) };
     let s = &d.ring.hw;
-    let sts = s.regs.read8(s.base + SD_STS);
-    if sts & STS_BCIS != 0 {
-        s.regs.write8(s.base + SD_STS, sts & 0x1C);
+    if completed(s) {
         d.ring.progress.signal();
+    }
+    if let Some(c) = d.capture.as_ref().filter(|c| completed(&c.hw)) {
+        c.progress.signal();
     }
     let int = s.regs.read32(INTSTS);
     if int & (1 << 30) != 0 {
@@ -557,19 +719,32 @@ fn probe(dev: &DeviceInfo) -> Status {
     // The first output stream.
     let base = 0x80 + inputs as usize * 0x20;
     let stream = Stream { regs, base };
-    let (Some(buf), Some(bdl)) = (Dma::new(PERIODS * PERIOD_BYTES), Dma::new(4096)) else { return E_NOMEM };
-    for i in 0..PERIODS {
-        bdl.write::<u64>(i * 16, buf.phys() + (i * PERIOD_BYTES) as u64);
-        bdl.write::<u32>(i * 16 + 8, PERIOD_BYTES as u32);
-        bdl.write::<u32>(i * 16 + 12, 1); // interrupt on completion
-    }
-    setup_stream(&stream, bdl.phys());
-    let bdl_phys = bdl.phys();
-    // The descriptor table must outlive the stream.
-    core::mem::forget(bdl);
+    let Some((buf, bdl_phys)) = buffers(PERIODS, PERIOD_BYTES) else { return E_NOMEM };
+    setup_stream(&stream, bdl_phys, STREAM_TAG, PERIODS * PERIOD_BYTES, PERIODS);
+
+    // The first input stream, if there is one and an input to record from.
+    let (addr, afg) = codec;
+    let widgets = hda.param(addr, afg, P_NODE_COUNT);
+    let input = if inputs > 0 {
+        Codec { hda: &hda, addr, afg, first: (widgets >> 16) & 0xFF, count: widgets & 0xFF }.setup_input()
+    } else {
+        None
+    };
+    let mut capture_bdl = 0;
+    let capture = match input.and_then(|_| buffers(CAPTURE_PERIODS, CAPTURE_PERIOD_BYTES)) {
+        Some((buf, bdl)) => {
+            let stream = Stream { regs, base: 0x80 };
+            setup_stream(&stream, bdl, CAPTURE_TAG, CAPTURE_PERIODS * CAPTURE_PERIOD_BYTES, CAPTURE_PERIODS);
+            capture_bdl = bdl;
+            Some(CaptureRing::new(stream, buf))
+        }
+        None => None,
+    };
 
     let d: &'static Device = Box::leak(Box::new(Device {
         ring: PcmRing::new(stream, buf),
+        capture,
+        capture_bdl,
         hda,
         pci,
         intel,
@@ -581,7 +756,7 @@ fn probe(dev: &DeviceInfo) -> Status {
     let ctx = d as *const Device as *mut c_void;
     if justdrv::irq_attach_any(dev, irq, ctx) {
         d.has_irq.store(true, Ordering::Relaxed);
-        regs.write32(INTCTL, 1 << 31 | 1 << inputs as u32);
+        regs.write32(INTCTL, interrupts(inputs, d.capture.is_some()));
     }
     let what = kinds.join(", ");
     let name = format!("HD Audio, {what}");
@@ -593,6 +768,12 @@ fn probe(dev: &DeviceInfo) -> Status {
         return n;
     }
     justdrv::audio_queued(n, queued);
+    if let Some(kind) = input.filter(|_| d.capture.is_some()) {
+        let name = justdrv::model_name(&format!("HD Audio, {kind}"));
+        let desc: &'static CaptureDesc = Box::leak(Box::new(CaptureDesc { ctx, rate: RATE, channels: 2, capture: self::capture, read, name }));
+        justdrv::info!("recording from the {kind}");
+        justdrv::capture_register(dev.id, desc);
+    }
     justdrv::power_hooks(dev.id, ctx, Some(suspend), resume);
     OK
 }

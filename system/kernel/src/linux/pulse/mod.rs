@@ -18,24 +18,34 @@
 //! prebuffering), and told how late what they wrote is heard, so that a
 //! video keeps in step with its sound.
 //!
-//! What is not there: recording (no sources), cached samples, modules and
-//! cards; asked for, they are not supported or not found.
+//! Each record stream becomes a recording of the kernel
+//! ([`crate::dev::capture`]) from one of two sources: the microphone
+//! (`justos-mic`, the default) or what the sink plays (`justos.monitor`).
+//! Its sound goes to the client as it comes, in the client's format. The
+//! microphone needs the microphone permission ([`may_record`]).
+//!
+//! What is not there: cached samples, modules, cards and events
+//! (SUBSCRIBE is accepted, nothing is sent); asked for, they are not
+//! supported or not found.
 
 mod format;
 mod info;
+mod record;
 mod stream;
 mod tag;
 
 use super::fd::Desc;
 use super::unix::{self, Conn};
 use crate::dev::audio;
+use crate::dev::capture::{self, Source};
 use crate::task::WaitQueue;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use format::VOLUME_NORM;
-use info::{ClientEntry, Input, CLIENTS, INPUTS, SINK, SINK_INDEX};
+use info::{ClientEntry, Input, Output, CLIENTS, INPUTS, OUTPUTS, SINK, SINK_INDEX};
+use record::{RecAttr, Record, Timing};
 use stream::{Attr, Playback, SINK_LATENCY_US};
 use tag::{Frame, Props, Reader, Writer, INVALID};
 
@@ -157,6 +167,7 @@ const UPDATE_REPLACE: u32 = 2;
 
 static NEXT_CLIENT: AtomicU32 = AtomicU32::new(0);
 static NEXT_INPUT: AtomicU32 = AtomicU32::new(0);
+static NEXT_OUTPUT: AtomicU32 = AtomicU32::new(0);
 /// The system volume before a client muted the sink.
 static UNMUTED: AtomicU32 = AtomicU32::new(0);
 
@@ -214,6 +225,34 @@ fn update_props(props: &mut Props, mode: u32, new: Props) {
     }
 }
 
+/// May the client's program record from the microphone? It needs the
+/// microphone permission of justOS's sandbox, asked once in the usual
+/// dialog and remembered: a program in a sandbox under its app; a Linux
+/// program, which has none, under a name made from its program
+/// (`linux.firefox-esr`), so that Impostazioni lists it with the apps.
+/// Linux programs read the user's files freely, but the microphone is only
+/// theirs through this server. Who the program is, the kernel says; the
+/// client's own name is only shown in the dialog.
+fn may_record(pid: u32, shown: Option<&str>) -> bool {
+    let Some(app) = crate::user::app_of(pid).or_else(|| linux_app(pid, shown)) else { return false };
+    let allowed = crate::sandbox::allowed(&app, "microphone");
+    if !allowed {
+        crate::debug!("pulse", "client {pid}: {} may not use the microphone", app.id);
+    }
+    allowed
+}
+
+/// A Linux program as the sandbox's table knows it.
+fn linux_app(pid: u32, shown: Option<&str>) -> Option<crate::sandbox::App> {
+    let program = crate::user::process_name(pid)?;
+    let name: alloc::string::String =
+        program.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c.to_ascii_lowercase() } else { '-' }).collect();
+    let name = name.trim_matches('-');
+    let id = alloc::format!("linux.{}", if name.is_empty() { "program" } else { name });
+    let shown = alloc::string::String::from(shown.filter(|s| !s.is_empty()).unwrap_or(&program));
+    Some(crate::sandbox::App { id, name: shown, icon: alloc::string::String::from("window") })
+}
+
 /// The keys of a REMOVE_*_PROPLIST command (up to a null string).
 fn read_keys(r: &mut Reader<'_>) -> Vec<alloc::string::String> {
     let mut keys = Vec::new();
@@ -236,8 +275,9 @@ struct Client {
     inbuf: Vec<u8>,
     infds: VecDeque<Arc<Desc>>,
     out: Vec<u8>,
-    /// Its playback streams, by channel.
+    /// Its playback and record streams, by channel.
     streams: BTreeMap<u32, Playback>,
+    records: BTreeMap<u32, Record>,
     next_channel: u32,
     /// A stream came or went: the thread looks again before sleeping.
     changed: bool,
@@ -259,6 +299,7 @@ impl Client {
             infds: VecDeque::new(),
             out: Vec::new(),
             streams: BTreeMap::new(),
+            records: BTreeMap::new(),
             next_channel: 0,
             changed: false,
             dead: false,
@@ -270,13 +311,14 @@ impl Client {
         loop {
             // How far the streams' queues were told, before looking at the
             // streams: what they do after this wakes the thread.
-            let seen: Vec<u64> = self.streams.values().map(|p| p.stream.wq.notified()).collect();
+            let seen: Vec<u64> = self.queues().iter().map(|q| q.notified()).collect();
             self.changed = false;
             let open = self.conn.take(&mut self.inbuf, &mut self.infds);
             // Descriptors (shared memory offered) are of no use here.
             self.infds.clear();
             self.frames();
             self.streams_moved();
+            self.records_moved();
             self.flush();
             if !open || self.dead {
                 break;
@@ -285,18 +327,22 @@ impl Client {
                 continue;
             }
             // Asleep until the client writes or a stream moves on.
-            let (conn, streams) = (&self.conn, &self.streams);
+            let streams = self.queues();
+            let conn = &self.conn;
             let mut queues: Vec<&WaitQueue> = Vec::with_capacity(streams.len() + 1);
             queues.push(conn.queue());
-            queues.extend(streams.values().map(|p| &p.stream.wq));
+            queues.extend(&streams);
             let until = crate::time::uptime_ms() + 1000;
             crate::task::wait_any(&queues, Some(until), || {
-                (conn.ready() || streams.values().zip(&seen).any(|(p, &n)| p.stream.wq.notified() != n)).then_some(())
+                (conn.ready() || streams.iter().zip(&seen).any(|(q, &n)| q.notified() != n)).then_some(())
             });
         }
         // Its streams go with it.
         for (channel, p) in core::mem::take(&mut self.streams) {
             self.close_stream(channel, &p);
+        }
+        for (channel, r) in core::mem::take(&mut self.records) {
+            self.close_record(channel, &r);
         }
         CLIENTS.lock().retain(|c| c.index != self.index);
         crate::debug!("pulse", "client {} gone", self.pid);
@@ -308,6 +354,29 @@ impl Client {
         INPUTS.lock().retain(|i| i.index != p.index);
         let ms = crate::time::uptime_ms() - p.created;
         crate::debug!("pulse", "client {}: stream {channel} closed after {ms} ms", self.pid);
+    }
+
+    /// The queues of its streams, told when they move on: playback streams
+    /// when the mixer takes sound, record streams when sound arrives.
+    fn queues(&self) -> Vec<&WaitQueue> {
+        self.streams.values().map(|p| &p.stream.wq).chain(self.records.values().map(|r| &r.rec.wq)).collect()
+    }
+
+    /// A record stream ends: it leaves the kernel's recordings and the
+    /// lists.
+    fn close_record(&self, channel: u32, r: &Record) {
+        r.rec.close();
+        OUTPUTS.lock().retain(|o| o.index != r.index);
+        let ms = crate::time::uptime_ms() - r.created;
+        let frames = r.sent / r.spec.frame_size() as u64;
+        // Captured and dropped by the kernel count frames at the source's
+        // rate; sent ones are at the stream's.
+        let (captured, dropped) = (r.rec.captured(), r.rec.dropped());
+        crate::debug!(
+            "pulse",
+            "client {}: record stream {channel} closed after {ms} ms, {frames} frames sent ({captured} captured, {dropped} dropped)",
+            self.pid
+        );
     }
 
     fn send(&mut self, w: &Writer) {
@@ -398,6 +467,21 @@ impl Client {
         }
     }
 
+    /// Sends the record streams' sound that came, as much as the client
+    /// has room for in each stream's buffer (what it is slow to read stays
+    /// in the socket and counts).
+    fn records_moved(&mut self) {
+        let unread = self.conn.unread() + self.out.len();
+        let mut out = core::mem::take(&mut self.out);
+        for (&channel, r) in self.records.iter_mut() {
+            let room = (r.attr.maxlength as usize).saturating_sub(unread);
+            for block in r.blocks(room) {
+                tag::put_block(&mut out, channel, &block);
+            }
+        }
+        self.out = out;
+    }
+
     fn packet(&mut self, data: &[u8]) {
         let mut r = Reader::new(data);
         let (cmd, tag) = (r.u32(), r.u32());
@@ -443,23 +527,37 @@ impl Client {
             | SET_PLAYBACK_STREAM_NAME
             | UPDATE_PLAYBACK_STREAM_PROPLIST
             | REMOVE_PLAYBACK_STREAM_PROPLIST => self.stream_command(cmd, tag, r),
+            CREATE_RECORD_STREAM => self.create_record(tag, r),
+            DELETE_RECORD_STREAM => {
+                let channel = r.u32();
+                parsed(r)?;
+                let rec = self.records.remove(&channel).ok_or(ERR_NOENTITY)?;
+                self.close_record(channel, &rec);
+                self.changed = true;
+                self.ack(tag);
+                Ok(())
+            }
+            CORK_RECORD_STREAM
+            | FLUSH_RECORD_STREAM
+            | GET_RECORD_LATENCY
+            | SET_RECORD_STREAM_BUFFER_ATTR
+            | UPDATE_RECORD_STREAM_SAMPLE_RATE
+            | SET_RECORD_STREAM_NAME
+            | UPDATE_RECORD_STREAM_PROPLIST
+            | REMOVE_RECORD_STREAM_PROPLIST => self.record_command(cmd, tag, r),
             GET_SERVER_INFO..=GET_SAMPLE_INFO_LIST | GET_CARD_INFO | GET_CARD_INFO_LIST => self.info(cmd, tag, r),
             SUBSCRIBE | SET_SINK_VOLUME | SET_SINK_MUTE | SET_SINK_INPUT_VOLUME | SET_SINK_INPUT_MUTE | LOOKUP_SINK | SET_DEFAULT_SINK
             | MOVE_SINK_INPUT | SUSPEND_SINK | STAT | UPDATE_CLIENT_PROPLIST | REMOVE_CLIENT_PROPLIST => self.control(cmd, tag, r),
+            LOOKUP_SOURCE | SET_SOURCE_VOLUME | SET_SOURCE_MUTE | SET_DEFAULT_SOURCE | SUSPEND_SOURCE | MOVE_SOURCE_OUTPUT
+            | SET_SOURCE_OUTPUT_VOLUME | SET_SOURCE_OUTPUT_MUTE => self.source_control(cmd, tag, r),
             // What a server with only a mixer does not do.
-            CREATE_RECORD_STREAM | CREATE_UPLOAD_STREAM | LOAD_MODULE | UNLOAD_MODULE | KILL_CLIENT | KILL_SINK_INPUT
-            | KILL_SOURCE_OUTPUT | SEND_OBJECT_MESSAGE | EXIT => Err(ERR_NOTSUPPORTED),
+            CREATE_UPLOAD_STREAM | LOAD_MODULE | UNLOAD_MODULE | KILL_CLIENT | KILL_SINK_INPUT | KILL_SOURCE_OUTPUT
+            | SEND_OBJECT_MESSAGE | EXIT => Err(ERR_NOTSUPPORTED),
             EXTENSION => Err(ERR_NOEXTENSION),
             53..=56 => Err(ERR_OBSOLETE),
-            // Sources, record streams, samples, cards and ports: there are
-            // none.
-            DELETE_RECORD_STREAM | LOOKUP_SOURCE | DELETE_UPLOAD_STREAM | FINISH_UPLOAD_STREAM | PLAY_SAMPLE | REMOVE_SAMPLE
-            | SET_SOURCE_VOLUME | SET_SOURCE_MUTE | SET_DEFAULT_SOURCE | SET_RECORD_STREAM_NAME | GET_RECORD_LATENCY
-            | CORK_RECORD_STREAM | FLUSH_RECORD_STREAM | MOVE_SOURCE_OUTPUT | SUSPEND_SOURCE | SET_RECORD_STREAM_BUFFER_ATTR
-            | UPDATE_RECORD_STREAM_SAMPLE_RATE | UPDATE_RECORD_STREAM_PROPLIST | REMOVE_RECORD_STREAM_PROPLIST | SET_CARD_PROFILE
-            | SET_SINK_PORT | SET_SOURCE_PORT | SET_SOURCE_OUTPUT_VOLUME | SET_SOURCE_OUTPUT_MUTE | SET_PORT_LATENCY_OFFSET => {
-                Err(ERR_NOENTITY)
-            }
+            // Samples, cards and ports: there are none.
+            DELETE_UPLOAD_STREAM | FINISH_UPLOAD_STREAM | PLAY_SAMPLE | REMOVE_SAMPLE | SET_CARD_PROFILE | SET_SINK_PORT
+            | SET_SOURCE_PORT | SET_PORT_LATENCY_OFFSET => Err(ERR_NOENTITY),
             // Replies to the server, and shared memory: nothing to do.
             REPLY | ERROR | TIMEOUT | ENABLE_SRBCHANNEL | DISABLE_SRBCHANNEL | REGISTER_MEMFD_SHMID => Ok(()),
             _ => Err(ERR_COMMAND),
@@ -699,6 +797,273 @@ impl Client {
         Ok(())
     }
 
+    fn create_record(&mut self, tag: u32, r: &mut Reader<'_>) -> Result<(), u32> {
+        if self.version < 13 {
+            let _name = r.string();
+        }
+        let spec = r.sample_spec();
+        let map = r.channel_map();
+        let (source_index, source_name) = (r.u32(), r.string());
+        let maxlength = r.u32();
+        let corked = r.bool();
+        let fragsize = r.u32();
+        if self.version >= 12 {
+            // No remapping or remixing, fixed format/rate/channels, no
+            // moving, variable rate: all the same here.
+            for _ in 0..7 {
+                r.bool();
+            }
+        }
+        let (mut timing, mut props) = (Timing::default(), Vec::new());
+        if self.version >= 13 {
+            // Peak detection (the client wants levels): it gets the sound.
+            r.bool();
+            timing.adjust_latency = r.bool();
+            props = r.proplist();
+            // Recording one sink input alone: not here.
+            if r.u32() != INVALID {
+                return Err(ERR_NOTSUPPORTED);
+            }
+        }
+        timing.early_requests = self.version >= 14 && r.bool();
+        if self.version >= 15 {
+            // Not keeping the source awake, failing if it sleeps: it never
+            // does.
+            r.bool();
+            r.bool();
+        }
+        let (mut volumes, mut muted, mut volume_set, mut formats) = (Vec::new(), false, false, 0);
+        if self.version >= 22 {
+            formats = r.u8();
+            for _ in 0..formats {
+                r.format_info();
+            }
+            volumes = r.cvolume();
+            muted = r.bool();
+            volume_set = r.bool();
+            let muted_set = r.bool();
+            muted &= muted_set;
+            // A volume relative to the source's, and passthrough: no.
+            r.bool();
+            r.bool();
+        }
+        parsed(r)?;
+        if !spec.valid() {
+            return Err(if formats > 0 { ERR_NOTSUPPORTED } else { ERR_INVALID });
+        }
+        let source = if source_index == INVALID && source_name.is_none() {
+            Source::Mic
+        } else {
+            info::source(source_index, source_name.as_deref()).ok_or(ERR_NOENTITY)?
+        };
+        if source == Source::Mic && !may_record(self.pid, tag::prop(&props, "application.name")) {
+            return Err(ERR_ACCESS);
+        }
+        let channels = spec.channels as usize;
+        let map = if map.len() == channels { map } else { format::default_map(spec.channels) };
+        let volumes = if volume_set && volumes.len() == channels { volumes } else { alloc::vec![VOLUME_NORM; channels] };
+        let index = NEXT_OUTPUT.fetch_add(1, Ordering::Relaxed);
+        let req = RecAttr { maxlength, fragsize };
+        let rec = Record::new(index, source, spec, map.clone(), (req, timing), corked);
+        let output = Output { index, client: self.index, source, spec, map, volumes, muted, corked, props, rec: rec.rec.clone() };
+        output.apply_volume();
+        OUTPUTS.lock().push(output);
+        let channel = self.next_channel;
+        self.next_channel += 1;
+        let a = rec.attr;
+        crate::debug!(
+            "pulse",
+            "client {}: record stream {channel} from {}: format {} x{} at {} Hz, fragment {}",
+            self.pid,
+            info::source_name(source),
+            spec.format,
+            spec.channels,
+            spec.rate,
+            a.fragsize
+        );
+        let mut w = Writer::new(REPLY, tag);
+        w.u32(channel).u32(index);
+        if self.version >= 9 {
+            w.u32(a.maxlength).u32(a.fragsize);
+        }
+        if self.version >= 12 {
+            w.sample_spec(spec).channel_map(&rec.map).u32(info::source_index(source)).str(info::source_name(source)).bool(false);
+        }
+        if self.version >= 13 {
+            w.usec(rec.latency_us);
+        }
+        if self.version >= 22 {
+            w.pcm_format();
+        }
+        self.send(&w);
+        self.records.insert(channel, rec);
+        self.changed = true;
+        Ok(())
+    }
+
+    /// Commands for one of the client's record streams (by channel).
+    fn record_command(&mut self, cmd: u32, tag: u32, r: &mut Reader<'_>) -> Result<(), u32> {
+        let channel = r.u32();
+        let version = self.version;
+        let rec = self.records.get_mut(&channel);
+        let mut w = Writer::new(REPLY, tag);
+        match cmd {
+            CORK_RECORD_STREAM => {
+                let corked = r.bool();
+                parsed(r)?;
+                let rec = rec.ok_or(ERR_NOENTITY)?;
+                rec.cork(corked);
+                with_output(rec.index, |o| o.corked = corked);
+            }
+            FLUSH_RECORD_STREAM => {
+                parsed(r)?;
+                rec.ok_or(ERR_NOENTITY)?.flush();
+            }
+            GET_RECORD_LATENCY => {
+                let (sec, usec) = r.timeval();
+                parsed(r)?;
+                record_latency_reply(&mut w, rec.ok_or(ERR_NOENTITY)?, (sec, usec));
+            }
+            SET_RECORD_STREAM_BUFFER_ATTR => {
+                let req = RecAttr { maxlength: r.u32(), fragsize: r.u32() };
+                let adjust_latency = version >= 13 && r.bool();
+                let early_requests = version >= 14 && r.bool();
+                parsed(r)?;
+                let rec = rec.ok_or(ERR_NOENTITY)?;
+                rec.set_attr(req, Timing { adjust_latency, early_requests });
+                w.u32(rec.attr.maxlength).u32(rec.attr.fragsize);
+                if version >= 13 {
+                    w.usec(rec.latency_us);
+                }
+            }
+            UPDATE_RECORD_STREAM_SAMPLE_RATE => {
+                let rate = r.u32();
+                parsed(r)?;
+                let rec = rec.ok_or(ERR_NOENTITY)?;
+                if rate == 0 || rate > 384_000 {
+                    return Err(ERR_INVALID);
+                }
+                rec.spec.rate = rate;
+                rec.rec.set_rate(rate);
+                with_output(rec.index, |o| o.spec.rate = rate);
+            }
+            SET_RECORD_STREAM_NAME => {
+                let name = r.string();
+                parsed(r)?;
+                let rec = rec.ok_or(ERR_NOENTITY)?;
+                let mut value = name.unwrap_or_default().into_bytes();
+                value.push(0);
+                let new = alloc::vec![(alloc::string::String::from("media.name"), value)];
+                with_output(rec.index, |o| update_props(&mut o.props, UPDATE_REPLACE, new));
+            }
+            UPDATE_RECORD_STREAM_PROPLIST => {
+                let mode = r.u32();
+                let new = r.proplist();
+                parsed(r)?;
+                let rec = rec.ok_or(ERR_NOENTITY)?;
+                with_output(rec.index, |o| update_props(&mut o.props, mode, new));
+            }
+            _ => {
+                let keys = read_keys(r);
+                parsed(r)?;
+                let rec = rec.ok_or(ERR_NOENTITY)?;
+                with_output(rec.index, |o| o.props.retain(|(k, _)| !keys.contains(k)));
+            }
+        }
+        self.send(&w);
+        Ok(())
+    }
+
+    /// The sources' volumes and the record streams' sources and volumes.
+    fn source_control(&mut self, cmd: u32, tag: u32, r: &mut Reader<'_>) -> Result<(), u32> {
+        let mut w = Writer::new(REPLY, tag);
+        match cmd {
+            LOOKUP_SOURCE => {
+                let name = r.string();
+                parsed(r)?;
+                let s = info::source(INVALID, Some(name.as_deref().unwrap_or(""))).ok_or(ERR_NOENTITY)?;
+                w.u32(info::source_index(s));
+            }
+            SET_SOURCE_VOLUME => {
+                let (index, name, volumes) = (r.u32(), r.string(), r.cvolume());
+                parsed(r)?;
+                if volumes.is_empty() {
+                    return Err(ERR_INVALID);
+                }
+                // The monitor's volume is the sink's: it stays.
+                if info::source(index, name.as_deref()).ok_or(ERR_NOENTITY)? == Source::Mic {
+                    let avg = volumes.iter().map(|&v| v as u64).sum::<u64>() / volumes.len() as u64;
+                    info::set_mic_volume(avg.min(u32::MAX as u64) as u32);
+                }
+            }
+            SET_SOURCE_MUTE => {
+                let (index, name, mute) = (r.u32(), r.string(), r.bool());
+                parsed(r)?;
+                if info::source(index, name.as_deref()).ok_or(ERR_NOENTITY)? == Source::Mic {
+                    capture::set_muted(mute);
+                }
+            }
+            SET_DEFAULT_SOURCE => {
+                let name = r.string();
+                parsed(r)?;
+                if name.as_deref().is_some_and(|n| info::source(INVALID, Some(n)).is_none()) {
+                    return Err(ERR_NOENTITY);
+                }
+            }
+            SUSPEND_SOURCE => {
+                // The microphone stops by itself when nobody records.
+                let (index, name, _suspend) = (r.u32(), r.string(), r.bool());
+                parsed(r)?;
+                if !(index == INVALID && name.is_none()) && info::source(index, name.as_deref()).is_none() {
+                    return Err(ERR_NOENTITY);
+                }
+            }
+            MOVE_SOURCE_OUTPUT => {
+                let (index, source, name) = (r.u32(), r.u32(), r.string());
+                parsed(r)?;
+                let s = info::source(source, name.as_deref()).ok_or(ERR_NOENTITY)?;
+                let mut outputs = OUTPUTS.lock();
+                let o = outputs.iter_mut().find(|o| o.index == index).ok_or(ERR_NOENTITY)?;
+                if s == Source::Mic && o.source != Source::Mic {
+                    // To the microphone only with the permission, asked of
+                    // the program that records (not while holding the list).
+                    let (client, rec) = (o.client, o.rec.clone());
+                    drop(outputs);
+                    if client != self.index || !may_record(self.pid, None) {
+                        return Err(ERR_ACCESS);
+                    }
+                    rec.set_source(s);
+                    with_output(index, |o| o.source = s);
+                } else {
+                    o.rec.set_source(s);
+                    o.source = s;
+                }
+            }
+            SET_SOURCE_OUTPUT_VOLUME => {
+                let (index, volumes) = (r.u32(), r.cvolume());
+                parsed(r)?;
+                let mut outputs = OUTPUTS.lock();
+                let o = outputs.iter_mut().find(|o| o.index == index).ok_or(ERR_NOENTITY)?;
+                o.volumes = match volumes.len() {
+                    n if n == o.spec.channels as usize => volumes,
+                    1 => alloc::vec![volumes[0]; o.spec.channels as usize],
+                    _ => return Err(ERR_INVALID),
+                };
+                o.apply_volume();
+            }
+            _ => {
+                let (index, mute) = (r.u32(), r.bool());
+                parsed(r)?;
+                let mut outputs = OUTPUTS.lock();
+                let o = outputs.iter_mut().find(|o| o.index == index).ok_or(ERR_NOENTITY)?;
+                o.muted = mute;
+                o.apply_volume();
+            }
+        }
+        self.send(&w);
+        Ok(())
+    }
+
     /// What there is: the server, the sink, clients and streams; lists of
     /// what there is not are empty.
     fn info(&mut self, cmd: u32, tag: u32, r: &mut Reader<'_>) -> Result<(), u32> {
@@ -740,8 +1105,31 @@ impl Client {
                     info::input_info(&mut w, v, i);
                 }
             }
-            GET_SOURCE_INFO_LIST | GET_MODULE_INFO_LIST | GET_SOURCE_OUTPUT_INFO_LIST | GET_SAMPLE_INFO_LIST | GET_CARD_INFO_LIST => {}
-            GET_SOURCE_INFO | GET_MODULE_INFO | GET_SOURCE_OUTPUT_INFO | GET_SAMPLE_INFO | GET_CARD_INFO => return Err(ERR_NOENTITY),
+            GET_SOURCE_INFO => {
+                let (index, name) = (r.u32(), r.string());
+                parsed(r)?;
+                // Neither number nor name: the default source.
+                let s = if index == INVALID && name.is_none() { Some(Source::Mic) } else { info::source(index, name.as_deref()) };
+                info::source_info(&mut w, v, s.ok_or(ERR_NOENTITY)?);
+            }
+            GET_SOURCE_INFO_LIST => {
+                info::source_info(&mut w, v, Source::Mic);
+                info::source_info(&mut w, v, Source::Monitor);
+            }
+            GET_SOURCE_OUTPUT_INFO => {
+                let index = r.u32();
+                parsed(r)?;
+                let outputs = OUTPUTS.lock();
+                let o = outputs.iter().find(|o| o.index == index).ok_or(ERR_NOENTITY)?;
+                info::output_info(&mut w, v, o);
+            }
+            GET_SOURCE_OUTPUT_INFO_LIST => {
+                for o in OUTPUTS.lock().iter() {
+                    info::output_info(&mut w, v, o);
+                }
+            }
+            GET_MODULE_INFO_LIST | GET_SAMPLE_INFO_LIST | GET_CARD_INFO_LIST => {}
+            GET_MODULE_INFO | GET_SAMPLE_INFO | GET_CARD_INFO => return Err(ERR_NOENTITY),
             _ => return Err(ERR_COMMAND),
         }
         self.send(&w);
@@ -850,6 +1238,27 @@ impl Client {
         self.send(&w);
         Ok(())
     }
+}
+
+/// Changes the entry of source output `index`.
+fn with_output(index: u32, f: impl FnOnce(&mut Output)) {
+    if let Some(o) = OUTPUTS.lock().iter_mut().find(|o| o.index == index) {
+        f(o);
+    }
+}
+
+/// Where a record stream is in time (GET_RECORD_LATENCY): how late what
+/// the sink played reaches a monitor, how late what is captured reaches
+/// the client (a step of the capture thread, and what still waits in the
+/// kernel), whether it records, the client's time and ours, and the write
+/// and read indexes (bytes recorded and bytes sent).
+fn record_latency_reply(w: &mut Writer, rec: &Record, local: (u32, u32)) {
+    let monitor = if rec.rec.source() == Source::Monitor { audio::latency_us() } else { 0 };
+    let waiting = rec.spec.bytes_to_usec((rec.rec.queued() * rec.spec.frame_size()) as u64);
+    let (sec, usec) = now_timeval();
+    w.usec(monitor).usec(capture::STEP_MS * 1000 + waiting).bool(!rec.corked());
+    w.timeval(local.0, local.1).timeval(sec, usec);
+    w.s64(rec.write_index()).s64(rec.sent as i64);
 }
 
 /// Changes the entry of sink input `index`.

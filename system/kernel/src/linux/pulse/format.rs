@@ -1,5 +1,6 @@
 //! Sample formats and channel layouts of PulseAudio streams, and how their
-//! sound becomes the mixer's: 16-bit stereo, at the stream's own rate.
+//! sound becomes the mixer's (16-bit stereo, at the stream's own rate) and
+//! how a recording's 16-bit stereo becomes theirs.
 
 use alloc::vec::Vec;
 
@@ -171,6 +172,108 @@ impl Layout {
                 r += v * w.1;
             }
             out.push([(l / self.total.0) as i16, (r / self.total.1) as i16]);
+        }
+    }
+}
+
+/// A signed 16-bit sample in `format`, added to `out`.
+fn put_sample(format: u8, v: i16, out: &mut Vec<u8>) {
+    let wide = (v as i32) << 16;
+    match format {
+        U8 => out.push(((v >> 8) + 128) as u8),
+        ALAW => out.push(to_alaw(v)),
+        ULAW => out.push(to_ulaw(v)),
+        S16LE => out.extend_from_slice(&v.to_le_bytes()),
+        S16BE => out.extend_from_slice(&v.to_be_bytes()),
+        F32LE => out.extend_from_slice(&to_float(v).to_le_bytes()),
+        F32BE => out.extend_from_slice(&to_float(v).to_be_bytes()),
+        S32LE => out.extend_from_slice(&wide.to_le_bytes()),
+        S32BE => out.extend_from_slice(&wide.to_be_bytes()),
+        S24LE => out.extend_from_slice(&wide.to_le_bytes()[1..]),
+        S24BE => out.extend_from_slice(&wide.to_be_bytes()[..3]),
+        S24_32LE => out.extend_from_slice(&(wide >> 8).to_le_bytes()),
+        _ => out.extend_from_slice(&(wide >> 8).to_be_bytes()),
+    }
+}
+
+/// A 16-bit sample as a 32-bit float (-1 to 1), built bit by bit: the
+/// kernel does not use floating point. The highest bit set gives the
+/// exponent, the bits below it the mantissa.
+fn to_float(v: i16) -> u32 {
+    if v == 0 {
+        return 0;
+    }
+    let m = v.unsigned_abs() as u32;
+    let e = 31 - m.leading_zeros();
+    let bits = (112 + e) << 23 | ((m << (23 - e)) & 0x7F_FFFF);
+    if v < 0 { bits | 1 << 31 } else { bits }
+}
+
+/// G.711 A-law, as in the standard.
+fn to_alaw(v: i16) -> u8 {
+    let mut s = (v >> 3) as i32;
+    let mask = if s >= 0 {
+        0xD5
+    } else {
+        s = -s - 1;
+        0x55
+    };
+    let seg = [0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF].iter().position(|&end| s <= end);
+    let Some(seg) = seg else { return 0x7F ^ mask };
+    let low = if seg < 2 { (s >> 1) & 0x0F } else { (s >> seg) & 0x0F };
+    ((seg as i32) << 4 | low) as u8 ^ mask
+}
+
+/// G.711 µ-law, as in the standard.
+fn to_ulaw(v: i16) -> u8 {
+    let mut s = v as i32;
+    let sign = if s < 0 {
+        s = -s;
+        0x80
+    } else {
+        0
+    };
+    s = s.min(32635) + 0x84;
+    let exp = 31 - (s as u32).leading_zeros() as i32 - 7;
+    let mantissa = (s >> (exp + 3)) & 0x0F;
+    !((sign | exp << 4 | mantissa) as u8)
+}
+
+/// How a recording's stereo becomes a stream's channels: each channel
+/// takes the left, the right or (in the middle, and for mono) the average
+/// of both, by its position.
+pub struct Unlayout {
+    spec: Spec,
+    /// For each channel: 0 the average, 1 the left, 2 the right.
+    sides: Vec<u8>,
+}
+
+impl Unlayout {
+    pub fn new(spec: Spec, map: &[u8]) -> Unlayout {
+        let map = if map.len() == spec.channels as usize { map.to_vec() } else { default_map(spec.channels) };
+        let sides = map
+            .iter()
+            .map(|&p| match side(p) {
+                (2, 0) => 1,
+                (0, 2) => 2,
+                _ => 0,
+            })
+            .collect();
+        Unlayout { spec, sides }
+    }
+
+    /// `frames` in the stream's format, added to `out`.
+    pub fn convert(&self, frames: &[[i16; 2]], out: &mut Vec<u8>) {
+        out.reserve(frames.len() * self.spec.frame_size());
+        for f in frames {
+            for &s in &self.sides {
+                let v = match s {
+                    1 => f[0],
+                    2 => f[1],
+                    _ => ((f[0] as i32 + f[1] as i32) / 2) as i16,
+                };
+                put_sample(self.spec.format, v, out);
+            }
         }
     }
 }

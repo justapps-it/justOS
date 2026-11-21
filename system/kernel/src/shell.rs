@@ -1502,6 +1502,9 @@ impl Shell {
             for o in crate::dev::audio::list() {
                 println!("sound: audio{} {} ({} Hz, {} channels)", o.index, o.name, o.rate, o.channels);
             }
+            for i in crate::dev::capture::list() {
+                println!("sound input: mic{} {} ({} Hz, {} channels)", i.index, i.name, i.rate, i.channels);
+            }
             return;
         };
         if arg == "scale" {

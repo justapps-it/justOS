@@ -231,6 +231,7 @@ funzioni sicure:
 | input | `input_event` (tasti come usage HID, movimenti, pulsanti) |
 | rete | `net_register` con un `NetDesc`, `net_receive` per i frame in arrivo |
 | suono | `audio_register` con un `AudioDesc` (scrittura di campioni a 16 bit, svuotamento); `audio_queued` dice al kernel quanti campioni la scheda ha ancora da suonare; `pcm::PcmRing` gestisce il buffer circolare che quasi ogni scheda audio legge in loop |
+| registrazione | `capture_register` con un `CaptureDesc` (accensione e spegnimento dell'ingresso, lettura di campioni a 16 bit); `pcm::CaptureRing` gestisce il buffer circolare in cui la scheda scrive (vedi sotto) |
 | schermo | `display_register` con un `DisplayDesc` (modi, cambio di modo, aggiornamento di un rettangolo); `map_framebuffer` mappa la memoria video in write-combining; `display_heads` e `display_changed` per più monitor (vedi sotto) |
 | sospensione | `power_hooks`: come il dispositivo si ferma prima della sospensione e riparte al risveglio (vedi sotto) |
 
@@ -240,11 +241,45 @@ invece di caricarli e rischiare un errore. L'ABI 2 ha aggiunto MSI, gli
 eventi e i dispositivi figli; i servizi nuovi si aggiungono in fondo alla
 tabella, quindi un driver compilato per l'ABI 2 funziona anche con un
 kernel più recente della stessa ABI (non il contrario: i driver audio e
-video della versione 0.4 chiedono un kernel 0.4). L'ultimo servizio
-aggiunto è `audio_queued`: con lui il mixer del kernel sa quanto suono è
+video della versione 0.4 chiedono un kernel 0.4). Gli ultimi servizi
+aggiunti sono `audio_queued`, con cui il mixer del kernel sa quanto suono è
 ancora nella scheda e dà ai programmi un orologio preciso (la latenza che
-PulseAudio riporta); un driver che non lo chiama funziona lo stesso, e il
-kernel stima la coda dal tempo.
+PulseAudio riporta; un driver che non lo chiama funziona lo stesso, e il
+kernel stima la coda dal tempo), e `capture_register`, in fondo alla
+tabella: i driver di prima, che non lo conoscono, funzionano come prima;
+un driver che lo usa chiede un kernel che lo ha (`justdrv` controlla la
+lunghezza della tabella).
+
+### Registrazione
+
+Un driver audio con un ingresso (microfono, linea) lo registra con
+`capture_register` e un `CaptureDesc`: la frequenza e i canali in cui
+registra, `capture(ctx, on)` per accendere e spegnere l'ingresso e
+`read(ctx, campioni, frame)`, che copia i frame arrivati (interi a 16 bit,
+interlacciati) e ne dice il numero, aspettando al più qualche decina di
+millisecondi. Il kernel accende l'ingresso solo quando qualcuno registra
+dal microfono e lo spegne quando nessuno lo fa più: un thread del kernel
+(`capture`) legge 10 ms alla volta, converte in stereo, applica il volume
+d'ingresso e passa il suono a ogni registrazione alla sua frequenza
+(`dev/capture`). Senza ingresso le registrazioni ricevono silenzio al
+ritmo dell'orologio, a 48 kHz, come la riproduzione senza scheda.
+
+`pcm::CaptureRing` è il gemello di `PcmRing`: un buffer DMA in periodi che
+la scheda riempie in loop; l'interruzione di fine periodo chiama
+`progress.signal()` e `read` copia da dove il lettore era arrivato fino a
+dove è la scheda. Chi resta indietro di più di tre quarti del buffer
+salta a mezzo buffer dalla scheda (perde il suono vecchio invece di
+leggere dati sovrascritti). Anche lui ha `pause` e `unpause` per la
+sospensione.
+
+Il driver `hda` (1.2.0) cerca nel codec un convertitore d'ingresso (ADC)
+con un percorso, attraverso mixer e selettori, fino a un pin d'ingresso:
+prima un microfono, poi un ingresso di linea, poi qualunque pin che sa
+ricevere. Accende il pin (con la polarizzazione per i microfoni, quando
+c'è), toglie il muto e mette il guadagno a 0 dB lungo il percorso, e usa
+il primo stream d'ingresso del controller a 48 kHz, 16 bit, stereo. In
+QEMU lo provano `hda-duplex` e `hda-micro`, che hanno un ingresso;
+`hda-output` no, e la scheda resta solo d'uscita.
 
 Il kernel converte ogni suono al formato dell'uscita (frequenza, canali) e
 applica il volume da sé: un driver audio dichiara un solo formato e lascia
@@ -345,8 +380,10 @@ Le regole, imparate scrivendo gli hook dei driver inclusi:
   `suspend` lo alza, prende e lascia il lock (così nessuno è a metà di un
   invio), maschera le interruzioni e ferma le unità; `resume` resetta,
   riconfigura (anelli vuoti, MAC, filtri) e lo abbassa;
-- l'audio usa `PcmRing::pause` e `PcmRing::unpause`: chi scrive campioni
-  aspetta invece di trovare il buffer fermo;
+- l'audio usa `PcmRing::pause` e `PcmRing::unpause` (e
+  `CaptureRing::pause` e `unpause` per l'ingresso): chi scrive campioni
+  aspetta invece di trovare il buffer fermo, chi registra riceve meno
+  suono;
 - un lettore SD rilegge la scheda al risveglio e la confronta (CID e
   indirizzamento) con quella di prima: se è un'altra, o non c'è più, la
   toglie come se fosse stata estratta;
@@ -456,7 +493,7 @@ della scheda non funzionano.
 | `rtl8169` | Realtek RTL810x e le altre revisioni | stessa interfaccia, non provato su hardware |
 | `ps2kbd`, `ps2mouse` | tastiera e mouse PS/2 | provati |
 | `sdhci` | lettori di schede SD/MMC standard (per classe PCI): Intel, O2 Micro, Ricoh, AMD | provato con ADMA2, SDMA e senza DMA, schede SD e SDHC |
-| `hda` | audio HD Intel (per classe PCI), codec Realtek, Conexant, IDT, VIA, Cirrus | provato con uscita di linea e altoparlante; sui codec veri non verificato |
+| `hda` | audio HD Intel (per classe PCI), codec Realtek, Conexant, IDT, VIA, Cirrus | provato con uscita di linea e altoparlante, e la registrazione da microfono e ingresso di linea (`hda-duplex`); sui codec veri non verificato |
 | `ac97` | audio AC'97 Intel ICH, SiS, nVidia, AMD | provato (82801AA) |
 | `bochsvga` | schermo di QEMU (VGA standard, bochs-display), Bochs, VirtualBox VBoxVGA, QXL | provato in QEMU |
 | `vmsvga` | VMware SVGA II: VMware, VirtualBox VMSVGA | provato in QEMU |
