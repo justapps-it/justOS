@@ -13,6 +13,7 @@ test = false
 bench = false
 
 [dependencies]
+justjson.workspace = true
 justrt.workspace = true
 
 [lints]

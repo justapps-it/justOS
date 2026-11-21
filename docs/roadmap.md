@@ -60,22 +60,31 @@ in `justdk::syscall`, libreria `justrt::app`):
   e nella sandbox di macOS) gira fuori dall'app: il file scelto dall'utente
   diventa accessibile all'app per il resto della sua vita, senza altri
   permessi.
-- dispositivi (fotocamera, microfono, posizione) e rete: si chiedono al
-  servizio `just.permissions` (`{"request": "camera"}` → `{"granted": …}`).
+- dispositivi (fotocamera, microfono, posizione), rete e notifiche: si
+  chiedono al servizio `just.permissions` (`{"request": "camera"}` →
+  `{"granted": …}`).
 
-La prima volta il sistema chiede con una finestra «Privacy» (Consenti / Non
-consentire); la risposta resta in `sys:/system/permissions.json`. *Impostazioni
-→ Sistema → Privacy delle app* elenca le risposte, le cambia e le dimentica;
-dal terminale lo fa `perms`. Senza interfaccia grafica le richieste nuove
+Di base un'app non ha nessun permesso: il manifest dichiara solo che cosa
+potrà chiedere. La prima volta il sistema chiede con una finestra al centro
+dell'app, come su un telefono (Consenti / Solo questa volta / Non
+consentire, con Non consentire scelto all'inizio ed Esc); la chiamata
+aspetta la risposta. Un no vale per questa volta e la volta dopo si chiede
+di nuovo; due no di fila restano finché non si cambia in Impostazioni. Le
+risposte stanno in `sys:/system/permissions.json`. *Impostazioni → Privacy*
+le mostra per app e per permesso, le cambia e le dimentica; dal terminale
+lo fa `perms`. Senza interfaccia grafica le richieste nuove
 sono negate con un suggerimento (`perms allow <app> <permesso>`). `sandbox
 test` prova tutto (anche in `make test`). Disegno salva in Immagini (dopo il
 permesso) e con Ctrl+Maiusc+S / Ctrl+O usa il selettore; 2048 e Serpente
 tengono il record nella propria cartella.
 
-Limiti onesti: i programmi Linux e Windows non sono nella sandbox (girano
-come programmi di sistema); per fotocamera, microfono e posizione c'è il
-permesso ma non ancora i driver; il file scelto nel selettore vale solo
-finché l'app resta aperta.
+Limiti onesti: i programmi Linux e Windows non sono nella sandbox per i
+file (girano come programmi di sistema); per fotocamera e microfono hanno
+un'identità (`linux.firefox-esr`, con nome e icona dal `.desktop`) e
+`sandbox::device_allowed`, ma justOS non dà ancora a Linux un microfono
+(PulseAudio non registra) né una fotocamera (niente V4L); per fotocamera,
+microfono e posizione c'è il permesso ma non ancora i driver; il file
+scelto nel selettore vale solo finché l'app resta aperta.
 
 ### 3. Grafica accelerata
 
@@ -140,7 +149,7 @@ chiamate `WIN_CREATE`/`WIN_PRESENT`/`WIN_EVENT`.
 | WebGL, DRM (Widevine) | ⬜ / ⛔ |
 | Negozio grafico con installazione in un clic | ✅ (`sys:/store`, pacchetti `.app`) |
 | Aggiornamenti delle app in background | ✅ indice firmato Ed25519, servizio `just.updates`, sezione Aggiornamenti del Negozio |
-| Permessi in stile mobile | ✅ cartelle, dischi, fotocamera, microfono, posizione, rete (`just.permissions`) |
+| Permessi in stile mobile | ✅ nessuno di base; cartelle, dischi, fotocamera, microfono, posizione, rete, notifiche (`just.permissions`) |
 | Pacchetti Debian (`.deb`) | ✅ con le dipendenze dall'archivio di Debian, come `apt install ./file.deb`: indice firmato (RSA ed Ed25519, chiavi di `debian-archive-keyring`), file controllati con SHA-256; `deb get <nome>` nel Terminale (`kernel/src/apt.rs`, `libs/justdeb`) |
 | Programmi Linux (ELF) | ✅ statici e dinamici con la glibc di Debian, finestre Wayland, GTK 3, Firefox ESR; in italiano, con la localizzazione `it_IT.UTF-8` e le traduzioni (`kernel/src/linux`, `make test-linux`, `make test-gtk`) |
 | Programmi Windows (PE) | 🟡 Wine 10 per i programmi a 64 e a 32 bit, console e finestre, di serie nell'immagine di disco (doppio clic su un `.exe`); `winrun` per quelli semplici e nel CD live |
@@ -168,8 +177,9 @@ dichiarare, come per ogni sistema non commerciale.
    volta al giorno, scarica in background e sostituisce un'app quando è
    chiusa; le app installate da GitHub si confrontano con l'ultima release;
 3. ✅ i permessi dichiarati nel manifest (`permissions=camera,files:Immagini`
-   nel file `info`) sono mostrati nella pagina del Negozio; un
-   aggiornamento che ne chiede di nuovi aspetta il consenso.
+   nel file `info`) sono mostrati nella pagina del Negozio, senza darli:
+   l'app li chiede quando le servono; un aggiornamento che ne chiede di
+   nuovi aspetta il consenso.
 
 Manca: la firma anche per i programmi Linux e Windows (oggi solo HTTPS) e
 il ritorno alla versione precedente.
@@ -306,11 +316,13 @@ precedente; dal terminale c'è `sysupdate`. Restano da fare:
 
 **Permessi.** Fatto (vedi «Identità delle app e sandbox»): quando un'app
 apre una cartella fuori dalla sua, il kernel sospende la chiamata e mostra
-«*Disegno* vuole usare la cartella Immagini — Consenti / Non consentire»;
-la risposta resta in `sys:/system/permissions.json`, il servizio
-`just.permissions` risponde per fotocamera, microfono, posizione e rete,
-*Impostazioni → Privacy delle app* elenca, cambia e revoca; il Negozio
-mostra i permessi dichiarati nel manifest di ogni app.
+al centro dell'app «Consentire a Disegno di accedere alla cartella
+Immagini?» con Consenti / Solo questa volta / Non consentire; nessun
+permesso è dato in anticipo, due no di fila restano; la risposta resta in
+`sys:/system/permissions.json`, il servizio `just.permissions` risponde per
+fotocamera, microfono, posizione, rete e notifiche, *Impostazioni →
+Privacy* elenca per app e per permesso, cambia e revoca; il Negozio mostra
+i permessi dichiarati nel manifest di ogni app.
 
 ## Ordine consigliato
 

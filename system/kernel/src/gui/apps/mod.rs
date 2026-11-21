@@ -257,6 +257,18 @@ pub fn linux_app_for(path: &str) -> Option<Entry> {
     linux_apps().into_iter().find(|e| matches!(&e.launch, Launch::Spawn(p) if p == path))
 }
 
+/// The name and icon of the Linux program file `exe` runs, for the
+/// sandbox's questions: its .desktop file's, matched by path or else by
+/// file name (the process may run the program from another folder).
+pub fn linux_face(exe: &str) -> Option<(String, String)> {
+    let file = alloc::format!("/{}", exe.rsplit('/').next().unwrap_or(exe));
+    let apps = linux_apps();
+    let found = apps.iter().find(|e| matches!(&e.launch, Launch::Spawn(p) if p.eq_ignore_ascii_case(exe)));
+    found
+        .or_else(|| apps.iter().find(|e| matches!(&e.launch, Launch::Spawn(p) if p.ends_with(&file))))
+        .map(|e| (e.name.clone(), e.icon.clone()))
+}
+
 /// How a file opens.
 pub enum Opener {
     /// In a new window of this app.

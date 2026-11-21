@@ -382,11 +382,33 @@ pub fn notify(title: &str, body: &str, icon: &str) {
     }
 }
 
-/// Asks the user whether `app` may use `what` ("la cartella Immagini"), in
-/// a dialog of the system; waits for the answer (None: the asking program
-/// was stopped).
-pub fn ask_permission(app: &crate::sandbox::App, what: &str) -> Option<bool> {
-    apps::prompt::permission(app, what)
+/// Asks the user whether `app` may have permission `perm`, in the system's
+/// popup over the window of the asking process (`pids`: it and the ones
+/// it came from); waits for the answer.
+pub fn ask_permission(app: &crate::sandbox::App, perm: &str, pids: &[u32]) -> crate::sandbox::Choice {
+    apps::prompt::permission(app, perm, pids)
+}
+
+/// The permission popup on the screen, if one is: the app's id and name,
+/// and the permission.
+pub fn permission_pending() -> Option<(alloc::string::String, alloc::string::String, alloc::string::String)> {
+    apps::prompt::pending()
+}
+
+/// Answers the permission popup on the screen as its button would (false
+/// if there is none).
+pub fn answer_permission(choice: crate::sandbox::Choice) -> bool {
+    apps::prompt::answer(choice)
+}
+
+/// The name and icon the desktop gives a Linux program (from its .desktop
+/// file, `exe` as "sys:/usr/lib/firefox-esr/firefox-esr") or, with
+/// `class`, a Windows program (its window class, "notepad.exe").
+pub fn program_face(exe: &str, class: Option<&str>) -> Option<(alloc::string::String, alloc::string::String)> {
+    match class {
+        Some(class) => apps::winapps::face_for_class(class),
+        None => apps::linux_face(exe),
+    }
 }
 
 /// The system's file picker, for a program (`app` names it): a file to

@@ -101,6 +101,9 @@ struct Process {
     /// pid of the program justOS started, which the processes it made
     /// inherit; 0 after `setsid` (a daemon, off the terminal).
     job: u32,
+    /// A Linux program (or one a Linux program forked): the sandbox asks
+    /// for its devices under the name the desktop gives it.
+    linux: bool,
 }
 
 /// Where a process's paths start: its current folder and, after a Linux
@@ -314,6 +317,7 @@ fn start(image: Vec<u8>, name: String, args: &str, cwd: Path, kind: Kind, exe: &
             shared_vm: false,
             orphan: false,
             job: pid,
+            linux: kind == Kind::Linux,
         },
     );
     let start = Box::into_raw(Box::new(Start { image, args: String::from(args), kind, exe: alloc::format!("{exe}"), env }));
@@ -386,6 +390,8 @@ pub(crate) fn fork(child: TrapFrame, fs: u64, share_vm: bool, share_fs: bool) ->
             shared_vm: share_vm,
             orphan: false,
             job,
+            // Only Linux programs fork.
+            linux: true,
         },
     );
     let arg = Box::into_raw(Box::new(ThreadStart { frame: child, fs, segs: own_segments() }));
@@ -1310,6 +1316,71 @@ pub(crate) fn sandbox() -> Option<(crate::sandbox::App, Vec<(Path, bool)>)> {
     let procs = PROCS.lock();
     let p = procs.get(&pid)?;
     Some((p.app.clone()?, p.picked.clone()))
+}
+
+/// Is process `pid` still running?
+pub(crate) fn alive(pid: u32) -> bool {
+    PROCS.lock().get(&pid).is_some_and(|p| p.state == State::Running)
+}
+
+/// Is process `pid` a Linux program?
+pub(crate) fn is_linux(pid: u32) -> bool {
+    PROCS.lock().get(&pid).is_some_and(|p| p.linux)
+}
+
+/// The program file process `pid` runs.
+pub(crate) fn exe_of(pid: u32) -> Option<Path> {
+    PROCS.lock().get(&pid).map(|p| p.exe.clone())
+}
+
+/// The name process `pid`'s first thread goes by: a Linux program may set
+/// it (Wine names it after the Windows program, "notepad.exe").
+pub(crate) fn thread_name(pid: u32) -> Option<String> {
+    let tid = PROCS.lock().get(&pid).map(|p| p.tid)?;
+    task::name_of(tid)
+}
+
+/// The process a run of a program is counted from, for the answers that
+/// last as long as it ("Solo questa volta", a first "Non consentire"):
+/// for a Linux program the one justOS started (Firefox's first process,
+/// which its others come from), for a justOS program the process itself.
+pub(crate) fn run_of(pid: u32) -> u32 {
+    let procs = PROCS.lock();
+    let Some(p) = procs.get(&pid) else { return pid };
+    if !p.linux {
+        return pid;
+    }
+    if p.job != 0 && procs.get(&p.job).is_some_and(|j| j.state == State::Running) {
+        return p.job;
+    }
+    // Off its job (setsid): the oldest of its parents still running.
+    let mut top = pid;
+    for _ in 0..64 {
+        match procs.get(&top).and_then(|p| p.parent).filter(|up| procs.get(up).is_some_and(|q| q.state == State::Running && q.linux)) {
+            Some(up) => top = up,
+            None => break,
+        }
+    }
+    top
+}
+
+/// Process `pid` and the ones it came from (its parents, and its job), for
+/// finding the window a question about it belongs to.
+pub(crate) fn lineage(pid: u32) -> Vec<u32> {
+    let procs = PROCS.lock();
+    let mut v = alloc::vec![pid];
+    let mut at = pid;
+    while let Some(up) = procs.get(&at).and_then(|p| p.parent) {
+        if v.contains(&up) || v.len() >= 64 {
+            break;
+        }
+        v.push(up);
+        at = up;
+    }
+    if let Some(job) = procs.get(&pid).map(|p| p.job).filter(|j| *j != 0 && !v.contains(j)) {
+        v.push(job);
+    }
+    v
 }
 
 /// `APP_ENTER`: the calling process becomes `app`, for good.

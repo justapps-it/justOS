@@ -31,6 +31,8 @@ const QUEUE_MAX: usize = 256;
 
 pub struct Shared {
     pub pid: u32,
+    /// Its handle, which also names it to the desktop ([`App::ident`]).
+    handle: u64,
     title: String,
     icon: String,
     /// The content size asked for.
@@ -61,6 +63,22 @@ static NEXT: IrqLock<u64> = IrqLock::new(1);
 static NEW: IrqLock<Vec<Handle>> = IrqLock::new(Vec::new());
 static EVENTS: WaitQueue = WaitQueue::new();
 
+/// The [`App::ident`] of programs' windows: their handle with this bit,
+/// apart from the keys of Linux programs' windows, which count from 1.
+const IDENT: u64 = 1 << 48;
+
+/// The ident of a window of one of the processes `pids` (the first that
+/// has one), for a dialog of the system that belongs to it.
+pub fn ident_for(pids: &[u32]) -> Option<u64> {
+    let list: Vec<Handle> = WINDOWS.lock().iter().map(|(_, w)| w.clone()).collect();
+    pids.iter().find_map(|pid| {
+        list.iter().find_map(|w| {
+            let s = w.lock();
+            (s.pid == *pid && !s.closed && !s.ended).then_some(IDENT | s.handle)
+        })
+    })
+}
+
 fn get(handle: u64, pid: u32) -> Option<Handle> {
     WINDOWS.lock().iter().find(|(h, w)| *h == handle && w.lock().pid == pid).map(|(_, w)| w.clone())
 }
@@ -74,8 +92,15 @@ pub fn create(pid: u32, title: &str, w: i32, h: i32, flags: u64) -> Result<u64, 
         return Err(sys::Error::BadAddress);
     }
     let icon = super::apps::package_icon(&crate::user::current_name());
+    let handle = {
+        let mut n = NEXT.lock();
+        let h = *n;
+        *n += 1;
+        h
+    };
     let shared = Shared {
         pid,
+        handle,
         title: String::from(title),
         icon,
         size: (w, h),
@@ -89,12 +114,6 @@ pub fn create(pid: u32, title: &str, w: i32, h: i32, flags: u64) -> Result<u64, 
         ended: false,
         drops: flags & sys::WIN_DROPS != 0,
         dropped: Vec::new(),
-    };
-    let handle = {
-        let mut n = NEXT.lock();
-        let h = *n;
-        *n += 1;
-        h
     };
     let arc = Arc::new(Mutex::new(shared));
     WINDOWS.lock().push((handle, arc.clone()));
@@ -297,6 +316,10 @@ impl App for UserWindow {
 
     fn kind(&self) -> &'static str {
         self.kind
+    }
+
+    fn ident(&self) -> u64 {
+        IDENT | self.shared.lock().handle
     }
 
     fn size(&self) -> (i32, i32) {
