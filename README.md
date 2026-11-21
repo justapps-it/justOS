@@ -35,9 +35,10 @@ terze parti, solo il compilatore Rust con `core` e `alloc`.
 
 Sopra a questa base c'è uno strato di compatibilità con Linux, con un
 compositor Wayland dentro il kernel: ci girano Firefox ESR, che è già
-installato, GTK 3 e gli altri programmi Linux; con Wine ci girano anche molti
-programmi Windows. L'interfaccia è un dock, finestre a pixel morbidi, tema
-scuro o chiaro e una configurazione guidata al primo avvio.
+installato, GTK 3 e gli altri programmi Linux, in italiano; con Wine ci girano
+anche molti programmi Windows. L'interfaccia è un dock che si trasforma
+nell'isola di quello che sta succedendo, finestre a pixel morbidi, tema scuro
+o chiaro, più monitor e una configurazione guidata al primo avvio.
 
 È un progetto in sviluppo: [più sotto](#stato-del-progetto) c'è scritto con
 onestà cosa funziona e cosa no.
@@ -47,11 +48,11 @@ onestà cosa funziona e cosa no.
 | | |
 |---|---|
 | **Avvio** | JustBoot: loader scritti da zero per BIOS (MBR e secondo stadio in assembly) e per UEFI (applicazione EFI in Rust). La stessa immagine parte da chiavetta USB, disco o CD live. |
-| **Desktop** | Dock con menu di sistema e stato, Applicazioni, centro di controllo, centro notifiche, ricerca globale (Ctrl+Spazio), desktop virtuali, snap delle finestre, tema scuro e chiaro, HiDPI a 2×. |
-| **App** | File, Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi. |
-| **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland. **Firefox ESR è il browser di serie.** I programmi con un file `.desktop` compaiono in Applicazioni. |
+| **Desktop** | Dock con menu di sistema e stato che diventa un'isola per notifiche, volume, programmi che si avviano, musica e timer; Applicazioni, centro di controllo, centro notifiche, ricerca globale anche dentro i file (Ctrl+Spazio), desktop virtuali, snap delle finestre, tema scuro e chiaro, HiDPI a 2×, più monitor. |
+| **App** | File (con le anteprime delle immagini), Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi. |
+| **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con il dizionario italiano. I programmi con un file `.desktop` compaiono in Applicazioni. |
 | **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS. |
-| **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione in RAM. |
+| **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione (in RAM, o s2idle sui portatili senza S3). |
 | **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
 | **Installazione** | Dalla chiavetta o dal CD justOS si installa sul disco del computer, con scelta del disco, conferma e barra di avanzamento. |
 | **Primo avvio** | Configurazione guidata in 10 passi: aspetto, tastiera, rete, account, nome del dispositivo, privacy e sfondo. |
@@ -73,7 +74,7 @@ onestà cosa funziona e cosa no.
 <tr>
 <td><img src="docs/screenshots/lanciatore.png" alt="Applicazioni: tutte le app con la ricerca" width="100%"><br><sub>Applicazioni (Ctrl+Spazio).</sub></td>
 <td><img src="docs/screenshots/impostazioni-chiaro.png" alt="Impostazioni con il tema chiaro" width="100%"><br><sub>Impostazioni, tema chiaro.</sub></td>
-<td></td>
+<td><img src="docs/screenshots/isola.png" alt="Il dock diventato un'isola mentre Firefox si avvia" width="100%"><br><sub>Il dock diventa un'isola mentre Firefox si avvia.</sub></td>
 </tr>
 </table>
 
@@ -154,13 +155,14 @@ dischi su cui installare justOS.
 |---|---|---|
 | Avvio BIOS e UEFI, kernel multiprocessore, JustFS | Funziona | Provato in QEMU; fino a 16 processori. |
 | Desktop e app di base | Funziona | Dock, ricerca, desktop virtuali, tema scuro e chiaro, HiDPI. |
-| Firefox ESR e programmi Linux | Funziona | Glibc di Debian, GTK 3, Wayland. Niente X11, niente accelerazione 3D (quindi niente WebGL), niente DRM Widevine. |
+| Firefox ESR e programmi Linux | Funziona | Glibc di Debian, GTK 3, Wayland, in italiano. Niente X11, niente audio (in arrivo), niente accelerazione 3D (quindi niente WebGL), niente DRM Widevine. |
 | Programmi Windows | In parte | Wine 10 a 64 e 32 bit, console e finestre. Mancano DirectX accelerato e l'audio; i programmi grandi e recenti spesso non partono ancora. Non si garantisce che un dato programma funzioni. |
 | Aggiornamenti A/B del sistema | Funziona | Provati in QEMU (`make test-update`), con ritorno indietro. |
 | Hardware reale | In parte | Molti driver sono provati solo in QEMU; dettagli in [docs/driver.md](docs/driver.md#hardware-supportato). |
 | App Android | In corso | Interprete Dalvik per programmi semplici e driver binder; le app vere non girano. |
 | Wi-Fi, Bluetooth | Non ancora | Nessun driver. |
-| Accelerazione grafica, più monitor | Non ancora | Il desktop è disegnato dal processore. |
+| Più monitor | In parte | Con virtio-gpu (macchine virtuali), alla stessa risoluzione e in fila; sulle schede video vere un solo monitor. |
+| Accelerazione grafica | Non ancora | Il desktop è disegnato dal processore. |
 | Fusi orari, indirizzo IP statico | Non ancora | |
 | App macOS | No | I `.pkg` si aprono, ma i programmi Mach-O non si eseguono. |
 | Installazione sul disco interno del PC | Funziona | Provata in QEMU (`make test-install`) con BIOS e UEFI, non ancora su hardware reale. Cancella tutto il disco scelto. |
