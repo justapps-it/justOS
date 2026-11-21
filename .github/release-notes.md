@@ -2,24 +2,27 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ![La scrivania di justOS](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/scrivania.png)
 
-La prima versione pubblicata in [justapps-it/justOS](https://github.com/justapps-it/justOS), la nuova casa del progetto.
+## Novità della 0.9
 
-## Novità della 0.8
+- **La barra si trasforma**: invece di aggiungere una seconda barra, il dock stesso diventa un'isola al centro in basso per quello che succede (una notifica, il volume o la luminosità, un programma che si avvia, una canzone o un timer appena partiti, un timer che suona). Appena ci passi sopra con il puntatore torna la barra delle app; quando te ne vai l'isola ricompare.
+- **Il dock non scatta più**: passandoci sopra, lo sfondo resta fermo e le icone crescono sul posto.
+- **Più monitor**: con una scheda video che ne gestisce più di uno (per ora virtio-gpu nelle macchine virtuali), la scrivania si allarga su tutti; orologio e dock stanno sul monitor principale, le finestre passano da uno all'altro e si ingrandiscono sul loro. In Impostazioni → Schermo si sceglie il principale, l'ordine o la duplicazione, e la scelta resta.
+- **Firefox apre le schede anche con 1 GiB di memoria**: un processo figlio condivide le pagine del padre finché uno dei due non scrive (`fork` copy-on-write), invece di copiarle tutte subito.
+- **Sospensione anche sui portatili senza S3** (Modern Standby): s2idle, con i dispositivi fermi, lo schermo nero e i processori nel loro stato di riposo più profondo; si risveglia con il tasto di accensione, il coperchio, la tastiera o la sveglia.
+- **Anteprime in File**: le immagini PNG, JPEG, GIF e QOI si vedono come miniature; il Visualizzatore apre anche PNG, JPEG e GIF.
+- **La ricerca guarda anche dentro i file**: con Ctrl+Spazio, dopo i risultati per nome, la sezione *Contenuto* mostra i file di testo che contengono quello che scrivi, con la riga trovata.
+- **Selettore di file dei programmi GTK** (Firefox compreso): si apre nella cartella home invece che su "Recenti" vuoto, i file recenti funzionano e non c'è più il Cestino che dava errore; le impostazioni dei programmi GTK restano da un avvio all'altro.
+- **`help` del Terminale in italiano.**
+- **Firefox, GTK e Wine in italiano**: menu, finestre di dialogo e messaggi dei programmi Linux e Windows sono tradotti; date e numeri seguono le regole italiane, e Firefox controlla l'ortografia in italiano.
+- **Gli aggiornamenti arrivano da justapps-it**: l'indice firmato degli aggiornamenti si è spostato nella nuova casa del progetto. Chi ha installato la 0.8 vede l'annuncio della 0.9 in Info sistema, ma deve scaricarla a mano; dalla 0.9 in poi gli aggiornamenti si installano da soli.
 
-- **Programmi Linux veri**: gli eseguibili dinamici girano con la glibc di Debian, e un compositor Wayland dentro il kernel dà loro finestre di justOS. Funzionano GTK 3 e i programmi con un file `.desktop`, che compaiono in Applicazioni.
-- **Firefox ESR è il browser di serie**, già installato nell'immagine di disco. Il browser scritto apposta, JustScript e JustStudio non ci sono più.
-- **Programmi Windows con Wine 10**: un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia, a 64 bit e, in parte, a 32 bit. La prima volta una finestra di justOS, *Programmi Windows*, prepara l'ambiente con una barra di avanzamento; i programmi installati compaiono in Applicazioni e nella ricerca.
-- **Installazione sul disco del computer**: avviato da chiavetta o da CD, justOS propone di installarsi su un disco interno, con scelta del disco, conferma esplicita e barra di avanzamento. Il disco scelto viene cancellato per intero.
-- **Primo avvio in 10 passi**: aspetto, tastiera, rete, account con password, nome del dispositivo, data e ora, privacy e aggiornamenti, sfondo.
-- **Nuovo aspetto a pixel morbidi**, con tema scuro e tema chiaro, e un centro di controllo ridisegnato. A schermo intero il dock sale dal bordo in basso.
-- **Ctrl+Maiusc+L** blocca lo schermo (prima era logo+L, che in una macchina virtuale su Windows restava "incastrato").
-
-![Firefox ESR](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/firefox.png)
+![Programma che si avvia nella barra](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/isola.png)
 
 ## Cosa non va ancora
 
 - Molti programmi Windows a 32 bit e quelli grandi (Steam, per esempio) si fermano: la compatibilità è agli inizi.
-- Mancano Wi-Fi, Bluetooth e l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware, alla risoluzione scelta dal firmware.
+- Mancano Wi-Fi, Bluetooth e l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware, alla risoluzione scelta dal firmware, con un solo monitor.
+- La sospensione s2idle è provata in QEMU, non ancora su portatili veri; la retroilluminazione resta accesa (lo schermo diventa nero).
 - L'installazione su disco è provata in QEMU, non ancora su hardware vero; niente Secure Boot, dischi con settori da 4K o più grandi di 2 TiB.
 - Lo stato di ogni driver è in [docs/driver.md](https://github.com/justapps-it/justOS/blob/main/docs/driver.md#hardware-supportato), cosa manca e in che ordine nella [roadmap](https://github.com/justapps-it/justOS/blob/main/docs/roadmap.md).
 
