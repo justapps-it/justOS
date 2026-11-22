@@ -60,6 +60,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("dev", "[id | scan]", "elenca i dispositivi e i loro driver"),
     ("drv", "[list|info|add|remove|reload|inbox]", "gestisce i driver"),
     ("kbd", "[us|it]", "mostra o cambia il layout della tastiera"),
+    ("bt", "[scan|pair|connect|disconnect|forget <dispositivo>|on|off]", "Bluetooth: l'adattatore, i dispositivi, l'associazione"),
     ("mem", "", "quanta memoria è in uso"),
     ("ps", "", "programmi e thread in esecuzione"),
     ("kill", "<pid>", "termina un programma"),
@@ -672,6 +673,7 @@ impl Shell {
                     println!("MSI {vector:>2}  {count:>10}  {name}");
                 }
             }
+            "bt" | "bluetooth" => self.bluetooth(&rest),
             "net" => {
                 let list = dev::net::list();
                 if list.is_empty() {
@@ -1883,6 +1885,134 @@ impl Shell {
                 }
             }
             _ => println!("usage: install-system [list] | install-system <disk> | install-system <disk> --yes-erase <code>"),
+        }
+    }
+
+    /// `bt`: the Bluetooth adapter and devices ([`crate::bt`]).
+    fn bluetooth(&self, rest: &[&str]) {
+        use crate::bt;
+        let target = || -> Option<bt::Addr> {
+            let what = rest.get(1..).map(|w| w.join(" ")).filter(|w| !w.is_empty());
+            let Some(what) = what else {
+                println!("usage: bt {} <address or name>", rest[0]);
+                return None;
+            };
+            let found = bt::find(&what).and_then(|a| bt::parse_addr(&a));
+            if found.is_none() {
+                println!("{ERR}no device {what} (try: bt scan){RESET}");
+            }
+            found
+        };
+        match rest.first().copied() {
+            None => {
+                let Some((name, addr, on)) = bt::adapter() else {
+                    println!("no Bluetooth adapter (is btusb installed? try: dev)");
+                    return;
+                };
+                println!("{BOLD}hci0{RESET}  {addr}  {DIM}{name}{RESET}  {}", if on { "on" } else { "off" });
+                let list = bt::devices();
+                if list.is_empty() {
+                    println!("{DIM}no devices: bt scan{RESET}");
+                }
+                for d in list {
+                    let state = if d.connected {
+                        alloc::format!("{OK}connected{RESET}")
+                    } else if d.paired {
+                        "paired".to_string()
+                    } else {
+                        alloc::format!("{DIM}found, {} dBm{RESET}", d.rssi)
+                    };
+                    println!("  {}  {:<24} {:<16} {} {state}", d.addr, d.name, d.kind.name(), if d.le { "LE " } else { "BR " });
+                }
+            }
+            Some("scan") => {
+                let secs = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(6);
+                println!("{DIM}scanning for {secs} s...{RESET}");
+                match bt::scan(secs) {
+                    Ok(n) => {
+                        println!("{n} devices found");
+                        for d in bt::devices().into_iter().filter(|d| !d.paired) {
+                            println!("  {}  {:<24} {:<16} {}", d.addr, d.name, d.kind.name(), if d.le { "LE" } else { "BR" });
+                        }
+                    }
+                    Err(e) => println!("{ERR}{e}{RESET}"),
+                }
+            }
+            Some("pair") => {
+                let Some(a) = target() else { return };
+                self.bt_pair(a);
+            }
+            Some("connect") => {
+                let Some(a) = target() else { return };
+                match bt::connect(&a) {
+                    Ok(()) => println!("{OK}connected{RESET}"),
+                    Err(e) => println!("{ERR}{e}{RESET}"),
+                }
+            }
+            Some("disconnect") => {
+                let Some(a) = target() else { return };
+                bt::disconnect(&a);
+            }
+            Some("forget") => {
+                let Some(a) = target() else { return };
+                if bt::forget(&a) {
+                    println!("forgotten");
+                }
+            }
+            Some("on") | Some("off") => bt::set_powered(rest[0] == "on"),
+            Some(other) => println!("{ERR}unknown: bt {other}{RESET}"),
+        }
+    }
+
+    /// Pairs in a thread of its own, while the console answers the
+    /// pairing's questions.
+    fn bt_pair(&self, a: crate::bt::Addr) {
+        use crate::bt::{self, PromptKind};
+        let result = alloc::sync::Arc::new(crate::sync::IrqLock::new(None::<Result<(), String>>));
+        let r = result.clone();
+        let text = bt::addr_text(&a);
+        if task::spawn("bt-pair", move || *r.lock() = Some(bt::pair(&text))).is_none() {
+            println!("{ERR}cannot start{RESET}");
+            return;
+        }
+        println!("{DIM}pairing...{RESET}");
+        let mut shown = 0;
+        loop {
+            if let Some(r) = result.lock().take() {
+                match r {
+                    Ok(()) => println!("{OK}paired and connected{RESET}"),
+                    Err(e) => println!("{ERR}{e}{RESET}"),
+                }
+                return;
+            }
+            if let Some(p) = bt::prompt().filter(|p| p.id != shown) {
+                shown = p.id;
+                match p.kind {
+                    PromptKind::Display(n) => println!("type {BOLD}{n:06}{RESET} on {}, then Enter", p.name),
+                    PromptKind::Confirm(n) => {
+                        let ok = self.ask(&alloc::format!("does {} show {BOLD}{n:06}{RESET}? (s/n) ", p.name));
+                        bt::answer(p.id, ok, 0);
+                    }
+                    PromptKind::Enter => {
+                        print!("the code {} shows: ", p.name);
+                        let mut code = String::new();
+                        loop {
+                            match input::read_key().key {
+                                Key::Enter => break,
+                                Key::Char(c) if c.is_ascii_digit() && code.len() < 6 => {
+                                    code.push(c);
+                                    print!("{c}");
+                                }
+                                Key::Backspace if code.pop().is_some() => print!("\x08 \x08"),
+                                _ => {}
+                            }
+                        }
+                        println!();
+                        bt::answer(p.id, !code.is_empty(), code.parse().unwrap_or(0));
+                    }
+                }
+            }
+            task::sleep_ms(50);
         }
     }
 
