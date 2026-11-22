@@ -2,6 +2,7 @@
 //! opens which file.
 
 mod about;
+pub mod btpair;
 mod calculator;
 mod calendar;
 mod clock;
@@ -30,7 +31,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 pub use files::{icon_for, Files};
-pub use prefs::{request_look as settings_at_look, request_screen as settings_at_screen};
+pub use prefs::{request_bluetooth as settings_at_bluetooth, request_look as settings_at_look, request_screen as settings_at_screen};
 pub use viewer::Viewer;
 
 /// Opens a file or folder dropped on an app's dock icon with that app (the

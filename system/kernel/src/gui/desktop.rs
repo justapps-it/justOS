@@ -2651,7 +2651,12 @@ impl Desktop {
                     self.set_brightness_at(l, x);
                 }
             }
-            ControlHit::Tile(Tile::Network | Tile::Bluetooth) | ControlHit::Settings | ControlHit::Account => {
+            ControlHit::Tile(Tile::Bluetooth) => {
+                self.close_popup(l);
+                super::apps::settings_at_bluetooth();
+                self.open_id(l, "settings");
+            }
+            ControlHit::Tile(Tile::Network) | ControlHit::Settings | ControlHit::Account => {
                 self.close_popup(l);
                 self.open_id(l, "settings");
             }
@@ -3793,7 +3798,18 @@ impl Desktop {
                     Some(a) if online => (true, "Rete", format!("{a}"), &G_WIFI[..], BLUE_GRAD),
                     _ => (false, "Rete", String::from("Non connessa"), &G_WIFI[..], BLUE_GRAD),
                 },
-                Tile::Bluetooth => (false, "Bluetooth", String::from("Assente"), &G_BLUETOOTH[..], BLUE_GRAD),
+                Tile::Bluetooth => {
+                    let state = match crate::bt::adapter() {
+                        None => (false, String::from("Assente")),
+                        Some((_, _, false)) => (false, String::from("Spento")),
+                        Some(_) => match crate::bt::devices().iter().filter(|d| d.connected).count() {
+                            0 => (true, String::from("Acceso")),
+                            1 => (true, String::from("1 collegato")),
+                            n => (true, format!("{n} collegati")),
+                        },
+                    };
+                    (state.0, "Bluetooth", state.1, &G_BLUETOOTH[..], BLUE_GRAD)
+                }
                 Tile::Quiet => (self.quiet, "Non disturbare", String::from(if self.quiet { "Attivo" } else { "Spento" }), &G_MOON[..], VIOLET_GRAD),
             };
             let hot = lit(ControlHit::Tile(tile));
@@ -4501,6 +4517,10 @@ impl Desktop {
                 }
                 // Questions of the sandbox, and file pickers for programs.
                 for app in super::apps::prompt::take_new() {
+                    self.open(l, app, false);
+                }
+                // What a Bluetooth pairing asks the user.
+                for app in super::apps::btpair::take_new() {
                     self.open(l, app, false);
                 }
                 // A program may say later which window a dialog belongs to,

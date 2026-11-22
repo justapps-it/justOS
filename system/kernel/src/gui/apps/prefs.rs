@@ -91,6 +91,56 @@ pub fn request_screen() {
     crate::dev::input::wake_gui_soon();
 }
 
+/// The settings open at Bluetooth (the control centre's tile).
+pub fn request_bluetooth() {
+    REQUESTED.store(5, Ordering::Relaxed);
+    crate::dev::input::wake_gui_soon();
+}
+
+/// What a Bluetooth action started from here (a thread of its own: scans
+/// and pairings take seconds) is doing, and how the last one ended.
+static BT_WORKING: crate::sync::IrqLock<Option<&'static str>> = crate::sync::IrqLock::new(None);
+static BT_RESULT: crate::sync::IrqLock<Option<String>> = crate::sync::IrqLock::new(None);
+
+/// Runs a Bluetooth action in the background, `doing` saying what it is.
+fn bt_start(doing: &'static str, f: impl FnOnce() -> Result<String, String> + Send + 'static) {
+    {
+        let mut w = BT_WORKING.lock();
+        if w.is_some() {
+            return;
+        }
+        *w = Some(doing);
+    }
+    *BT_RESULT.lock() = None;
+    let started = crate::task::spawn("settings-bt", move || {
+        let r = f();
+        *BT_RESULT.lock() = Some(match r {
+            Ok(s) => s,
+            Err(e) => format!("Non riuscito: {e}"),
+        });
+        *BT_WORKING.lock() = None;
+        crate::dev::input::wake_gui_soon();
+    });
+    if started.is_none() {
+        *BT_WORKING.lock() = None;
+    }
+}
+
+/// What the Bluetooth section shows, to see when it changed.
+fn bt_snapshot() -> String {
+    let mut s = format!("{:?}{:?}{:?}", crate::bt::adapter(), *BT_WORKING.lock(), BT_RESULT.lock().as_deref());
+    for d in crate::bt::devices() {
+        s += &format!("{}{}{}{}", d.addr, d.name, d.paired, d.connected);
+    }
+    s
+}
+
+/// Its kind with a capital letter.
+fn capital(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
 fn take_requested() -> Option<Section> {
     match REQUESTED.swap(0, Ordering::Relaxed) {
         0 => None,
@@ -126,13 +176,22 @@ enum Section {
     Look,
     Screen,
     Sound,
+    Bluetooth,
     Keyboard,
     Lock,
     Privacy,
 }
 
-const SECTIONS: [Section; 7] =
-    [Section::General, Section::Look, Section::Screen, Section::Sound, Section::Keyboard, Section::Lock, Section::Privacy];
+const SECTIONS: [Section; 8] = [
+    Section::General,
+    Section::Look,
+    Section::Screen,
+    Section::Sound,
+    Section::Bluetooth,
+    Section::Keyboard,
+    Section::Lock,
+    Section::Privacy,
+];
 
 impl Section {
     fn name(self) -> &'static str {
@@ -141,6 +200,7 @@ impl Section {
             Section::Look => "Aspetto",
             Section::Screen => "Schermo",
             Section::Sound => "Suono",
+            Section::Bluetooth => "Bluetooth",
             Section::Keyboard => "Tastiera",
             Section::Lock => "Blocco e password",
             Section::Privacy => "Privacy",
@@ -154,6 +214,7 @@ impl Section {
             Section::Look => (0xFFA7_8BFA, 0xFF6D_3FE0),
             Section::Screen => (0xFF5A_A9FF, 0xFF25_63EB),
             Section::Sound => (0xFFFF_6B81, 0xFFE1_1D48),
+            Section::Bluetooth => (0xFF5A_A9FF, 0xFF25_63EB),
             Section::Keyboard => (0xFF5F_E08A, 0xFF1F_A64F),
             Section::Lock => ui::ORANGE_GRAD,
             Section::Privacy => (0xFF7C_8CFF, 0xFF3F_4FD8),
@@ -171,6 +232,8 @@ impl Section {
             Section::Screen => &["#####", "#...#", "#####", "..#..", ".###."],
             // A loudspeaker.
             Section::Sound => &["..#..", "###.#", "###.#", "###.#", "..#.."],
+            // The Bluetooth rune.
+            Section::Bluetooth => &["..#..", "#.##.", ".##..", "#.##.", "..#.."],
             // Keys and the space bar.
             Section::Keyboard => &["#.#.#", ".....", "#.#.#", ".....", ".###."],
             // A padlock.
@@ -183,6 +246,7 @@ impl Section {
     /// A few words under the title, if any.
     fn intro(self) -> &'static str {
         match self {
+            Section::Bluetooth => "Tastiere e mouse senza filo. Cerca il dispositivo dopo averlo messo in associazione (di solito tenendo premuto un tasto).",
             Section::Privacy => "Le app non hanno nessun permesso finché non lo consenti tu: la prima volta che ne serve uno, te lo chiedono. Qui cambi idea.",
             _ => "",
         }
@@ -248,6 +312,34 @@ enum Ctl {
     Back,
     /// A search result: the section it is in, and the row's label.
     Go(Section, String),
+    /// Bluetooth on or off.
+    BtPower,
+    /// Look for devices.
+    BtScan,
+    /// A device (its address, paired, connected): "Associa", or
+    /// "Collega"/"Scollega" and "Dimentica".
+    BtDevice(String, bool, bool),
+}
+
+/// The buttons of a device's row.
+fn bt_buttons(paired: bool, connected: bool) -> &'static [&'static str] {
+    match (paired, connected) {
+        (false, _) => &["Associa"],
+        (true, false) => &["Collega", "Dimentica"],
+        (true, true) => &["Scollega", "Dimentica"],
+    }
+}
+
+fn bt_button_rects(r: Rect, labels: &[&str]) -> Vec<Rect> {
+    let mut x = r.x;
+    labels
+        .iter()
+        .map(|l| {
+            let b = Rect::new(x, r.y, button_w(l), r.h);
+            x += b.w + 8;
+            b
+        })
+        .collect()
 }
 
 impl Ctl {
@@ -361,6 +453,8 @@ pub struct Prefs {
     /// until when; `reveal`: scroll to it at the next drawing.
     flash: Option<(String, u64)>,
     reveal: bool,
+    /// The Bluetooth section as last drawn ([`bt_snapshot`]).
+    bt_seen: String,
 }
 
 /// An app as Privacy shows it: its permissions with what the user said
@@ -566,6 +660,7 @@ impl Prefs {
             hot: None,
             flash: None,
             reveal: false,
+            bt_seen: String::new(),
         }
     }
 
@@ -636,6 +731,7 @@ impl Prefs {
                     vec![card(vec![row("Nessuna scheda audio trovata.", "Volume e suoni compaiono quando ce n'è una.", Ctl::Text)])]
                 }
             }
+            Section::Bluetooth => self.bt_cards(),
             Section::Keyboard => vec![card(vec![row(L_LAYOUT, "Le lettere e i simboli dei tasti", Ctl::Layout)])],
             Section::Lock => {
                 let pw =
@@ -647,6 +743,44 @@ impl Prefs {
                 None => self.privacy_cards(),
             },
         }
+    }
+
+    /// Bluetooth: the adapter and its switch, the search, the devices.
+    fn bt_cards(&self) -> Vec<Card> {
+        let Some((name, addr, on)) = crate::bt::adapter() else {
+            return vec![card(vec![row(
+                "Nessun adattatore Bluetooth trovato.",
+                "Compare qui quando ce n'è uno: per ora i Realtek USB (come l'RTL8852BE) e gli adattatori USB standard.",
+                Ctl::Text,
+            )])];
+        };
+        let mut cards = vec![card(vec![row("Bluetooth", &format!("{name} · {addr}"), Ctl::BtPower)])];
+        if !on {
+            return cards;
+        }
+        let working = *BT_WORKING.lock();
+        let desc = match (working, BT_RESULT.lock().clone()) {
+            (Some(w), _) => String::from(w),
+            (None, Some(r)) => r,
+            (None, None) => String::from("Per qualche secondo: tastiere, mouse e altri dispositivi vicini"),
+        };
+        cards.push(card(vec![row("Cerca dispositivi", &desc, Ctl::BtScan)]));
+        let devices = crate::bt::devices();
+        let mut rows = Vec::new();
+        for d in &devices {
+            let state = match (d.paired, d.connected) {
+                (true, true) => "collegato",
+                (true, false) => "associato",
+                (false, _) => "non associato",
+            };
+            let radio = if d.le { "Bluetooth LE" } else { "Bluetooth" };
+            rows.push(row(&d.name, &format!("{} · {radio} · {state}", capital(d.kind.name())), Ctl::BtDevice(d.addr.clone(), d.paired, d.connected)));
+        }
+        if rows.is_empty() {
+            rows.push(row("Nessun dispositivo.", "Quelli associati e quelli trovati compaiono qui.", Ctl::Text));
+        }
+        cards.push(card(rows));
+        cards
     }
 
     /// All of Privacy: a card of the permissions, each opening the apps
@@ -791,6 +925,12 @@ impl Prefs {
             Ctl::PermView(_) => (text::width(Font::Heading, "›"), bh),
             Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify | Ctl::Mirror => (52, 30),
             Ctl::Swap => (button_w("Scambia"), 34),
+            Ctl::BtPower => (52, 30),
+            Ctl::BtScan => (button_w("Cerca"), 34),
+            Ctl::BtDevice(_, paired, connected) => {
+                let labels = bt_buttons(*paired, *connected);
+                (labels.iter().map(|l| button_w(l)).sum::<i32>() + 8 * (labels.len() as i32 - 1), 34)
+            }
             Ctl::Monitors => {
                 let th = monitor_tiles(Rect::new(0, 0, inner, 0)).first().map_or(MON_H, |t| t.1.h);
                 (inner, th + 10 + bh)
@@ -909,7 +1049,8 @@ impl Prefs {
             Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify | Ctl::Back => vec![r],
             // The whole row opens the permission's page.
             Ctl::PermView(_) => vec![p.r],
-            Ctl::Swap | Ctl::Mirror => vec![r],
+            Ctl::Swap | Ctl::Mirror | Ctl::BtPower | Ctl::BtScan => vec![r],
+            Ctl::BtDevice(_, paired, connected) => bt_button_rects(r, bt_buttons(*paired, *connected)),
             // Mirrored, no monitor is the primary: nothing to click.
             Ctl::Monitors if crate::gui::monitor_choice().2 => Vec::new(),
             Ctl::Monitors => monitor_tiles(r).iter().map(|t| t.1).collect(),
@@ -1037,6 +1178,17 @@ impl Prefs {
                 text::draw(c, Font::Heading, r.x, r.y + (r.h - hh) / 2 - 1, "›", color);
             }
             Ctl::Chime => ui::toggle(c, r, settings::get().startup_sound),
+            Ctl::BtPower => ui::toggle(c, r, crate::bt::adapter().is_some_and(|a| a.2)),
+            Ctl::BtScan => {
+                let busy = BT_WORKING.lock().is_some();
+                ui::button(c, r, "Cerca", !busy, hot(0) && !busy);
+            }
+            Ctl::BtDevice(_, paired, connected) => {
+                let labels = bt_buttons(*paired, *connected);
+                for (k, (b, l)) in bt_button_rects(r, labels).into_iter().zip(labels).enumerate() {
+                    ui::button(c, b, l, !*paired && k == 0, hot(k));
+                }
+            }
             Ctl::DockCompact => ui::toggle(c, r, settings::dock_compact()),
             Ctl::DockMagnify => ui::toggle(c, r, settings::dock_magnify()),
             Ctl::Perm(a, j) => {
@@ -1351,6 +1503,37 @@ impl Prefs {
                 self.scroll = 0;
                 self.hot = None;
             }
+            Ctl::BtPower => {
+                let on = crate::bt::adapter().is_some_and(|a| a.2);
+                bt_start(if on { "Spengo…" } else { "Accendo…" }, move || {
+                    crate::bt::set_powered(!on);
+                    Ok(String::from(if on { "Bluetooth spento" } else { "Bluetooth acceso" }))
+                });
+            }
+            Ctl::BtScan => bt_start("Cerco…", || {
+                let n = crate::bt::scan(8)?;
+                Ok(match n {
+                    0 => String::from("Nessun dispositivo trovato"),
+                    1 => String::from("Trovato un dispositivo"),
+                    n => format!("Trovati {n} dispositivi"),
+                })
+            }),
+            Ctl::BtDevice(addr, paired, connected) => {
+                let Some(a) = crate::bt::parse_addr(addr) else { return Action::None };
+                let addr = addr.clone();
+                match (*paired, *connected, k) {
+                    (false, _, _) => bt_start("Associo…", move || crate::bt::pair(&addr).map(|()| String::from("Associato e collegato"))),
+                    (true, false, 0) => bt_start("Collego…", move || crate::bt::connect(&a).map(|()| String::from("Collegato"))),
+                    (true, true, 0) => bt_start("Scollego…", move || {
+                        crate::bt::disconnect(&a);
+                        Ok(String::from("Scollegato"))
+                    }),
+                    _ => bt_start("Dimentico…", move || {
+                        crate::bt::forget(&a);
+                        Ok(String::from("Dimenticato: per usarlo di nuovo va associato"))
+                    }),
+                }
+            }
             Ctl::Info(_) | Ctl::Text | Ctl::Go(..) => {}
         }
         Action::Redraw
@@ -1506,6 +1689,7 @@ impl App for Prefs {
                 Target::Ctl(i, k) => match page.rows[i].row.ctl {
                     Ctl::Name | Ctl::Device | Ctl::Password => k == 1,
                     Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Modes | Ctl::Swap | Ctl::Monitors | Ctl::Back | Ctl::PermView(_) => true,
+                    Ctl::BtScan | Ctl::BtDevice(..) => true,
                     _ => false,
                 },
                 Target::Search => false,
@@ -1528,6 +1712,13 @@ impl App for Prefs {
         if let Some(s) = take_requested() {
             self.open(s);
             return true;
+        }
+        if self.section == Section::Bluetooth {
+            let now = bt_snapshot();
+            if now != self.bt_seen {
+                self.bt_seen = now;
+                return true;
+            }
         }
         if self.flash.as_ref().is_some_and(|(_, until)| crate::time::uptime_ms() >= *until) {
             self.flash = None;
