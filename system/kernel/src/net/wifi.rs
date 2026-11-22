@@ -481,16 +481,7 @@ pub fn sim(iface: u32) -> Result<u32, &'static str> {
 
 /// The English words for the shell.
 pub fn failure_en(f: Failure) -> String {
-    match f {
-        Failure::NotFound => String::from("network not found"),
-        Failure::NeedPassword => String::from("the network needs a password"),
-        Failure::WrongPassword => String::from("wrong password"),
-        Failure::Unsupported => String::from("a kind of network justOS cannot join"),
-        Failure::Rejected(s) => alloc::format!("refused by the access point (status {s})"),
-        Failure::Timeout => String::from("the access point does not answer"),
-        Failure::Deauthenticated(r) => alloc::format!("disconnected by the access point (reason {r})"),
-        Failure::Lost => String::from("signal lost"),
-    }
+    f.english()
 }
 
 /// `{"wifi": …}` requests of the `just.net` service (system programs only).

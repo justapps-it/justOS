@@ -2651,6 +2651,12 @@ impl Desktop {
                     self.set_brightness_at(l, x);
                 }
             }
+            ControlHit::Tile(Tile::Network) if crate::net::wifi::present() => {
+                // The Wi-Fi networks, in Impostazioni.
+                self.close_popup(l);
+                super::apps::settings_at_wifi();
+                self.open_id(l, "settings");
+            }
             ControlHit::Tile(Tile::Network | Tile::Bluetooth) | ControlHit::Settings | ControlHit::Account => {
                 self.close_popup(l);
                 self.open_id(l, "settings");
@@ -3789,8 +3795,18 @@ impl Desktop {
         let online = crate::net::online();
         for (tile, r) in self.control_tiles() {
             let (on, title, state, symbol, color): (bool, &str, String, &[&str], (u32, u32)) = match tile {
-                Tile::Network => match crate::net::address() {
-                    Some(a) if online => (true, "Rete", format!("{a}"), &G_WIFI[..], BLUE_GRAD),
+                // With a Wi-Fi card: the network joined and its address,
+                // or what the station is doing.
+                Tile::Network => match (crate::net::wifi::status(), crate::net::address()) {
+                    (Some(w), a) if w.state == justwifi::sta::State::Connected => {
+                        let state = match a {
+                            Some(a) if online => format!("{} · {a}", w.ssid),
+                            _ => w.ssid.clone(),
+                        };
+                        (true, "Wi-Fi", state, &G_WIFI[..], BLUE_GRAD)
+                    }
+                    (_, Some(a)) if online => (true, "Rete", format!("{a}"), &G_WIFI[..], BLUE_GRAD),
+                    (Some(w), _) => (false, "Wi-Fi", w.text(), &G_WIFI[..], BLUE_GRAD),
                     _ => (false, "Rete", String::from("Non connessa"), &G_WIFI[..], BLUE_GRAD),
                 },
                 Tile::Bluetooth => (false, "Bluetooth", String::from("Assente"), &G_BLUETOOTH[..], BLUE_GRAD),

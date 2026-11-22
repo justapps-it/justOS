@@ -4,7 +4,10 @@
 //! on the left, its control on the right. Privacy says what each app may use
 //! outside its sandbox ([`crate::sandbox`]): a row per permission, which
 //! opens the apps that asked for it ("Fotocamera: le app che la usano"),
-//! then a card per app with a switch for each of its permissions.
+//! then a card per app with a switch for each of its permissions. Wi-Fi
+//! lists the networks around ([`crate::net::wifi`]): a click joins one,
+//! asking for its password in a field under it when it has one and justOS
+//! does not know it yet; the known networks can be forgotten.
 //!
 //! A section is a list of cards, each a list of [`Row`]s
 //! ([`Prefs::cards`]); [`Prefs::page`] lays them out, and drawing, clicks,
@@ -79,16 +82,25 @@ const FLUIDITY: [&str; 5] = ["Automatica", "60 Hz", "120 Hz", "144 Hz", "240 Hz"
 /// open at its next tick, shows it.
 static REQUESTED: AtomicU8 = AtomicU8::new(0);
 
+fn request(s: Section) {
+    let n = SECTIONS.iter().position(|x| *x == s).unwrap_or(0) + 1;
+    REQUESTED.store(n as u8, Ordering::Relaxed);
+    crate::dev::input::wake_gui_soon();
+}
+
 /// The settings open at Aspetto (the dock's menu).
 pub fn request_look() {
-    REQUESTED.store(2, Ordering::Relaxed);
-    crate::dev::input::wake_gui_soon();
+    request(Section::Look);
 }
 
 /// The settings open at Schermo (the desktop's menu).
 pub fn request_screen() {
-    REQUESTED.store(3, Ordering::Relaxed);
-    crate::dev::input::wake_gui_soon();
+    request(Section::Screen);
+}
+
+/// The settings open at Wi-Fi (the control centre's network tile).
+pub fn request_wifi() {
+    request(Section::Wifi);
 }
 
 fn take_requested() -> Option<Section> {
@@ -123,6 +135,7 @@ const L_PASSWORD: &str = "Password";
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Section {
     General,
+    Wifi,
     Look,
     Screen,
     Sound,
@@ -131,13 +144,14 @@ enum Section {
     Privacy,
 }
 
-const SECTIONS: [Section; 7] =
-    [Section::General, Section::Look, Section::Screen, Section::Sound, Section::Keyboard, Section::Lock, Section::Privacy];
+const SECTIONS: [Section; 8] =
+    [Section::General, Section::Wifi, Section::Look, Section::Screen, Section::Sound, Section::Keyboard, Section::Lock, Section::Privacy];
 
 impl Section {
     fn name(self) -> &'static str {
         match self {
             Section::General => "Generale",
+            Section::Wifi => "Wi-Fi",
             Section::Look => "Aspetto",
             Section::Screen => "Schermo",
             Section::Sound => "Suono",
@@ -151,6 +165,7 @@ impl Section {
     fn grad(self) -> (u32, u32) {
         match self {
             Section::General => (0xFFA0_A0A6, 0xFF62_6267),
+            Section::Wifi => (0xFF4F_C3F7, 0xFF02_77BD),
             Section::Look => (0xFFA7_8BFA, 0xFF6D_3FE0),
             Section::Screen => (0xFF5A_A9FF, 0xFF25_63EB),
             Section::Sound => (0xFFFF_6B81, 0xFFE1_1D48),
@@ -165,6 +180,8 @@ impl Section {
         match self {
             // A cog.
             Section::General => &["#.#.#", ".###.", "##.##", ".###.", "#.#.#"],
+            // Waves over a dot.
+            Section::Wifi => &[".###.", "#...#", ".###.", ".....", "..#.."],
             // A circle half dark, half light.
             Section::Look => &[".###.", "##..#", "##..#", "##..#", ".###."],
             // A screen on its stand.
@@ -184,6 +201,7 @@ impl Section {
     fn intro(self) -> &'static str {
         match self {
             Section::Privacy => "Le app non hanno nessun permesso finché non lo consenti tu: la prima volta che ne serve uno, te lo chiedono. Qui cambi idea.",
+            Section::Wifi => "Le password delle reti a cui ti colleghi restano su questo computer, dove le app non arrivano. Senza connessione, justOS si collega da solo alla rete conosciuta più forte.",
             _ => "",
         }
     }
@@ -248,6 +266,14 @@ enum Ctl {
     Back,
     /// A search result: the section it is in, and the row's label.
     Go(Section, String),
+    /// The Wi-Fi connection: what it is doing, and "Cerca" or "Disconnetti".
+    WifiState,
+    /// Network `i` heard: its signal and "Connetti".
+    Net(usize),
+    /// The password of the network being joined, and "Connetti".
+    NetPassword,
+    /// Known network `i`: "Dimentica".
+    Known(usize),
 }
 
 impl Ctl {
@@ -361,6 +387,16 @@ pub struct Prefs {
     /// until when; `reveal`: scroll to it at the next drawing.
     flash: Option<(String, u64)>,
     reveal: bool,
+    /// Wi-Fi: the networks heard, the known ones, the station's state (and
+    /// when they were last looked at); the network whose password is being
+    /// asked for, and the password typed.
+    nets: Vec<crate::net::wifi::Network>,
+    known: Vec<String>,
+    wifi: Option<crate::net::wifi::Status>,
+    wifi_seen: u64,
+    asking: Option<usize>,
+    net_password: String,
+    editing_net: bool,
 }
 
 /// An app as Privacy shows it: its permissions with what the user said
@@ -566,7 +602,101 @@ impl Prefs {
             hot: None,
             flash: None,
             reveal: false,
+            nets: Vec::new(),
+            known: Vec::new(),
+            wifi: None,
+            wifi_seen: 0,
+            asking: None,
+            net_password: String::new(),
+            editing_net: false,
         }
+    }
+
+    /// Looks at the Wi-Fi station again: true if something changed.
+    fn refresh_wifi(&mut self) -> bool {
+        use crate::net::wifi;
+        self.wifi_seen = crate::time::uptime_ms();
+        let nets = wifi::networks();
+        let known: Vec<String> = wifi::saved().iter().map(|k| String::from_utf8_lossy(&k.ssid).into_owned()).collect();
+        let status = wifi::status();
+        let sig = |n: &[wifi::Network]| n.iter().map(|n| (n.name.clone(), n.bars, n.saved, n.connected)).collect::<Vec<_>>();
+        let st = |s: &Option<wifi::Status>| s.as_ref().map(|s| (s.text(), s.ssid.clone(), s.scanning));
+        let changed = sig(&nets) != sig(&self.nets) || known != self.known || st(&status) != st(&self.wifi);
+        if let Some(i) = self.asking {
+            // Keep asking for the same network if the list moved.
+            let name = self.nets.get(i).map(|n| n.ssid.clone());
+            self.asking = name.and_then(|ssid| nets.iter().position(|n| n.ssid == ssid));
+        }
+        // A wrong password: ask for it again.
+        let wrong = |s: &Option<wifi::Status>| s.as_ref().filter(|s| s.failure == Some(justwifi::sta::Failure::WrongPassword)).map(|s| s.ssid.clone());
+        if let Some(name) = wrong(&status).filter(|_| wrong(&self.wifi).is_none()) {
+            if let Some(i) = nets.iter().position(|n| n.name == name) {
+                self.asking = Some(i);
+                self.editing_net = true;
+                self.net_password.clear();
+            }
+        }
+        self.nets = nets;
+        self.known = known;
+        self.wifi = status;
+        changed
+    }
+
+    /// The cards of Wi-Fi.
+    fn wifi_cards(&self) -> Vec<Card> {
+        let Some(st) = &self.wifi else {
+            return vec![card(vec![row(
+                "Nessuna scheda Wi-Fi trovata.",
+                "justOS ha il driver delle Realtek RTL8852BE; le altre schede non ancora.",
+                Ctl::Text,
+            )])];
+        };
+        let addr = crate::net::config(st.iface).filter(|c| c.1).map(|c| format!("{}", c.0.ip));
+        let state = match (st.state, addr) {
+            (justwifi::sta::State::Connected, Some(a)) => format!("{} a {} · {a}", st.text(), st.ssid),
+            (justwifi::sta::State::Connected, None) => format!("{} a {} · in attesa di un indirizzo", st.text(), st.ssid),
+            _ if st.scanning => String::from("Ricerca delle reti…"),
+            _ => st.text(),
+        };
+        let mut cards = vec![card(vec![row("Wi-Fi", &state, Ctl::WifiState)])];
+        let mut rows = Vec::new();
+        for (i, n) in self.nets.iter().enumerate() {
+            let mut desc = String::from(n.security.name());
+            if n.connected {
+                desc = format!("Connessa · {desc}");
+            } else if n.saved {
+                desc = format!("{desc} · conosciuta");
+            }
+            rows.push(row(&n.name, &desc, Ctl::Net(i)));
+            if self.asking == Some(i) {
+                rows.push(row("", "", Ctl::NetPassword));
+            }
+        }
+        if rows.is_empty() {
+            rows.push(row(if st.scanning { "Ricerca delle reti…" } else { "Nessuna rete trovata." }, "", Ctl::Text));
+        }
+        cards.push(card(rows));
+        if !self.known.is_empty() {
+            cards.push(card(self.known.iter().enumerate().map(|(i, k)| row(k, "Rete conosciuta", Ctl::Known(i))).collect()));
+        }
+        cards
+    }
+
+    /// Joins network `i` of the list (its password typed, or known).
+    fn join(&mut self, i: usize, password: Option<String>) {
+        let Some(n) = self.nets.get(i).cloned() else { return };
+        let name = String::from_utf8_lossy(&n.ssid).into_owned();
+        if password.is_none() && n.security.needs_password() && !n.saved {
+            self.asking = Some(i);
+            self.editing_net = true;
+            self.net_password.clear();
+            return;
+        }
+        self.asking = None;
+        self.editing_net = false;
+        let _ = crate::net::wifi::connect(&name, password.as_deref());
+        self.net_password.clear();
+        self.refresh_wifi();
     }
 
     // ------------------------------------------------------------------
@@ -646,6 +776,7 @@ impl Prefs {
                 Some(perm) => self.perm_cards(perm),
                 None => self.privacy_cards(),
             },
+            Section::Wifi => self.wifi_cards(),
         }
     }
 
@@ -798,6 +929,13 @@ impl Prefs {
             Ctl::Volume => (inner.min(290), 26),
             Ctl::Scale | Ctl::Layout | Ctl::LockAfter | Ctl::Fluidity => (segmented_w(&Self::choices(ctl).0).min(inner), 32),
             Ctl::Go(..) => (text::width(Font::Heading, "›"), bh),
+            Ctl::WifiState => {
+                let connected = self.wifi.as_ref().is_some_and(|s| s.state != justwifi::sta::State::Idle);
+                (button_w(if connected { "Disconnetti" } else { "Cerca" }), 34)
+            }
+            Ctl::Net(_) => (BARS_W + 12 + button_w("Connetti"), 34),
+            Ctl::NetPassword => (inner.min(380), 38),
+            Ctl::Known(_) => (button_w("Dimentica"), 34),
             Ctl::Themes => {
                 let (tw, th) = theme_size(inner);
                 (2 * tw + 16, th + 10 + bh)
@@ -931,6 +1069,14 @@ impl Prefs {
                 (0..self.modes.len() as i32).map(|i| Rect::new(r.x + (i % cols) * (bw + 8), r.y + (i / cols) * 42, bw, 34)).collect()
             }
             Ctl::Info(_) | Ctl::Text | Ctl::Go(..) => Vec::new(),
+            Ctl::WifiState | Ctl::Known(_) => vec![r],
+            // The connected network has no button.
+            Ctl::Net(i) if self.nets.get(*i).is_some_and(|n| n.connected) => Vec::new(),
+            Ctl::Net(_) => vec![Rect::new(r.x + BARS_W + 12, r.y, r.w - BARS_W - 12, r.h)],
+            Ctl::NetPassword => {
+                let (f, b) = field_and_button(r, "Connetti");
+                vec![f, b]
+            }
         }
     }
 
@@ -1031,6 +1177,27 @@ impl Prefs {
             Ctl::Test => ui::button(c, r, "Prova", false, hot(0)),
             Ctl::Forget(_) => ui::button(c, r, "Chiedi di nuovo", false, hot(0)),
             Ctl::Back => ui::button(c, r, "Indietro", false, hot(0)),
+            Ctl::WifiState => {
+                let connected = self.wifi.as_ref().is_some_and(|s| s.state != justwifi::sta::State::Idle);
+                ui::button(c, r, if connected { "Disconnetti" } else { "Cerca" }, false, hot(0));
+            }
+            Ctl::Known(_) => ui::button(c, r, "Dimentica", false, hot(0)),
+            Ctl::Net(i) => {
+                let Some(n) = self.nets.get(*i) else { return };
+                draw_bars(c, Rect::new(r.x, r.y + (r.h - 18) / 2, BARS_W, 18), n.bars);
+                let b = Rect::new(r.x + BARS_W + 12, r.y, r.w - BARS_W - 12, r.h);
+                if n.connected {
+                    text::draw_right(c, Font::Strong, b.right(), b.y + (b.h - text::metrics(Font::Strong).0) / 2, "Connessa", ui::ORANGE);
+                } else {
+                    ui::button(c, b, "Connetti", self.asking == Some(*i), hot(0));
+                }
+            }
+            Ctl::NetPassword => {
+                let (f, b) = field_and_button(r, "Connetti");
+                let dots: String = self.net_password.chars().map(|_| '•').collect();
+                ui::text_field(c, f, &dots, "Password della rete", self.editing_net);
+                ui::button(c, b, "Connetti", true, hot(1));
+            }
             Ctl::PermView(_) => {
                 let (hh, _) = text::metrics(Font::Heading);
                 let color = if hot(0) { ui::text() } else { ui::text_dim() };
@@ -1188,6 +1355,11 @@ impl Prefs {
         if s == Section::Privacy {
             self.privacy = privacy_apps();
             self.privacy_view = None;
+        }
+        if s == Section::Wifi {
+            crate::net::wifi::scan();
+            self.asking = None;
+            self.refresh_wifi();
         }
     }
 
@@ -1351,9 +1523,50 @@ impl Prefs {
                 self.scroll = 0;
                 self.hot = None;
             }
+            Ctl::WifiState => {
+                let connected = self.wifi.as_ref().is_some_and(|s| s.state != justwifi::sta::State::Idle);
+                if connected {
+                    crate::net::wifi::disconnect();
+                } else {
+                    crate::net::wifi::resume_auto();
+                    crate::net::wifi::scan();
+                }
+                self.refresh_wifi();
+            }
+            Ctl::Net(i) => {
+                let i = *i;
+                self.join(i, None);
+            }
+            Ctl::NetPassword => {
+                if k == 0 {
+                    self.editing_net = true;
+                } else if let Some(i) = self.asking {
+                    let pw = self.net_password.clone();
+                    self.join(i, Some(pw));
+                }
+            }
+            Ctl::Known(i) => {
+                if let Some(name) = self.known.get(*i).cloned() {
+                    crate::net::wifi::forget(&name);
+                }
+                self.refresh_wifi();
+            }
             Ctl::Info(_) | Ctl::Text | Ctl::Go(..) => {}
         }
         Action::Redraw
+    }
+}
+
+/// The width of a network's signal.
+const BARS_W: i32 = 26;
+
+/// A network's signal: four bars, `bars` of them lit.
+fn draw_bars(c: &mut Canvas, r: Rect, bars: u8) {
+    let w = (r.w - 3 * 2) / 4;
+    for k in 0..4 {
+        let h = r.h * (k + 1) / 4;
+        let b = Rect::new(r.x + k * (w + 2), r.bottom() - h, w, h);
+        c.fill_round(b, 1, if (k as u8) < bars { ui::text() } else { ui::text_faint() });
     }
 }
 
@@ -1460,6 +1673,7 @@ impl App for Prefs {
         self.editing = false;
         self.editing_device = false;
         self.editing_password = false;
+        self.editing_net = false;
         self.searching = false;
         match target {
             None => Action::Redraw,
@@ -1504,7 +1718,8 @@ impl App for Prefs {
             let lights = match t {
                 Target::Side(_) | Target::Result(_) => true,
                 Target::Ctl(i, k) => match page.rows[i].row.ctl {
-                    Ctl::Name | Ctl::Device | Ctl::Password => k == 1,
+                    Ctl::Name | Ctl::Device | Ctl::Password | Ctl::NetPassword => k == 1,
+                    Ctl::WifiState | Ctl::Net(_) | Ctl::Known(_) => true,
                     Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Modes | Ctl::Swap | Ctl::Monitors | Ctl::Back | Ctl::PermView(_) => true,
                     _ => false,
                 },
@@ -1533,10 +1748,33 @@ impl App for Prefs {
             self.flash = None;
             return true;
         }
+        // Wi-Fi: networks come and go, a connection is made.
+        if self.section == Section::Wifi && crate::time::uptime_ms() >= self.wifi_seen + 700 {
+            return self.refresh_wifi();
+        }
         false
     }
 
     fn key(&mut self, ev: KeyEvent) -> Action {
+        if self.editing_net {
+            match ev.key {
+                Key::Enter => {
+                    if let Some(i) = self.asking {
+                        let pw = self.net_password.clone();
+                        self.join(i, Some(pw));
+                    }
+                }
+                Key::Escape => {
+                    self.net_password.clear();
+                    self.editing_net = false;
+                    self.asking = None;
+                }
+                _ => {
+                    ui::edit_text(&mut self.net_password, &ev, 63);
+                }
+            }
+            return Action::Redraw;
+        }
         if self.editing_password {
             match ev.key {
                 Key::Enter => self.save_password(),

@@ -93,6 +93,20 @@ impl Failure {
             Failure::Lost => String::from("segnale perso"),
         }
     }
+
+    /// The same in English, for the log and the shell.
+    pub fn english(self) -> String {
+        match self {
+            Failure::NotFound => String::from("network not found"),
+            Failure::NeedPassword => String::from("the network needs a password"),
+            Failure::WrongPassword => String::from("wrong password"),
+            Failure::Unsupported => String::from("a kind of network justOS cannot join"),
+            Failure::Rejected(s) => format!("refused by the access point (status {s})"),
+            Failure::Timeout => String::from("the access point does not answer"),
+            Failure::Deauthenticated(r) => format!("disconnected by the access point (reason {r})"),
+            Failure::Lost => String::from("signal lost"),
+        }
+    }
 }
 
 struct Scan {
@@ -415,7 +429,7 @@ impl Station {
     /// the access point. A connection that worked is tried again, a few
     /// times, unless the password is the problem.
     fn fail_with(&mut self, f: Failure, tell: bool) {
-        self.log(format!("wifi: {}", f.text()));
+        self.log(format!("failed: {}", f.english()));
         let was_up = self.conn.as_ref().is_some_and(|c| c.step == Step::Up);
         if tell {
             self.leave(1, true);
