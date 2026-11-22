@@ -28,6 +28,7 @@ mod mem;
 mod net;
 mod rand;
 mod sandbox;
+mod secret;
 mod shell;
 mod sleep;
 mod store;

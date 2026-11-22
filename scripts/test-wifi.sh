@@ -8,9 +8,9 @@
 #   1. the station alone against the simulator (cargo test, on this machine)
 #   2. justOS: scan, a wrong password, WPA2 (with a new group key), WPA3,
 #      WPA3 hash-to-element, an open network, DHCP and ping on each, the
-#      known networks, forgetting one
+#      known networks (their passwords encrypted), forgetting one
 #   3. justOS again on the disk the first session left: it joins a known
-#      network by itself
+#      network by itself, and another with the password it saved
 #
 # What it cannot check: the Realtek card's own driver (rtw8852be), which
 # needs the real card.
@@ -73,6 +73,7 @@ wifi connect justOS-aperta
 ping 192.168.10.1 2
 @sleep 3
 wifi saved
+cat sys:/system/wifi.json
 wifi forget justOS-wpa3
 wifi saved
 net
@@ -90,12 +91,14 @@ cat > s2.txt <<'EOF'
 wifi sim net0
 @sleep 12
 wifi status
+wifi connect justOS-wpa2
+@sleep 8
 wifi disconnect
 wifi status
 shutdown
 EOF
 start_ap
-STEP_WAIT=2 QEMU_TIMEOUT=90 KEEP_DISK= "$HERE/test.sh" "$WORK/session1.img" s2.txt $NET > out2.txt 2>&1 || true
+STEP_WAIT=2 QEMU_TIMEOUT=120 KEEP_DISK= "$HERE/test.sh" "$WORK/session1.img" s2.txt $NET > out2.txt 2>&1 || true
 stop_ap
 
 check() { # file pattern
@@ -120,8 +123,15 @@ check out1.txt 'connected to "justOS-h2e", address 192.168.14.100'
 check ap.txt '(hash-to-element)'
 check out1.txt 'connected to "justOS-aperta", address 192.168.10.100'
 check out1.txt 'forgot "justOS-wpa3"'
+# The passwords are kept encrypted, never in clear.
+check out1.txt '"sealed"'
+if grep -q '"password"' out1.txt; then
+    echo "  missing: passwords encrypted on disk"; FAILED=1
+fi
 [ $S1 -ne 0 ] && { echo "  the kernel stopped"; FAILED=1; }
 check out2.txt 'connected to "justOS-aperta"'
+# Its saved password, decrypted after a reboot.
+check out2.txt 'connected to "justOS-wpa2", address 192.168.11.100'
 check out2.txt 'not connected'
 grep -q "justOS stopped" out2.txt && { echo "  the kernel stopped (second session)"; FAILED=1; }
 

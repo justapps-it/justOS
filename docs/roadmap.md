@@ -222,7 +222,11 @@ reti conosciute con la connessione automatica. Da fare: il driver
 `rtw8852be`, che oggi accende il chip, ne legge l'efuse e controlla il
 firmware ma non lo carica ancora; poi le tabelle di BB e RF (sono nel file
 del firmware), i canali, trasmissione e ricezione. Le password delle reti
-stanno in un file di sistema che le app non leggono, ma non cifrate.
+stanno in un file di sistema che le app non leggono, cifrate con AES-GCM
+sotto una chiave della macchina (`sys:/system/machine.key`, casuale): chi
+copia solo `wifi.json` non le legge, ma chi legge tutto il disco sì, perché
+justOS non usa il TPM e il Wi-Fi si collega prima del login, quando la
+password dell'utente non c'è ancora.
 
 **Bluetooth.** Più semplice del Wi-Fi a livello di driver (USB HCI è
 standard: un driver vale per quasi tutti i dongle), più complicato sopra:

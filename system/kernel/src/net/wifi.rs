@@ -5,10 +5,10 @@
 //! frames IP sends go through the station, which turns them into 802.11
 //! and encrypts them.
 //!
-//! The networks joined are remembered, with their passwords, in
-//! `sys:/system/wifi.json`: a system file, which the sandbox keeps from
-//! apps (as it does the settings that hold the user's password). When no
-//! network is joined, the station looks every half minute and joins the
+//! The networks joined are remembered in `sys:/system/wifi.json`, a system
+//! file the sandbox keeps from apps; their passwords are encrypted there
+//! with the machine key ([`crate::secret`], whose limits it explains). When
+//! no network is joined, the station looks every half minute and joins the
 //! strongest one it knows.
 
 use crate::dev::net as nic;
@@ -224,15 +224,35 @@ fn auto_join(d: &mut Dev, now: u64) {
 fn load() -> Vec<Saved> {
     let Ok(text) = fs::abs(SAVED).and_then(|p| fs::read_file(&p)) else { return Vec::new() };
     let v = justjson::parse_bytes(&text).unwrap_or(Value::Null);
-    v.get("networks")
+    let mut plain = false;
+    let list: Vec<Saved> = v
+        .get("networks")
         .as_array()
         .iter()
         .filter_map(|n| {
             let ssid = n.get("ssid").as_str()?.as_bytes().to_vec();
-            let password = n.get("password").as_str().map(|p| p.as_bytes().to_vec());
+            let password = match (n.get("sealed").as_str(), n.get("password").as_str()) {
+                (Some(s), _) => match crate::secret::open("wifi", &ssid, s) {
+                    Some(p) => Some(p),
+                    None => {
+                        crate::warn!("wifi", "the password of \"{}\" does not decrypt: asking again", String::from_utf8_lossy(&ssid));
+                        None
+                    }
+                },
+                // Saved in clear by an earlier version: encrypted below.
+                (None, Some(p)) => {
+                    plain = true;
+                    Some(p.as_bytes().to_vec())
+                }
+                (None, None) => None,
+            };
             Some(Saved { ssid, password })
         })
-        .collect()
+        .collect();
+    if plain {
+        store(&list);
+    }
+    list
 }
 
 fn with_saved<T>(f: impl FnOnce(&mut Vec<Saved>) -> T) -> T {
@@ -249,7 +269,11 @@ fn store(list: &[Saved]) {
         .map(|s| {
             let mut fields = alloc::vec![("ssid", Value::string(&String::from_utf8_lossy(&s.ssid)))];
             if let Some(p) = &s.password {
-                fields.push(("password", Value::string(&String::from_utf8_lossy(p))));
+                match crate::secret::seal("wifi", &s.ssid, p) {
+                    Some(sealed) => fields.push(("sealed", Value::string(&sealed))),
+                    // Without a machine key the password is not kept.
+                    None => crate::warn!("wifi", "cannot encrypt the password: not saved"),
+                }
             }
             Value::object(fields)
         })
