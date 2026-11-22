@@ -203,7 +203,7 @@ avida porta a un vicolo cieco.
 | Audio dei programmi Linux e Windows (PulseAudio) | ✅ riproduzione e registrazione (Firefox, Wine, `paplay`, `parec`), microfono con il suo permesso; mancano la memoria condivisa e gli eventi |
 | Collegamento a caldo dell'audio (cuffie) | ⬜ |
 | Wi-Fi | ⬜ |
-| Bluetooth | ⬜ |
+| Bluetooth | 🟡 driver `btusb` (Realtek RTL8852BU con il firmware), tastiere e mouse BR/EDR e LE; provato su un controller emulato, manca l'audio |
 | Sospensione in RAM | ✅ S3, con tutti i driver inclusi; s2idle per i portatili senza S3 (Modern Standby) |
 | Batteria e temperatura | ✅ interprete AML `justaml`, embedded controller, GPE |
 
@@ -216,10 +216,14 @@ con il firmware ufficiale ridistribuibile; il supplicant in Rust sopra
 e le reti nel riquadro Rete del centro di controllo (che c'è già). Stima: 4–6
 mesi per un chip.
 
-**Bluetooth.** Più semplice del Wi-Fi a livello di driver (USB HCI è
-standard: un driver vale per quasi tutti i dongle), più complicato sopra:
-L2CAP, profili HID (tastiere, mouse) e A2DP (audio, con il codec SBC).
-Stima: 2–3 mesi per HID, altrettanti per l'audio.
+**Bluetooth.** In parte: `btusb` per i controller USB (la classe
+standard e i Realtek, con la patch del firmware caricata come fa `btrtl`),
+nel kernel HCI, L2CAP, l'associazione (SSP, SMP Secure Connections), SDP,
+GATT, HID classico e HID su GATT; il servizio `just.bluetooth`, il comando
+`bt`, *Impostazioni → Bluetooth* e il riquadro del centro di controllo.
+Provato con `make test-bt` su un RTL8852BU emulato (vedi
+[driver](driver.md#bluetooth)); sul chip vero va ancora provato. Manca
+l'audio (A2DP, con il codec SBC).
 
 **Batteria e temperatura.** Fatto: justOS esegue l'AML del firmware con il
 suo interprete, `justaml` (scritto da zero, provato con le tabelle di sette

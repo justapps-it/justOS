@@ -230,6 +230,8 @@ funzioni sicure:
 | dischi | `block_register` con un `BlockDesc` (lettura, scrittura, flush) |
 | input | `input_event` (tasti come usage HID, movimenti, pulsanti) |
 | rete | `net_register` con un `NetDesc`, `net_receive` per i frame in arrivo |
+| Bluetooth | `hci_register` con un `HciDesc` (la funzione che manda comandi e dati ACL al controller), `hci_receive` per gli eventi e i dati in arrivo (vedi [Bluetooth](#bluetooth)) |
+| firmware | `firmware(nome)`: un file di `sys:/system/firmware/` (per i chip che lo vogliono caricato all'avvio) |
 | suono | `audio_register` con un `AudioDesc` (scrittura di campioni a 16 bit, svuotamento); `audio_queued` dice al kernel quanti campioni la scheda ha ancora da suonare; `pcm::PcmRing` gestisce il buffer circolare che quasi ogni scheda audio legge in loop |
 | registrazione | `capture_register` con un `CaptureDesc` (accensione e spegnimento dell'ingresso, lettura di campioni a 16 bit); `pcm::CaptureRing` gestisce il buffer circolare in cui la scheda scrive (vedi sotto) |
 | schermo | `display_register` con un `DisplayDesc` (modi, cambio di modo, aggiornamento di un rettangolo); `map_framebuffer` mappa la memoria video in write-combining; `display_heads` e `display_changed` per più monitor (vedi sotto) |
@@ -434,6 +436,60 @@ true` e implementa `Host::stop` (il controller si ferma) e `Host::restart`
 prima della sospensione toglie tutti i dispositivi collegati, al risveglio
 li trova di nuovo e li enumera, e i driver di classe ripartono con `probe`.
 
+### Bluetooth
+
+`btusb` è il driver dei controller Bluetooth USB: la classe standard
+(E0/01/01, cioè quasi ogni dongle e ogni scheda combinata Wi-Fi +
+Bluetooth) più gli identificativi Realtek che non la dichiarano. Fa solo
+il trasporto: i comandi HCI vanno con una richiesta di controllo
+all'endpoint 0, gli eventi arrivano dall'endpoint interrupt, i dati ACL
+dai due bulk. Il resto (HCI, L2CAP, SMP, GATT, i profili HID) è nel kernel
+(`system/kernel/src/bt`), uguale per tutti i controller.
+
+I chip Realtek partono dal codice della loro ROM e vogliono una patch a
+ogni avvio, come fa `btrtl` su Linux: `btusb` legge la versione (Read
+Local Version: sottoversione e revisione dicono il chip), sceglie i file
+in `sys:/system/firmware/rtl_bt/`, chiede la versione della ROM
+(comando 0xFC6D) e la chiave di sicurezza (0xFC61), prende dal file
+`RTBTCore` le sottosezioni per quella ROM nell'ordine di priorità,
+aggiunge la configurazione e manda tutto con 0xFC20 in pezzi da 252 byte;
+poi un reset, e il controller ha la versione nuova. Per l'**RTL8852BU**
+(13d3:3571, la metà Bluetooth dell'RTL8852BE) i file sono
+`rtl8852bu_fw.bin` e `rtl8852bu_config.bin`, da linux-firmware, con la
+loro licenza (`LICENCE.rtlwifi_firmware.txt`: si possono ridistribuire).
+
+Lo stack del kernel tiene un controller alla volta e offre:
+
+- la ricerca: BR/EDR (inquiry con i risultati estesi, i nomi) e LE (scansione
+  attiva), insieme;
+- l'associazione: Secure Simple Pairing per BR/EDR (Just Works, conferma
+  del codice, codice da scrivere sulla tastiera) e SMP per LE (Secure
+  Connections con P-256 e AES-CMAC, e il vecchio pairing "legacy"); le
+  chiavi restano in `sys:/system/bluetooth.json`;
+- HID classico (L2CAP 0x11 e 0x13, il descrittore letto con SDP) e HID
+  su GATT (il servizio 0x1812, la mappa dei report, le notifiche): tasti
+  e movimenti arrivano come quelli di una tastiera o di un mouse USB;
+- il ricollegamento: le tastiere BR/EDR associate si ricollegano da sole,
+  i dispositivi LE associati vengono cercati all'accensione.
+
+Il servizio `just.bluetooth` lo apre alle app (con il permesso
+*Bluetooth*), il comando `bt` alla shell, *Impostazioni → Bluetooth* e il
+riquadro del centro di controllo all'utente.
+
+Manca: l'audio (A2DP, SBC), più controller insieme, i dispositivi che
+non sono tastiere o mouse.
+
+`make test-bt` lo prova senza Bluetooth: `scripts/btemu.py` è un
+RTL8852BU finto che QEMU collega al suo xHCI con `usb-redir` (il
+protocollo usbredir su un socket; nessun dispositivo del computer passa
+alla macchina virtuale). Risponde ai comandi Realtek e controlla che la
+patch ricevuta sia quella che le regole di `btrtl` prendono dal file; ha
+vicino una tastiera BR/EDR (che si associa scrivendo il codice) e un
+mouse LE (Secure Connections, con la crittografia calcolata a parte in
+Python). La prova associa entrambi, fa scrivere un comando alla tastiera e
+muovere il mouse, e controlla il risultato. È un'emulazione scritta dalle
+stesse specifiche: il chip vero si conferma solo sul computer vero.
+
 ## Driver virtio
 
 `justvirtio` è la parte comune ai driver virtio (`virtioblk`, `virtionet`).
@@ -481,6 +537,7 @@ della scheda non funzionano.
 | `ohci` | controller USB 1.1 degli altri produttori (per classe PCI) | provato, anche con hub |
 | `usbhid` | tastiere, mouse e tavolette USB | provato |
 | `usbstorage` | chiavette e dischi USB (bulk-only, SCSI) | provato, anche come disco di sistema |
+| `btusb` | Bluetooth USB (classe E0/01/01), Realtek RTL8852BU/8852AU/8852CU/8761BU/8822CU con il firmware | provato su un RTL8852BU emulato (`make test-bt`); sul chip vero non verificato |
 | `e1000` | Intel 82540/82545/82574 | provato |
 | `e1000` | Intel 8254x, 8257x, 82583 | stessa interfaccia, non provato su hardware |
 | `e1000` | Intel 82577/82578/82579, I217, I218, I219 | non verificato su hardware |
@@ -510,7 +567,7 @@ temperature dei portatili non hanno un driver: li gestisce il kernel
 eseguendo l'AML del firmware (ACPI, vedi
 [architettura](architettura.md#acpi-e-aml), `make test-acpi`).
 
-Mancano ancora i driver per: Wi-Fi, l'accelerazione e il cambio di
+Mancano ancora i driver per: Wi-Fi, l'audio Bluetooth, l'accelerazione e il cambio di
 risoluzione delle schede video vere (Intel, AMD, NVIDIA: hanno lo schermo
 tramite `fbgeneric`), lettori di schede Realtek e Genesys su PCIe.
 

@@ -115,7 +115,9 @@ Presa a modello da macOS:
   schede: il nome di chi usa il computer su un disco arancione, con la
   carica (o *Alimentatore*) e un riquadro con l'ingranaggio delle
   impostazioni; i riquadri *Rete* (blu quando è collegata), *Bluetooth*
-  e *Non disturbare* (viola, con un interruttore); due barre a celle
+  (blu quando è acceso, con i dispositivi collegati; un clic apre
+  *Impostazioni → Bluetooth*: cerca, associa, collega, dimentica) e *Non
+  disturbare* (viola, con un interruttore); due barre a celle
   orizzontali per luminosità e volume (l'altoparlante a sinistra spegne e
   riaccende il suono); i pulsanti *Blocca*, *Riavvia* e *Spegni*
   (arancione). Le misure sono quelle di un disegno per 1024×768,
@@ -278,9 +280,9 @@ Come sceglie i colori un'app:
 
 ### Le Impostazioni
 
-A sinistra una barra con la ricerca e sette sezioni, ognuna con il suo
+A sinistra una barra con la ricerca e otto sezioni, ognuna con il suo
 riquadro colorato e un simbolo: *Generale*, *Aspetto*, *Schermo*, *Suono*,
-*Tastiera*, *Blocco e password*, *Privacy*. A destra le **schede**
+*Bluetooth*, *Tastiera*, *Blocco e password*, *Privacy*. A destra le **schede**
 (`Card`) della sezione, ognuna con più **righe** (`Row`): un'etichetta, una
 riga di spiegazione facoltativa e un controllo (`Ctl`) a destra, oppure
 sotto per quelli larghi (sfondi, risoluzioni). Il tema si sceglie da due
@@ -293,6 +295,16 @@ con un interruttore. Sotto c'è una scheda per app, con un interruttore per
 permesso e «Chiedi di nuovo», che dimentica le sue risposte. Le app del
 Negozio installate compaiono con i permessi del manifest anche prima di
 averli chiesti. La finestra della domanda è in `gui/apps/prompt.rs`.
+
+La sezione *Bluetooth* ha l'adattatore con il suo interruttore, «Cerca»
+(otto secondi, BR/EDR e LE insieme) e i dispositivi: quelli associati
+con «Collega» o «Scollega» e «Dimentica», quelli trovati con «Associa».
+Ogni azione va in un thread suo e la riga dice cosa sta facendo e come è
+finita. Quando un'associazione ha bisogno dell'utente, da qualunque parte
+sia partita (le Impostazioni, `bt pair`, un'app), si apre una finestra
+come quella dei permessi (`gui/apps/btpair.rs`): il codice da confrontare
+con «Associa» e «Annulla», il codice da scrivere sulla tastiera, o un
+campo per quello che mostra il dispositivo.
 
 La **ricerca** si apre scrivendo (Esc la chiude): ignora maiuscole e
 accenti (`fold`), cerca nelle etichette delle righe e nei nomi delle
@@ -450,7 +462,7 @@ puntatore quasi niente.
 | Musica | i file WAV di `Musica` e i suoni di sistema: riproduzione, pausa, brano precedente e successivo, barra di avanzamento, volume; tre brani di esempio |
 | Anteprima | un'immagine sola (QOI, PNG, JPEG, GIF), aperta da File |
 | Negozio | le app di `sys:/store` per categoria, con la loro pagina; installa, apre, rimuove |
-| Impostazioni | sette sezioni con ricerca: nome e configurazione iniziale, tema e sfondo, risoluzione e dimensione dello schermo, volume e suono all'avvio, tastiera, password e blocco, permessi delle app (vedi [Le Impostazioni](#le-impostazioni)) |
+| Impostazioni | otto sezioni con ricerca: nome e configurazione iniziale, tema e sfondo, risoluzione e dimensione dello schermo, volume e suono all'avvio, Bluetooth, tastiera, password e blocco, permessi delle app (vedi [Le Impostazioni](#le-impostazioni)) |
 | Monitor attività | i programmi in esecuzione, il processore e la memoria nell'ultimo minuto; un programma si può terminare |
 | Info sistema | panoramica, dispositivi con i loro driver, dischi con lo spazio libero |
 | Terminale | la shell di justOS: l'unico posto dove si vedono le righe di comando; `help` elenca i comandi e `help <comando>` ne spiega uno, in italiano; i nomi dei comandi e le loro parole chiave (`drv list`, `sysupdate check`) restano in inglese |
