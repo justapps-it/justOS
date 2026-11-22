@@ -15,6 +15,7 @@ mod appupdate;
 mod apt;
 mod arch;
 mod boot;
+mod bt;
 mod console;
 mod dev;
 mod driver;

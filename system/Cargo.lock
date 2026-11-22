@@ -31,6 +31,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "btusb"
+version = "1.0.0"
+dependencies = [
+ "justdrv",
+]
+
+[[package]]
 name = "calc"
 version = "1.0.0"
 dependencies = [

@@ -277,6 +277,37 @@ unsafe extern "C" fn api_display_changed(display: u32) {
     dev::display::outputs_changed(display);
 }
 
+unsafe extern "C" fn api_hci_register(device: u32, desc: *const HciDesc) -> Status {
+    if desc.is_null() {
+        return E_INVAL;
+    }
+    crate::bt::register(device, desc)
+}
+
+unsafe extern "C" fn api_hci_receive(adapter: u32, kind: u32, data: *const u8, len: usize) {
+    if data.is_null() || len > 4096 {
+        return;
+    }
+    // SAFETY: the driver passes a valid packet.
+    crate::bt::receive(adapter, kind, unsafe { core::slice::from_raw_parts(data, len) });
+}
+
+unsafe extern "C" fn api_firmware_read(name: Str, buf: *mut u8, cap: usize) -> Status {
+    // SAFETY: the module passes a valid string.
+    let name = unsafe { name.as_str() };
+    if name.is_empty() || name.split('/').any(|p| p.is_empty() || p == "." || p == "..") {
+        return E_INVAL;
+    }
+    let path = alloc::format!("sys:/system/firmware/{name}");
+    let Ok(data) = crate::fs::abs(&path).and_then(|p| crate::fs::read_file(&p)) else { return E_NODEV };
+    if !buf.is_null() {
+        let n = data.len().min(cap);
+        // SAFETY: the module passes `cap` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), buf, n) };
+    }
+    data.len() as Status
+}
+
 pub static KERNEL_API: KernelApi = KernelApi {
     abi_version: ABI_VERSION,
     size: core::mem::size_of::<KernelApi>() as u32,
@@ -315,4 +346,7 @@ pub static KERNEL_API: KernelApi = KernelApi {
     display_changed: api_display_changed,
     audio_queued: api_audio_queued,
     capture_register: api_capture_register,
+    hci_register: api_hci_register,
+    hci_receive: api_hci_receive,
+    firmware_read: api_firmware_read,
 };

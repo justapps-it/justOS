@@ -1,0 +1,20 @@
+# USB Bluetooth controllers: the HCI transport of the Bluetooth core
+# specification (events on the interrupt endpoint, ACL data on the bulk
+# endpoints, commands as control requests). The Bluetooth stack itself is
+# in the kernel. Realtek controllers get their firmware patch first.
+name        = btusb
+version     = 1.0.0
+class       = other
+description = USB Bluetooth controller (HCI)
+author      = justOS
+boot        = no
+match       = usb-class e0:01:01   # Bluetooth programming interface
+# Realtek RTL8852BE/RTL8852BU (Bluetooth half of the Wi-Fi 6 combo cards)
+match       = usb 13d3:3571
+match       = usb 13d3:3570
+match       = usb 13d3:3572
+match       = usb 0bda:4853
+match       = usb 0bda:887b
+match       = usb 0bda:b85b
+match       = usb 0cb5:c547
+match       = usb 0489:e123
