@@ -1,0 +1,10 @@
+# Realtek RTL8852BE (802.11ax, Wi-Fi 6) PCIe cards. Unfinished: it brings
+# the chip up and reads it, the firmware download is still to come; it adds
+# no Wi-Fi radio yet. See README.md.
+name        = rtw8852be
+version     = 0.1.0
+class       = network
+description = Realtek RTL8852BE Wi-Fi card
+author      = justOS
+match       = pci 10ec:b852
+match       = pci 10ec:b85b

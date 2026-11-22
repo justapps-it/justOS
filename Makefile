@@ -341,6 +341,7 @@ photos:
 
 check:
 	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p justdk -p justfs -p justgfx -p justimage -p justmath -p justtls -p justzip -p justjson -p justdex -p justaml -p justdeb -p justwifi
+	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p rtw8852be --lib
 	cd tools && $(CARGO) test --release
 
 updates: live-root tools $(BUILD)/justos-$(VERSION).slot
