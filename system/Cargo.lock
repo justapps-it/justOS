@@ -225,6 +225,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "justsbc"
+version = "0.10.0"
+
+[[package]]
 name = "justtls"
 version = "0.10.0"
 
