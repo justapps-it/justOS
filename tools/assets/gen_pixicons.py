@@ -320,6 +320,19 @@ STORE = art(
 
 ACTIVITY = [(rgba("#3ddc84"), stroke([(0, 6), (3, 6), (5, 1), (8, 10), (10, 6), (13, 6)]))]
 
+# JustOS Connect: a phone, and a computer it talks to.
+CONNECT = art(
+    "........########",
+    "........#::::::#",
+    "####....#::::::#",
+    "#::#.o..#::::::#",
+    "#::#..o.#::::::#",
+    "#::#.o..########",
+    "#::#.......##...",
+    "#::#.....######.",
+    "####............",
+)
+
 SCREENSHOT = art(
     "kkkk....kkkk",
     "kkkk....kkkk",
@@ -865,6 +878,7 @@ ICONS = [
     ("l-lock", L_LOCK),
     ("l-restart", L_RESTART),
     ("l-bluetooth", L_BLUETOOTH),
+    ("connect", t("#3c4046", "#16181b", CONNECT)),
 ]
 
 

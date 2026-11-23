@@ -5,6 +5,7 @@ mod about;
 mod calculator;
 mod calendar;
 mod clock;
+mod connect;
 pub mod debinst;
 mod files;
 mod monitor;
@@ -50,7 +51,7 @@ pub fn open_with(kind: &str, path: &str) -> Option<Box<dyn App>> {
 }
 
 /// The built-in apps: id, name, icon, window kind.
-pub const BUILT_IN: [(&str, &str, &str); 16] = [
+pub const BUILT_IN: [(&str, &str, &str); 17] = [
     ("files", "File", "files"),
     ("textedit", "Editor di testo", "text-editor"),
     ("notes", "Note", "notes"),
@@ -64,6 +65,7 @@ pub const BUILT_IN: [(&str, &str, &str); 16] = [
     ("settings", "Impostazioni", "settings"),
     ("monitor", "Monitor attività", "activity"),
     ("about", "Info sistema", "info"),
+    ("connect", "JustOS Connect", "connect"),
     ("terminal", "Terminale", "terminal"),
     ("trash", "Cestino", "trash"),
     ("viewer", "Anteprima", "image-viewer"),
@@ -86,6 +88,7 @@ pub fn open(id: &str) -> Option<Box<dyn App>> {
         "photos" => Box::new(photos::Photos::new()),
         "music" => Box::new(music::Music::new()),
         "monitor" => Box::new(monitor::Monitor::new()),
+        "connect" => Box::new(connect::Connect::new()),
         "trash" => {
             if let Ok(p) = fs::abs("sys:/home/Cestino") {
                 if !fs::exists(&p) {

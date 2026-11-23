@@ -83,7 +83,10 @@ fn arrow(scale: i32) -> Canvas {
 
 impl Cursor {
     pub fn new(w: i32, h: i32, scale: i32) -> Cursor {
-        Cursor { x: w / 2, y: h / 2, buttons: 0, img: arrow(scale), drawn: None, raw: None, wheel: None, scrolled: 0 }
+        // Movements from now on count: the first one is not taken for where
+        // the device starts (a pointer that has not moved yet is at 0, 0).
+        let p = input::pointer().unwrap_or_default();
+        Cursor { x: w / 2, y: h / 2, buttons: 0, img: arrow(scale), drawn: None, raw: Some((p.x, p.y)), wheel: Some(p.wheel), scrolled: 0 }
     }
 
     /// The screen has another scale: the arrow is drawn for it and keeps

@@ -1110,6 +1110,7 @@ impl Looper {
             if moved {
                 self.cursor.show(d);
             }
+            crate::connect::screen::offer(&d.scene, self.cursor.x, self.cursor.y, drew || moved);
             if drew || moved || animating {
                 // A frame: the next one a period later.
                 if drew || moved {

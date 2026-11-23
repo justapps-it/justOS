@@ -371,6 +371,16 @@ pub fn boot_progress(percent: u32) {
 static NOTIFICATIONS: IrqLock<alloc::vec::Vec<(alloc::string::String, alloc::string::String, alloc::string::String)>> =
     IrqLock::new(alloc::vec::Vec::new());
 
+/// The text on the clipboard (from any thread).
+pub fn clipboard() -> alloc::string::String {
+    ui::paste()
+}
+
+/// Puts text on the clipboard (from any thread).
+pub fn set_clipboard(text: &str) {
+    ui::copy(text)
+}
+
 /// Shows a notification banner on the desktop (from any thread).
 pub fn notify(title: &str, body: &str, icon: &str) {
     if !active() {

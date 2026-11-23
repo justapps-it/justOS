@@ -100,6 +100,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("play", "<file.wav> | stop", "riproduce un file audio"),
     ("tone", "[hz] [ms]", "suona una nota (senza valori: 440 Hz per 500 ms)"),
     ("volume", "[0-100]", "mostra o cambia il volume"),
+    ("connect", "[on | off | code | send <file> | ring | forget <telefono>]", "JustOS Connect: i telefoni connessi e abbinati, il codice per abbinarne uno, file e squilli verso il telefono"),
     ("hostname", "[nome | check]", "il nome del computer: lo mostra, lo cambia o controlla il pacchetto DHCP che lo manda"),
     ("setup", "[skip]", "la configurazione del primo avvio: a che punto è, o la segna come fatta senza chiedere (per i test automatici)"),
     ("display", "[LxA | scale auto|1|2 | primary N | mirror on|off | order N,N...]", "elenca le risoluzioni dello schermo, passa a una di loro, cambia la dimensione dell'interfaccia o la disposizione dei monitor"),
@@ -1145,6 +1146,52 @@ impl Shell {
                     }
                     _ => println!("{ERR}usage: volume [0-100]{RESET}"),
                 },
+            },
+            "connect" => match rest.first().copied() {
+                None | Some("status") => {
+                    let on = crate::connect::enabled();
+                    let ip = crate::net::address().map(|ip| alloc::format!("{ip}")).unwrap_or_else(|| "-".into());
+                    println!("JustOS Connect: {} ({ip}, porta {})", if on { "attivo" } else { "spento" }, crate::connect::PORT);
+                    if let Some((code, name)) = crate::connect::pairing_code() {
+                        println!("codice per {name}: {code}");
+                    }
+                    let phones = crate::connect::phones();
+                    for ph in &phones {
+                        let bat = if ph.battery >= 0 { alloc::format!(", batteria {}%{}", ph.battery, if ph.charging { " in carica" } else { "" }) } else { String::new() };
+                        println!("  connesso: {} [{}] da {}{bat}{}", ph.name, ph.sid, ph.addr, if ph.watching { ", guarda lo schermo" } else { "" });
+                        if let Some((n, done, size, out)) = &ph.transfer {
+                            println!("    {} {n}: {done}/{size}", if *out { "invia" } else { "riceve" });
+                        }
+                    }
+                    for (id, name) in crate::connect::paired() {
+                        println!("  abbinato: {name} ({id})");
+                    }
+                }
+                Some("on") => crate::connect::set_enabled(true),
+                Some("off") => crate::connect::set_enabled(false),
+                Some("code") => match crate::connect::pairing_code() {
+                    Some((code, name)) => println!("{code} ({name})"),
+                    None => println!("nessun telefono si sta abbinando: apri JustOS Connect sul telefono e tocca questo computer"),
+                },
+                Some("send") if rest.len() >= 2 => {
+                    let path = rest[1..].join(" ");
+                    let path = Path::parse(&path, &self.cwd).map(|p| alloc::format!("{p}")).unwrap_or(path);
+                    match crate::connect::send_file(None, &path) {
+                        Ok(()) => println!("invio di {path} al telefono"),
+                        Err(e) => println!("{ERR}{e}{RESET}"),
+                    }
+                }
+                Some("ring") => {
+                    if let Err(e) = crate::connect::ring(None) {
+                        println!("{ERR}{e}{RESET}");
+                    }
+                }
+                Some("forget") if rest.len() >= 2 => {
+                    if !crate::connect::forget(&rest[1..].join(" ")) {
+                        println!("{ERR}nessun telefono abbinato con quel nome{RESET}");
+                    }
+                }
+                _ => println!("uso: connect [on | off | code | send <file> | ring | forget <telefono>]"),
             },
             "hostname" => match rest.first().copied() {
                 None => println!("{} ({})", crate::host::hostname(), crate::host::name()),

@@ -8,7 +8,10 @@ extern crate alloc;
 
 mod gif;
 mod jpeg;
+mod jpeg_enc;
 mod png;
+
+pub use jpeg_enc::encode as encode_jpeg;
 
 use justgfx::Canvas;
 
@@ -42,4 +45,50 @@ pub fn size(data: &[u8]) -> Option<(u32, u32)> {
         return jpeg::size(data);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use alloc::vec::Vec;
+
+    /// A picture with flat areas, edges and a gradient survives encoding:
+    /// the decoder reads it back at its size, close to the original.
+    #[test]
+    fn jpeg_round_trip() {
+        let (w, h) = (37usize, 21usize);
+        let mut px = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let p = if x < 12 {
+                    0x00FF_5A1F
+                } else if y < 8 {
+                    0x0010_1010
+                } else {
+                    ((x * 6) as u32) << 16 | ((y * 12) as u32) << 8 | 0x80
+                };
+                px.push(p);
+            }
+        }
+        let file = encode_jpeg(&px, w, h, w, 85);
+        assert_eq!(&file[..2], &[0xFF, 0xD8]);
+        assert_eq!(size(&file), Some((w as u32, h as u32)));
+        let c = decode(&file).expect("decodes");
+        assert_eq!((c.w as usize, c.h as usize), (w, h));
+        let mut worst = 0i32;
+        for y in 1..h - 1 {
+            for x in 1..w - 1 {
+                if x == 11 || x == 12 || y == 7 || y == 8 {
+                    continue; // the edges ring a little
+                }
+                let (a, b) = (px[y * w + x], c.px[y * c.w as usize + x]);
+                for s in [16, 8, 0] {
+                    let d = ((a >> s) & 0xFF) as i32 - ((b >> s) & 0xFF) as i32;
+                    worst = worst.max(d.abs());
+                }
+            }
+        }
+        assert!(worst < 40, "worst channel error {worst}");
+    }
 }

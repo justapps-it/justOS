@@ -15,6 +15,7 @@ mod appupdate;
 mod apt;
 mod arch;
 mod boot;
+mod connect;
 mod console;
 mod dev;
 mod driver;
@@ -167,6 +168,7 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
     host::load();
     net::start();
     ipc::start_services();
+    connect::start();
     appupdate::start();
     gui::boot_progress(82);
 

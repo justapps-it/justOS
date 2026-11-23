@@ -228,6 +228,23 @@ fn key(usage: u32, value: i32) {
     WAITERS.notify_all();
 }
 
+/// A key from elsewhere (a phone with JustOS Connect): to the interface
+/// when it has the keyboard, to the console otherwise.
+pub fn remote_key(ev: KeyEvent) {
+    {
+        let mut s = STATE.lock();
+        if s.capture {
+            if s.gui_queue.len() < QUEUE_MAX {
+                s.gui_queue.push_back(ev);
+            }
+        } else {
+            push(&mut s, ev);
+        }
+    }
+    WAITERS.notify_all();
+    GUI_WAKE.signal();
+}
+
 /// An event reported by a driver through the ABI.
 pub fn driver_event(_device: u32, kind: u32, code: u32, value: i32) {
     match kind {
