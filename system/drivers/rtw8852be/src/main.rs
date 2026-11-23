@@ -11,15 +11,25 @@
 //!   4. reads the efuse: the card's MAC address, RFE type and country;
 //!   5. picks the firmware image for the cut out of the embedded file and
 //!      checks its sections;
+//!   6. powers the chip off and on again with what the efuse said (RFE
+//!      type, power calibration), and turns the host DMA on;
+//!   7. sets the DMAC up for the download (DLE buffers, command channel
+//!      flow control);
+//!   8. gives the card its DMA rings (PCIe set-up before the download);
+//!   9. starts the card's CPU in download mode;
+//!  10. sends the firmware's header on the command channel (CH12);
+//!  11. sends the firmware's sections;
+//!  12. waits for the firmware to say it runs (stages 9-12 tried up to five
+//!      times, as rtw89 does);
 //!
-//! then powers the chip off and stops. Still to write: the download of the
-//! firmware (DMA rings, H2C packets, the card's CPU started), the MAC, BB and
-//! RF set-up from the 8852B tables, channel switching, the TX and RX
-//! descriptors, and registering a radio with the kernel ([`justdrv::wifi_register`]),
-//! whose station (scan, WPA2/WPA3) is already there and tested.
+//! then stops the CPU, powers the chip off and stops. Still to write: the
+//! MAC, BB and RF set-up from the 8852B tables, channel switching, the TX
+//! and RX data path, and registering a radio with the kernel
+//! ([`justdrv::wifi_register`]), whose station (scan, WPA2/WPA3) is already
+//! there and tested.
 //!
 //! The registers, bits and sequences come from the Linux rtw89 driver
-//! (rtw8852b.c, mac.c, efuse.c, reg.h, core.c), Copyright(c) 2019-2022
+//! (rtw8852b.c, mac.c, efuse.c, fw.c, pci.c, reg.h, core.c), Copyright(c) 2019-2022
 //! Realtek Corporation, licensed "GPL-2.0 OR BSD-3-Clause" and used here
 //! under BSD-3-Clause; the code is written anew. See README.md.
 
@@ -32,6 +42,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use justdrv::{DeviceInfo, Mmio, Pci, Status, E_IO, E_NODEV, E_NOMEM, RES_MEMORY};
 use rtw8852b_fw as fw;
+
+mod fwdl;
+mod pci;
 
 justdrv::driver! {
     name: "rtw8852be",
@@ -59,6 +72,7 @@ const PMC_DBG_CTRL2: usize = 0x00CC;
 const SYS_CFG1: usize = 0x00F0;
 const SPS_DIG_ON_CTRL0: usize = 0x0200;
 const SPS_ANA_ON_CTRL2: usize = 0x0228;
+const HCI_LDO_CTRL: usize = 0x007A;
 const WLAN_XTAL_SI_CTRL: usize = 0x0270;
 const EECS_EESK_FUNC_SEL: usize = 0x02D8;
 const WLRF_CTRL: usize = 0x02F0;
@@ -101,6 +115,8 @@ const AUTOLOAD_SUS: u16 = 1 << 5;
 const EF_RDY: u32 = bit(29);
 const SW_LPS_OPTION: u32 = 0x0001_A0B2;
 const DEFAULT_SPS_ANA: u16 = 0x4F42;
+/// SPS_ANA_ON_CTRL2 on RFE type 5 boards (RTL8852B_RFE_05_SPS_ANA).
+const RFE_05_SPS_ANA: u16 = 0x4A82;
 const MAC_ON: u32 = 1;
 
 const DMAC_ALL: u32 = bit(30) | bit(29) | bit(28) | bit(27) | bit(26) | bit(25) | bit(24) | bit(23) | bit(22)
@@ -135,6 +151,20 @@ const SEC_CTRL_EFUSE: usize = 4;
 const EFUSE_RFE_TYPE: usize = 0x2CA;
 const EFUSE_COUNTRY: usize = 0x2CB;
 const EFUSE_PCIE_MAC: usize = 0x400;
+/// The physical calibration area (phycap_addr, phycap_size), and the byte
+/// that says the power calibration was done at the factory.
+const PHYCAP_ADDR: usize = 0x580;
+const PHYCAP_SIZE: usize = 128;
+const PWR_K_CHK_OFFSET: usize = 0x5E9;
+const PWR_K_CHK_VALUE: u8 = 0xAA;
+
+/// What the power-on needs from the efuse (rtw8852b_pwr_sps_ana and the
+/// trims at the end of rtw8852b_pwr_on_func); none before it is read.
+struct Trim {
+    rfe: u8,
+    power_k: bool,
+    cut_b: bool,
+}
 
 /// Why a stage stopped: what it waited for, and the register's value then.
 struct Fail(&'static str, u32);
@@ -201,10 +231,14 @@ impl Chip {
         Ok((v >> 8) as u8)
     }
 
-    /// The 8852B power-on sequence (rtw8852b_pwr_on_func), as at probe:
-    /// the efuse not read yet.
-    fn power_on(&self) -> Result<(), Fail> {
-        self.r.write16(SPS_ANA_ON_CTRL2, DEFAULT_SPS_ANA);
+    /// The 8852B power-on sequence (rtw8852b_pwr_on_func); `trim` is none
+    /// at probe, before the efuse is read.
+    fn power_on(&self, trim: Option<&Trim>) -> Result<(), Fail> {
+        match trim {
+            Some(t) if t.rfe == 5 => self.r.write16(SPS_ANA_ON_CTRL2, RFE_05_SPS_ANA),
+            Some(_) => {}
+            None => self.r.write16(SPS_ANA_ON_CTRL2, DEFAULT_SPS_ANA),
+        }
         self.clr32(SYS_PW_CTRL, AFSM_WLSUS_EN | AFSM_PCIE_SUS_EN);
         self.set32(SYS_PW_CTRL, DIS_WLBT_PDNSUSEN_SOPC);
         self.set32(WLLPS_CTRL, DIS_WLBT_LPSEN_LOPC);
@@ -244,6 +278,18 @@ impl Chip {
         justdrv::sleep_ms(1);
         self.clr32(SYS_ISO_CTRL, PWC_EV2EF_B14);
         self.clr32(PMC_DBG_CTRL2, SYSON_DIS_PMCR_AX_WRMSK);
+        // The regulator trims, when the efuse is valid and the factory did
+        // not calibrate the power.
+        if let Some(t) = trim.filter(|t| !t.power_k) {
+            self.mask32(SPS_DIG_ON_CTRL0, 0xF, 0x9);
+            self.mask32(SPS_DIG_ON_CTRL0, 0xF << 22, 0xA);
+            if t.cut_b {
+                self.set32(PMC_DBG_CTRL2, SYSON_DIS_PMCR_AX_WRMSK);
+                let v = self.r.read16(HCI_LDO_CTRL) & !0xF | 0xA;
+                self.r.write16(HCI_LDO_CTRL, v);
+                self.clr32(PMC_DBG_CTRL2, SYSON_DIS_PMCR_AX_WRMSK);
+            }
+        }
         self.set32(DMAC_FUNC_EN, DMAC_ALL);
         self.set32(CMAC_FUNC_EN, CMAC_ALL);
         // EESK pin: Bluetooth log.
@@ -282,8 +328,9 @@ impl Chip {
         (self.r32(IC_PWR_STATE) >> 8) & 3 == MAC_ON
     }
 
-    /// The efuse's physical contents (rtw89_dump_physical_efuse_map_ddv).
-    fn efuse_physical(&self, cut_a: bool) -> Result<Vec<u8>, Fail> {
+    /// `len` bytes of the efuse's physical contents from `start`
+    /// (rtw89_dump_physical_efuse_map_ddv).
+    fn efuse_physical(&self, cut_a: bool, start: usize, len: usize) -> Result<Vec<u8>, Fail> {
         self.set8(PMC_DBG_CTRL2, SYSON_DIS_PMCR_AX_WRMSK as u8);
         self.set16(SYS_ISO_CTRL, PWC_EV2EF_B14 as u16);
         justdrv::sleep_ms(1);
@@ -293,9 +340,9 @@ impl Chip {
             // OTP burst mode (EFUSE_CTRL_1_V1 0x0038, bit 31)... only on cut A.
             self.set32(0x0038, bit(31));
         }
-        let mut map = vec![0u8; PHYSICAL_EFUSE];
+        let mut map = vec![0u8; len];
         let mut res = Ok(());
-        for (addr, b) in map.iter_mut().enumerate() {
+        for (addr, b) in (start..).zip(map.iter_mut()) {
             self.w32(EFUSE_CTRL, ((addr as u32) << 16) & 0x07FF_0000);
             match self.poll("efuse read", EFUSE_CTRL, 1000, |v| v & EF_RDY != 0) {
                 Ok(v) => *b = v as u8,
@@ -411,7 +458,7 @@ fn probe(dev: &DeviceInfo) -> Status {
             justdrv::warn!("stage 3: power off: {w} timed out ({v:#010x})");
         }
     }
-    if let Err(Fail(w, v)) = chip.power_on() {
+    if let Err(Fail(w, v)) = chip.power_on(None) {
         justdrv::warn!("stage 3 failed: power on: {w} timed out (register {v:#010x})");
         return E_IO;
     }
@@ -423,30 +470,41 @@ fn probe(dev: &DeviceInfo) -> Status {
 
     // 4. The efuse.
     let autoload = chip.r.read16(SYS_WL_EFUSE_CTRL) & AUTOLOAD_SUS != 0;
-    match chip.efuse_physical(cv == 0) {
+    let mut trim = None;
+    match chip.efuse_physical(cv == 0, 0, PHYSICAL_EFUSE) {
         Err(Fail(w, v)) => justdrv::warn!("stage 4: {w} timed out ({v:#010x})"),
         Ok(phy) => match efuse_logical(&phy) {
             None => justdrv::warn!("stage 4: the efuse map does not decode (first bytes {:02x?})", &phy[..16]),
             Some(log) => {
                 let mac = &log[EFUSE_PCIE_MAC..EFUSE_PCIE_MAC + 6];
                 let cc = &log[EFUSE_COUNTRY..EFUSE_COUNTRY + 2];
+                let power_k = match chip.efuse_physical(cv == 0, PHYCAP_ADDR, PHYCAP_SIZE) {
+                    Ok(cap) => cap[PWR_K_CHK_OFFSET - PHYCAP_ADDR] == PWR_K_CHK_VALUE,
+                    Err(Fail(w, v)) => {
+                        justdrv::warn!("stage 4: calibration area: {w} timed out ({v:#010x})");
+                        false
+                    }
+                };
                 justdrv::info!(
-                    "stage 4: efuse {}, MAC {}, RFE type {}, country {}{}",
+                    "stage 4: efuse {}, MAC {}, RFE type {}, country {}{}, power calibration {}",
                     if autoload { "autoloaded" } else { "not autoloaded" },
                     mac_text(mac),
                     log[EFUSE_RFE_TYPE],
                     if cc[0].is_ascii_alphabetic() { cc[0] as char } else { '?' },
                     if cc[1].is_ascii_alphabetic() { cc[1] as char } else { '?' },
+                    if power_k { "done" } else { "not done" },
                 );
+                trim = Some(Trim { rfe: log[EFUSE_RFE_TYPE], power_k, cut_b: cv == 1 });
             }
         },
     }
 
     // 5. The firmware.
-    let ok = match fw::select(FIRMWARE, cv).and_then(|(e, data)| Ok((e, fw::parse(data)?))) {
+    let img = match fw::select(FIRMWARE, cv).and_then(|(e, data)| Ok((e, fw::parse(data)?))) {
         Err(e) => {
             justdrv::warn!("stage 5 failed: firmware: {e}");
-            false
+            stop(&chip, None);
+            return E_IO;
         }
         Ok((e, img)) => {
             let v = img.version;
@@ -461,15 +519,96 @@ fn probe(dev: &DeviceInfo) -> Status {
                 img.sections.len(),
                 fw::elements(FIRMWARE).len()
             );
-            true
+            img
         }
     };
 
+    // 6. Power again, with the efuse's values (rtw89_mac_pwr_on after
+    // the efuse is read), then the host DMA (rtw89_mac_partial_init).
+    if let Err(Fail(w, v)) = chip.power_off() {
+        justdrv::warn!("stage 6: power off: {w} timed out ({v:#010x})");
+    }
+    if let Err(Fail(w, v)) = chip.power_on(trim.as_ref()) {
+        justdrv::warn!("stage 6 failed: power on: {w} timed out (register {v:#010x})");
+        stop(&chip, None);
+        return E_IO;
+    }
+    chip.hci_dma_on();
+    justdrv::info!(
+        "stage 6: powered on with the efuse trims (SYS_PW_CTRL {:#010x}, IC_PWR_STATE {:#010x}), host DMA on",
+        chip.r32(SYS_PW_CTRL),
+        chip.r32(IC_PWR_STATE)
+    );
+
+    // 7. The DMAC for the download.
+    if let Err(Fail(w, v)) = chip.dmac_pre_init() {
+        justdrv::warn!("stage 7 failed: DMAC set-up: {w} (register {v:#010x})");
+        stop(&chip, None);
+        return E_IO;
+    }
+    justdrv::info!(
+        "stage 7: DLE and HFC in download mode (WDE {:#010x}, PLE {:#010x})",
+        chip.r32(fwdl::WDE_INI_STATUS),
+        chip.r32(fwdl::PLE_INI_STATUS)
+    );
+
+    // 8. The rings, and the PCIe set-up before the download.
+    let Some(mut rings) = pci::Rings::new() else {
+        justdrv::warn!("stage 8 failed: no memory for the DMA rings");
+        stop(&chip, None);
+        return E_NOMEM;
+    };
+    if let Err(Fail(w, v)) = chip.pci_pre_init(&Pci(dev.id), &mut rings) {
+        justdrv::warn!("stage 8 failed: PCIe set-up: {w} (register {v:#010x})");
+        stop(&chip, Some(&rings));
+        return E_IO;
+    }
+    justdrv::info!("stage 8: DMA rings given to the card, command channel (CH12) open");
+
+    // 9-12. The download, five tries (rtw89_fw_download).
+    let mut done = None;
+    for attempt in 1..=5 {
+        match fwdl::download(&chip, &mut rings, &img) {
+            Ok(sent) => {
+                done = Some(sent);
+                break;
+            }
+            Err((stage, Fail(w, v))) => {
+                let s = chip.fw_status();
+                justdrv::warn!(
+                    "stage {stage} failed (try {attempt} of 5): {w} (register {v:#010x}); download status {s}: {}",
+                    fwdl::status_name(s)
+                );
+                chip.fw_fail_dump();
+            }
+        }
+    }
+    let Some((packets, bytes)) = done else {
+        justdrv::warn!("stage 12 not reached: the firmware download failed five times");
+        stop(&chip, Some(&rings));
+        return E_IO;
+    };
+    justdrv::info!(
+        "stage 12: firmware running (download status {}, {packets} packets, {bytes} bytes)",
+        chip.fw_status()
+    );
+
+    stop(&chip, Some(&rings));
+    justdrv::warn!(
+        "stopping after stage 12: the firmware runs, but the MAC, BB and RF set-up is not written yet, no Wi-Fi radio added"
+    );
+    E_IO
+}
+
+/// Puts the card back to sleep: once the rings were given, the CPU and
+/// the DMA stopped; the scoreboard told, the power off.
+fn stop(chip: &Chip, rings: Option<&pci::Rings>) {
+    if rings.is_some() {
+        chip.disable_cpu();
+        chip.ctrl_dma_all(false);
+    }
+    chip.notify_power_off();
     if let Err(Fail(w, v)) = chip.power_off() {
         justdrv::warn!("power off: {w} timed out ({v:#010x})");
     }
-    if ok {
-        justdrv::warn!("stopping after stage 5: the firmware download and the radio are not written yet, no Wi-Fi radio added");
-    }
-    E_IO
 }
