@@ -232,6 +232,7 @@ funzioni sicure:
 | rete | `net_register` con un `NetDesc`, `net_receive` per i frame in arrivo |
 | Bluetooth | `hci_register` con un `HciDesc` (la funzione che manda comandi e dati ACL al controller), `hci_receive` per gli eventi e i dati in arrivo (vedi [Bluetooth](#bluetooth)) |
 | firmware | `firmware(nome)`: un file di `sys:/system/firmware/` (per i chip che lo vogliono caricato all'avvio) |
+| Wi-Fi | `wifi_register` con un `WifiDesc` (indirizzo MAC, canali, invio di un frame 802.11, cambio di canale, `set_link` per la rete a cui la stazione si è associata), `wifi_receive` per i frame in arrivo con canale e potenza del segnale. La scheda manda e riceve frame 802.11 grezzi: ricerca delle reti, autenticazione, WPA2/WPA3 e cifratura li fa il kernel (`justwifi`), non il driver |
 | suono | `audio_register` con un `AudioDesc` (scrittura di campioni a 16 bit, svuotamento); `audio_queued` dice al kernel quanti campioni la scheda ha ancora da suonare; `pcm::PcmRing` gestisce il buffer circolare che quasi ogni scheda audio legge in loop |
 | registrazione | `capture_register` con un `CaptureDesc` (accensione e spegnimento dell'ingresso, lettura di campioni a 16 bit); `pcm::CaptureRing` gestisce il buffer circolare in cui la scheda scrive (vedi sotto) |
 | schermo | `display_register` con un `DisplayDesc` (modi, cambio di modo, aggiornamento di un rettangolo); `map_framebuffer` mappa la memoria video in write-combining; `display_heads` e `display_changed` per più monitor (vedi sotto) |
@@ -548,6 +549,7 @@ della scheda non funzionano.
 | `virtionet` | schede di rete virtio (legacy e moderna) | provato |
 | `rtl8169` | Realtek RTL8169 (I/O, linea classica), RTL8111/8168 (MSI, MSI-X), RTL8125 2,5 Gbit (MSI-X) | provato su modello |
 | `rtl8169` | Realtek RTL810x e le altre revisioni | stessa interfaccia, non provato su hardware |
+| `rtw8852be` | Wi-Fi Realtek RTL8852BE (`10ec:b852`, `10ec:b85b`) | **non finito**: accende il chip, legge revisione ed efuse (MAC), sceglie e controlla il firmware, poi si ferma; manca il caricamento del firmware e tutto il resto. Non provato su hardware |
 | `ps2kbd`, `ps2mouse` | tastiera e mouse PS/2 | provati |
 | `sdhci` | lettori di schede SD/MMC standard (per classe PCI): Intel, O2 Micro, Ricoh, AMD | provato con ADMA2, SDMA e senza DMA, schede SD e SDHC |
 | `hda` | audio HD Intel (per classe PCI), codec Realtek, Conexant, IDT, VIA, Cirrus | provato con uscita di linea e altoparlante, e la registrazione da microfono e ingresso di linea (`hda-duplex`); sui codec veri non verificato |
@@ -567,7 +569,13 @@ temperature dei portatili non hanno un driver: li gestisce il kernel
 eseguendo l'AML del firmware (ACPI, vedi
 [architettura](architettura.md#acpi-e-aml), `make test-acpi`).
 
-Mancano ancora i driver per: Wi-Fi, l'audio Bluetooth, l'accelerazione e il cambio di
+Il Wi-Fi c'è sopra il driver: la stazione del kernel (`justwifi`: reti
+aperte, WPA2-PSK, WPA3-SAE con PMF, CCMP) è provata con `make test-wifi`,
+dove una scheda virtio porta i frame 802.11 fino a un simulatore di access
+point (`scripts/wifi/apsim.py`). Manca un driver finito per una scheda
+vera: `rtw8852be` è il primo, a metà.
+
+Mancano ancora i driver per: Wi-Fi (finiti), l'audio Bluetooth, l'accelerazione e il cambio di
 risoluzione delle schede video vere (Intel, AMD, NVIDIA: hanno lo schermo
 tramite `fbgeneric`), lettori di schede Realtek e Genesys su PCIe.
 

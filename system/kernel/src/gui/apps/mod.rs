@@ -32,7 +32,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 pub use files::{icon_for, Files};
-pub use prefs::{request_bluetooth as settings_at_bluetooth, request_look as settings_at_look, request_screen as settings_at_screen};
+pub use prefs::{
+    request_bluetooth as settings_at_bluetooth, request_look as settings_at_look, request_screen as settings_at_screen,
+    request_wifi as settings_at_wifi,
+};
 pub use viewer::Viewer;
 
 /// Opens a file or folder dropped on an app's dock icon with that app (the

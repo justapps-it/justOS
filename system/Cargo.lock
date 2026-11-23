@@ -160,6 +160,7 @@ dependencies = [
  "justimage",
  "justjson",
  "justtls",
+ "justwifi",
  "justzip",
 ]
 
@@ -256,6 +257,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "justwifi"
+version = "0.10.0"
+dependencies = [
+ "justtls",
+]
+
+[[package]]
 name = "justzip"
 version = "0.10.0"
 
@@ -305,6 +313,13 @@ dependencies = [
 [[package]]
 name = "rtl8169"
 version = "1.1.0"
+dependencies = [
+ "justdrv",
+]
+
+[[package]]
+name = "rtw8852be"
+version = "0.1.0"
 dependencies = [
  "justdrv",
 ]

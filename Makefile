@@ -29,6 +29,8 @@
 #   make test-net      TCP, HTTP and HTTPS against servers on this machine
 #   make test-bt       Bluetooth on an emulated Realtek RTL8852BU (scripts/btemu.py):
 #                   firmware patch, a keyboard and a mouse paired and used
+#   make test-wifi     Wi-Fi against simulated access points (a test radio over
+#                   a virtio card; not part of test: the real card needs the PC)
 #   make test-linux    Linux programs with threads, sockets, poll (C, Rust, Go)
 #   make test-wayland  a Wayland client's window on the desktop: drawing,
 #                   pointer, keyboard, a popup
@@ -155,7 +157,7 @@ ifeq ($(PROFILE),release)
 CARGO_PROFILE := --release
 endif
 
-.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-bt test-net test-linux test-wayland test-winprep test-wine-audio test-gtk test-update shots assets check updates clean $(PACKAGES) shots-install test-install
+.PHONY: photos all uefi system tools live-root root linux-root image wine-image test-image iso run-iso test-iso run run-q35 run-nvme run-uefi test test-uefi test-drivers test-compat test-audio test-display test-acpi test-bt test-net test-linux test-wayland test-winprep test-wine-audio test-gtk test-update shots assets check updates clean $(PACKAGES) shots-install test-install test-wifi
 
 all: image
 
@@ -294,6 +296,9 @@ test-bt: test-image
 test-net: test-image
 	scripts/test-net.sh $(TEST_IMAGE)
 
+test-wifi: test-image
+	scripts/test-wifi.sh $(TEST_IMAGE)
+
 test-linux: test-image
 	scripts/test-linux.sh $(TEST_IMAGE)
 
@@ -340,7 +345,8 @@ photos:
 	tools/assets/gen_thumbs.py rootfs/system/gui/wallpapers
 
 check:
-	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p justdk -p justfs -p justgfx -p justimage -p justmath -p justtls -p justzip -p justjson -p justdex -p justaml -p justdeb -p justsbc
+	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p justdk -p justfs -p justgfx -p justimage -p justmath -p justtls -p justzip -p justjson -p justdex -p justaml -p justdeb -p justsbc -p justwifi
+	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p rtw8852be --lib
 	cd tools && $(CARGO) test --release
 
 updates: live-root tools $(BUILD)/justos-$(VERSION).slot

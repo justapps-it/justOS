@@ -30,6 +30,7 @@ mod mem;
 mod net;
 mod rand;
 mod sandbox;
+mod secret;
 mod shell;
 mod sleep;
 mod store;
@@ -168,6 +169,7 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
     driver::start_monitor();
     host::load();
     net::start();
+    net::wifi::start();
     ipc::start_services();
     connect::start();
     appupdate::start();

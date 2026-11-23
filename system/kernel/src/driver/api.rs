@@ -147,6 +147,21 @@ unsafe extern "C" fn api_net_receive(iface: u32, frame: *const u8, len: usize) {
     dev::net::receive(iface, unsafe { core::slice::from_raw_parts(frame, len) });
 }
 
+unsafe extern "C" fn api_wifi_register(device: u32, desc: *const WifiDesc) -> Status {
+    if desc.is_null() {
+        return E_INVAL;
+    }
+    dev::wifi::register(device, desc)
+}
+
+unsafe extern "C" fn api_wifi_receive(radio: u32, frame: *const u8, len: usize, channel: u32, rssi: i32) {
+    if frame.is_null() || len > 8192 {
+        return;
+    }
+    // SAFETY: the driver passes a valid frame.
+    dev::wifi::receive(radio, unsafe { core::slice::from_raw_parts(frame, len) }, channel as u8, rssi.clamp(-128, 127) as i8);
+}
+
 unsafe extern "C" fn api_irq_attach_msi(device: u32, handler: IrqHandler, ctx: *mut c_void) -> Status {
     match dev::irq::attach_msi(device, handler, ctx) {
         Ok(v) => v as Status,
@@ -349,4 +364,6 @@ pub static KERNEL_API: KernelApi = KernelApi {
     hci_register: api_hci_register,
     hci_receive: api_hci_receive,
     firmware_read: api_firmware_read,
+    wifi_register: api_wifi_register,
+    wifi_receive: api_wifi_receive,
 };

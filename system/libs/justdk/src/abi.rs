@@ -276,6 +276,49 @@ pub struct NetDesc {
 }
 
 // ----------------------------------------------------------------------------
+// Wi-Fi
+
+/// Sends one 802.11 frame (header and body, without the FCS) as it is: the
+/// kernel builds and encrypts frames itself (software crypto, like mac80211
+/// without hardware keys).
+pub type WifiSend = unsafe extern "C" fn(ctx: *mut c_void, frame: *const u8, len: usize) -> Status;
+/// Tunes the radio to a channel (1-14: 2.4 GHz, 36-177: 5 GHz, 20 MHz wide).
+pub type WifiChannel = unsafe extern "C" fn(ctx: *mut c_void, channel: u32) -> Status;
+/// The station joined a network (`link` describes it) or left it (null):
+/// cards that filter by BSSID or keep power save state need to know.
+pub type WifiSetLink = unsafe extern "C" fn(ctx: *mut c_void, link: *const WifiLink) -> Status;
+
+/// The network a Wi-Fi station joined.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WifiLink {
+    pub bssid: [u8; 6],
+    pub channel: u8,
+    pub ssid_len: u8,
+    pub ssid: [u8; 32],
+    pub aid: u16,
+    pub _pad: [u8; 6],
+}
+
+/// A Wi-Fi radio a driver hands to the kernel: it sends and receives raw
+/// 802.11 frames, and the kernel's station (scanning, authentication, WPA2
+/// and WPA3, the data path) does the rest. Received frames are passed to
+/// `KernelApi::wifi_receive`.
+#[repr(C)]
+pub struct WifiDesc {
+    pub ctx: *mut c_void,
+    pub mac: [u8; 6],
+    pub _pad: [u8; 2],
+    /// The channels the card may use; null for every channel justOS knows.
+    pub channels: *const u8,
+    pub channel_count: u32,
+    pub _pad2: u32,
+    pub send: WifiSend,
+    pub set_channel: WifiChannel,
+    pub set_link: WifiSetLink,
+}
+
+// ----------------------------------------------------------------------------
 // Sound
 
 /// Queues `frames` frames of interleaved signed 16-bit samples (`channels`
@@ -568,6 +611,14 @@ pub struct KernelApi {
     /// when `buf` is null) and returns the file's size, or [`E_NODEV`] when
     /// there is no such file.
     pub firmware_read: unsafe extern "C" fn(name: Str, buf: *mut u8, cap: usize) -> Status,
+    // Wi-Fi
+    /// Registers a Wi-Fi radio (see [`WifiDesc`]); returns its number
+    /// (`wifi<N>`). The kernel adds a network interface for it.
+    pub wifi_register: unsafe extern "C" fn(device: u32, desc: *const WifiDesc) -> Status,
+    /// Hands a received 802.11 frame (without the FCS, which the card has
+    /// checked) to the kernel, with the channel it came on and its signal
+    /// strength in dBm. Safe in interrupt handlers.
+    pub wifi_receive: unsafe extern "C" fn(radio: u32, frame: *const u8, len: usize, channel: u32, rssi: i32),
 }
 
 // ----------------------------------------------------------------------------

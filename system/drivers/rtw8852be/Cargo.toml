@@ -1,0 +1,27 @@
+[package]
+name = "rtw8852be"
+description = "justOS driver: Realtek RTL8852BE Wi-Fi 6 cards"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license = "BSD-3-Clause"
+
+# The firmware parser, the descriptor layouts and the buffer quotas: a
+# library, so that they are tested on the build machine.
+[lib]
+name = "rtw8852b_fw"
+path = "src/fw.rs"
+test = true
+
+[[bin]]
+name = "rtw8852be"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+justdrv.workspace = true
+
+[lints]
+workspace = true

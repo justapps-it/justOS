@@ -202,7 +202,7 @@ avida porta a un vicolo cieco.
 | Audio (AC'97, HD Audio) | ✅ riproduzione, con un mixer per suoni di sistema e programmi; registrazione dall'ingresso HD Audio |
 | Audio dei programmi Linux e Windows (PulseAudio) | ✅ riproduzione e registrazione (Firefox, Wine, `paplay`, `parec`), microfono con il suo permesso; mancano la memoria condivisa e gli eventi |
 | Collegamento a caldo dell'audio (cuffie) | ⬜ |
-| Wi-Fi | ⬜ |
+| Wi-Fi | 🟡 stazione, WPA2/WPA3, servizio e interfaccia provati con un simulatore; il driver della RTL8852BE è a metà |
 | Bluetooth | 🟡 driver `btusb` (Realtek RTL8852BU con il firmware), tastiere e mouse BR/EDR e LE; provato su un controller emulato, manca l'audio |
 | Sospensione in RAM | ✅ S3, con tutti i driver inclusi; s2idle per i portatili senza S3 (Modern Standby) |
 | Batteria e temperatura | ✅ interprete AML `justaml`, embedded controller, GPE |
@@ -210,11 +210,23 @@ avida porta a un vicolo cieco.
 **Wi-Fi.** Ogni famiglia di schede (Intel iwlwifi, Realtek, MediaTek,
 Broadcom) ha un driver da decine di migliaia di righe e un firmware binario
 da caricare; poi servono WPA2/WPA3 (il supplicant: handshake a 4 vie, SAE).
-Piano: un solo chip, **Intel AX200/AX210** (il più diffuso nei portatili),
-con il firmware ufficiale ridistribuibile; il supplicant in Rust sopra
-`justtls`; un servizio `just.net` con porte IPC `scan`, `connect`, `status`
-e le reti nel riquadro Rete del centro di controllo (che c'è già). Stima: 4–6
-mesi per un chip.
+Piano: un solo chip, la **Realtek RTL8852BE** (Wi-Fi 6, quella del computer
+su cui justOS si usa ogni giorno), con il firmware ufficiale
+ridistribuibile. Fatto: la stazione in Rust (`justwifi`: frame 802.11,
+ricerca, reti aperte, WPA2-PSK, WPA3-SAE anche hash-to-element, PMF, CCMP,
+rinnovo della chiave di gruppo), provata con i vettori di prova degli
+standard e con un simulatore di access point (`make test-wifi`); il comando
+`wifi` del terminale, il servizio `just.net` (per i programmi di sistema),
+le reti in Impostazioni › Wi-Fi e nel riquadro del centro di controllo, le
+reti conosciute con la connessione automatica. Da fare: il driver
+`rtw8852be`, che oggi accende il chip, ne legge l'efuse e controlla il
+firmware ma non lo carica ancora; poi le tabelle di BB e RF (sono nel file
+del firmware), i canali, trasmissione e ricezione. Le password delle reti
+stanno in un file di sistema che le app non leggono, cifrate con AES-GCM
+sotto una chiave della macchina (`sys:/system/machine.key`, casuale): chi
+copia solo `wifi.json` non le legge, ma chi legge tutto il disco sì, perché
+justOS non usa il TPM e il Wi-Fi si collega prima del login, quando la
+password dell'utente non c'è ancora.
 
 **Bluetooth.** In parte: `btusb` per i controller USB (la classe
 standard e i Realtek, con la patch del firmware caricata come fa `btrtl`),
@@ -337,7 +349,7 @@ i permessi dichiarati nel manifest di ogni app.
 | 3 | ✅ interprete AML, batteria, temperatura, sospensione | fatto |
 | 4 | ✅ aggiornamenti A/B, HiDPI; indice dei file | 2–3 mesi |
 | 5 | strato Linux completo (Firefox gira già) | 6–12 mesi |
-| 6 | Wi-Fi (un chip), Bluetooth HID e audio | 6–9 mesi |
+| 6 | Wi-Fi (RTL8852BE; stazione e interfaccia fatte), Bluetooth HID e audio | 6–9 mesi |
 | 7 | accelerazione grafica (virgl, poi hardware vero) | 12 mesi e oltre |
 
 Ognuna è utilizzabile appena finita: niente aspetta l'ultima.

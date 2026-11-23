@@ -25,6 +25,7 @@ justvirtio = { path = "libs/justvirtio" }
 justdex = { path = "libs/justdex" }
 justaml = { path = "libs/justaml" }
 justdeb = { path = "libs/justdeb" }
+justwifi = { path = "libs/justwifi" }
 
 [workspace.lints.rust]
 rust_2018_idioms = { level = "warn", priority = -1 }
