@@ -7,7 +7,8 @@ publish.workspace = true
 authors.workspace = true
 license = "BSD-3-Clause"
 
-# The firmware parser, a library so that it is tested on the build machine.
+# The firmware parser, the descriptor layouts and the buffer quotas: a
+# library, so that they are tested on the build machine.
 [lib]
 name = "rtw8852b_fw"
 path = "src/fw.rs"

@@ -13,6 +13,9 @@
 
 extern crate alloc;
 
+pub mod desc;
+pub mod quota;
+
 use alloc::vec::Vec;
 
 /// First byte of a multi-firmware file.
@@ -253,6 +256,17 @@ pub fn elements(file: &[u8]) -> Vec<Element> {
     out
 }
 
+/// The header as the download sends it first (__rtw89_fw_download_hdr,
+/// format 0): the fixed part and the section table, without the dynamic
+/// header, and word 7's packet size set to [`PART_LEN`].
+pub fn download_header(img: &Image<'_>) -> Vec<u8> {
+    let len = 32 + img.sections.len() * 16;
+    let mut h = img.data[..len].to_vec();
+    let w7 = u32::from_le_bytes(h[28..32].try_into().unwrap()) & !0xFFFF | PART_LEN as u32;
+    h[28..32].copy_from_slice(&w7.to_le_bytes());
+    h
+}
+
 /// The pieces (offset in the image, length) a section is downloaded in.
 pub fn parts(s: &Section) -> impl Iterator<Item = (usize, usize)> + '_ {
     (0..s.len).step_by(PART_LEN).map(move |o| (s.offset + o, (s.len - o).min(PART_LEN)))
@@ -302,6 +316,14 @@ mod tests {
             // The 8852B firmware is version 0.29.x or newer.
             assert_eq!(img.version[0], 0);
             assert!(img.version[1] >= 27, "{:?}", img.version);
+            // The header sent first: the section table without the dynamic
+            // part, the rest as in the file but the packet size.
+            let h = download_header(&img);
+            assert_eq!(h.len(), 32 + img.sections.len() * 16);
+            assert!(h.len() <= img.header_len);
+            assert_eq!(u32::from_le_bytes(h[28..32].try_into().unwrap()) & 0xFFFF, PART_LEN as u32);
+            assert_eq!(h[..28], data[..28]);
+            assert_eq!(h[32..], data[32..h.len()]);
         }
         let els = elements(&f);
         std::println!("{} elements: {:?}", els.len(), els.iter().map(|e| e.id).collect::<Vec<_>>());
