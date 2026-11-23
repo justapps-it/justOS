@@ -11,7 +11,7 @@ on:
       tag:
         description: "Tag of the release (made on the chosen branch if it does not exist)"
         required: true
-        default: "v0.10.0"
+        default: "v0.11.0"
 
 permissions:
   contents: write

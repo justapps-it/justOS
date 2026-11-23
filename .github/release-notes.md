@@ -2,6 +2,17 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ![La scrivania di justOS](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/scrivania.png)
 
+## Novità della 0.11.0
+
+- **JustOS Connect**: il telefono Android entra nel sistema. Scarica `justos-connect.apk` qui sotto (Android 8 o più recente), aprila sulla stessa rete del computer, tocca il tuo PC e scrivi il codice di sei cifre che compare nella finestra **JustOS Connect**. Da quel momento:
+  - i **file** passano in entrambe le direzioni (sul telefono anche da *Condividi → JustOS Connect*; sul computer arrivano in *Scaricati*);
+  - lo **schermo** del computer si vede sul telefono e si tocca per spostare il puntatore;
+  - il telefono fa da **trackpad e tastiera**: un dito muove, un tocco clicca, due dita scorrono, con frecce, Esc, F1–F12 e volume;
+  - **notifiche**, **batteria** e **appunti** del telefono arrivano sul computer, e dal computer si fa **squillare** il telefono per ritrovarlo.
+  Tutto è cifrato (ECDH P-256 e AES-256-GCM). Nel Terminale c'è anche `connect`. Abbina il telefono sulla rete di casa, non su un Wi-Fi pubblico.
+- **Bluetooth**: tastiere e mouse, classici e LE, con l'associazione da **Impostazioni → Bluetooth**; driver per gli adattatori USB e per i Realtek come l'RTL8852BE. Provato su un controller emulato.
+- **Wi-Fi**: ricerca delle reti, WPA2 e WPA3 e connessione automatica, provate con un access point simulato. Il driver per la Realtek RTL8852BE carica il firmware ma non si collega ancora.
+
 ## Novità della 0.10.0
 
 - **Permessi come su un telefono**: le app non ricevono più nessun permesso quando le installi. La prima volta che una vuole una cartella, la rete, la fotocamera, il microfono o mandare notifiche, compare un popup al centro della sua finestra con *Consenti*, *Solo questa volta* e *Non consentire* (già selezionato, anche con Esc). Dopo due *Non consentire* di fila l'app non chiede più. In **Impostazioni → Privacy** vedi ogni permesso e ogni app, con un interruttore per cambiare idea e *Chiedi di nuovo*.
@@ -41,7 +52,7 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 - Dall'archivio di Debian arrivano solo i pacchetti della release (trixie): gli aggiornamenti di sicurezza usciti dopo non ancora, perché quegli archivi sono compressi in xz.
 - La fotocamera non è ancora disponibile per i programmi Linux.
 - Molti programmi Windows a 32 bit e quelli grandi (Steam, per esempio) si fermano: la compatibilità è agli inizi.
-- Mancano Wi-Fi, Bluetooth e l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware, alla risoluzione scelta dal firmware, con un solo monitor.
+- Il Wi-Fi non funziona ancora su una scheda vera (il driver RTL8852BE non è finito), il Bluetooth è provato solo su un controller emulato, l'audio Bluetooth manca. Manca anche l'accelerazione grafica: sulle schede video vere (Intel, AMD, nVidia) si usa il framebuffer del firmware, alla risoluzione scelta dal firmware, con un solo monitor.
 - La sospensione s2idle è provata in QEMU, non ancora su portatili veri; la retroilluminazione resta accesa (lo schermo diventa nero).
 - L'installazione su disco è provata in QEMU, non ancora su hardware vero; niente Secure Boot, dischi con settori da 4K o più grandi di 2 TiB.
 - Lo stato di ogni driver è in [docs/driver.md](https://github.com/justapps-it/justOS/blob/main/docs/driver.md#hardware-supportato), cosa manca e in che ordine nella [roadmap](https://github.com/justapps-it/justOS/blob/main/docs/roadmap.md).
@@ -52,7 +63,8 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 |---|---|
 | `justos-img.zip` | **Immagine di disco** (scompattata 5 GiB, BIOS e UEFI), con Firefox e Wine: si scrive su una chiavetta USB da almeno 8 GB (balenaEtcher, Rufus in modalità DD, `dd`) per avviare un PC vero, o si usa come disco di una macchina virtuale. Secure Boot va disattivato. |
 | `justos.iso` | **CD live**: si avvia in una macchina virtuale o da un CD, con BIOS o UEFI, senza disco rigido. Il sistema gira in memoria: le modifiche si perdono allo spegnimento. Non ha Firefox né Wine. |
-| `SHA256SUMS` | le impronte dei due file |
+| `justos-connect.apk` | **JustOS Connect** per Android 8 o più recente: si installa sul telefono (consentendo l'installazione da fonti sconosciute). |
+| `SHA256SUMS` | le impronte dei file |
 
 ## Provarlo
 
