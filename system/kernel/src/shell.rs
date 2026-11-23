@@ -2428,14 +2428,15 @@ fn wifi_command(rest: &[&str]) {
             match wifi::wait_connected(25_000) {
                 Ok(()) => {
                     let iface = wifi::status().map(|s| s.iface).unwrap_or(0);
-                    print!("connected to \"{ssid}\"");
+                    // Printed whole once the address is known, so the
+                    // network's log lines cannot fall in the middle.
                     let until = time::uptime_ms() + 8000;
                     while time::uptime_ms() < until && !matches!(crate::net::config(iface), Some((_, true))) {
                         task::sleep_ms(100);
                     }
                     match crate::net::config(iface) {
-                        Some((c, true)) => println!(", address {}", c.ip),
-                        _ => println!(", {WARN}no address yet{RESET}"),
+                        Some((c, true)) => println!("connected to \"{ssid}\", address {}", c.ip),
+                        _ => println!("connected to \"{ssid}\", {WARN}no address yet{RESET}"),
                     }
                 }
                 Err(f) => println!("{ERR}\"{ssid}\": {}{RESET}", wifi::failure_en(f)),
