@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JustOS Connect</string>
+    <string name="share_label">Invia a justOS</string>
+
+    <!-- Home -->
+    <string name="home_subtitle">Il telefono, insieme al tuo computer justOS</string>
+    <string name="settings">Impostazioni</string>
+    <string name="home_found">Computer su questa rete</string>
+    <string name="home_none_found">Nessun computer justOS trovato. Controlla che Connect sia attivo nelle impostazioni del computer e che siate sulla stessa Wi-Fi.</string>
+    <string name="home_rescan">Cerca di nuovo</string>
+    <string name="home_connect_ip">Connetti tramite IP</string>
+    <string name="badge_paired">ASSOCIATO</string>
+    <string name="ip_hint">192.168.1.20</string>
+    <string name="connect">Connetti</string>
+    <string name="cancel">Annulla</string>
+
+    <!-- Connection status -->
+    <string name="status_connected">Connesso</string>
+    <string name="status_connected_size">Connesso · %1$d×%2$d</string>
+    <string name="status_pairing">In attesa del codice di associazione</string>
+    <string name="status_reconnecting">Riconnessione…</string>
+    <string name="status_connecting">Connessione…</string>
+
+    <!-- Actions -->
+    <string name="action_trackpad">Trackpad</string>
+    <string name="action_screen">Schermo</string>
+    <string name="action_send_files">Invia file</string>
+    <string name="action_keyboard">Tastiera</string>
+    <string name="action_send_clipboard">Invia appunti</string>
+    <string name="action_disconnect">Disconnetti</string>
+    <string name="action_forget">Dimentica</string>
+    <string name="action_stop">Ferma</string>
+
+    <!-- Pairing -->
+    <string name="pair_title">Associa questo computer</string>
+    <string name="pair_message">Inserisci il codice mostrato su %1$s</string>
+    <string name="pair_hint">000000</string>
+    <string name="pair">Associa</string>
+    <string name="pair_again">Associa di nuovo</string>
+    <string name="try_again">Riprova</string>
+    <string name="denied_auth_title">Non riconosciuto</string>
+    <string name="denied_auth_message">%1$s non riconosce più questo telefono. Associalo di nuovo per connetterti.</string>
+    <string name="denied_code_title">Codice errato</string>
+    <string name="denied_code_message">Il codice non corrisponde a quello mostrato sul computer.</string>
+    <string name="forget_title">Dimenticare %1$s?</string>
+    <string name="forget_message">Per connettersi di nuovo, il telefono dovrà essere associato un\'altra volta.</string>
+
+    <!-- Toasts -->
+    <string name="toast_connected">Connesso a %1$s</string>
+    <string name="toast_connect_failed">Connessione non riuscita: %1$s</string>
+    <string name="toast_clip_received">Appunti ricevuti dal computer</string>
+    <string name="toast_clipboard_empty">Gli appunti sono vuoti</string>
+    <string name="toast_clipboard_sent">Appunti inviati</string>
+    <string name="toast_not_connected">Nessun computer connesso</string>
+    <string name="toast_nothing_to_send">Niente da inviare</string>
+    <string name="toast_sending">Invio di %1$d file…</string>
+
+    <!-- Notifications -->
+    <string name="channel_service">Connessione</string>
+    <string name="channel_transfer">Trasferimenti di file</string>
+    <string name="channel_files">File</string>
+    <string name="channel_ring">Trova il telefono</string>
+    <string name="notif_connected">Connesso a %1$s</string>
+    <string name="notif_connecting">Connessione a %1$s…</string>
+    <string name="notif_reconnecting">In attesa di %1$s…</string>
+    <string name="notif_sending">Invio di %1$s</string>
+    <string name="notif_receiving">Ricezione di %1$s</string>
+    <string name="notif_received">%1$s salvato in Download/JustOS</string>
+    <string name="notif_receive_failed">%1$s non è stato ricevuto</string>
+    <string name="notif_sent_files">File inviati: %1$d</string>
+    <string name="notif_send_failed">%1$s non è stato inviato</string>
+    <string name="notif_files">I file</string>
+    <string name="ring_title">Sono qui!</string>
+    <string name="ring_text">%1$s sta cercando questo telefono.</string>
+
+    <!-- Trackpad -->
+    <string name="trackpad_hint">Trascina per muovere · Tocca per cliccare · Due dita per scorrere</string>
+    <string name="button_left">Sinistro</string>
+    <string name="button_right">Destro</string>
+    <string name="key_esc">Esc</string>
+    <string name="key_tab">Tab</string>
+    <string name="key_ctrl">Ctrl</string>
+    <string name="key_alt">Alt</string>
+    <string name="key_shift">Maiusc</string>
+    <string name="key_left">←</string>
+    <string name="key_up">↑</string>
+    <string name="key_down">↓</string>
+    <string name="key_right">→</string>
+    <string name="key_fn">Fn</string>
+    <string name="key_home">Inizio</string>
+    <string name="key_end">Fine</string>
+    <string name="key_pgup">Pag↑</string>
+    <string name="key_pgdn">Pag↓</string>
+    <string name="key_delete">Canc</string>
+    <string name="key_overview">Panoramica</string>
+    <string name="key_vol_down">Vol −</string>
+    <string name="key_vol_up">Vol +</string>
+    <string name="key_mute">Muto</string>
+    <string name="key_f">F%1$d</string>
+
+    <!-- Screen -->
+    <string name="screen_waiting">In attesa dello schermo…</string>
+    <string name="quality_low">Bassa</string>
+    <string name="quality_normal">Normale</string>
+    <string name="quality_high">Alta</string>
+
+    <!-- Settings -->
+    <string name="settings_device_name">Nome del dispositivo</string>
+    <string name="settings_device_name_hint">Mostrato sul computer. Lascialo vuoto per usare il modello del telefono.</string>
+    <string name="settings_notifications">Notifiche</string>
+    <string name="settings_mirror">Mostra le notifiche del telefono sul computer</string>
+    <string name="settings_open_access">Impostazioni di accesso alle notifiche</string>
+    <string name="settings_access_on">L\'accesso alle notifiche è concesso.</string>
+    <string name="settings_access_off">L\'accesso alle notifiche non è ancora concesso.</string>
+    <string name="settings_paired">Computer associati</string>
+    <string name="settings_paired_none">Nessun computer associato.</string>
+    <string name="settings_about">Informazioni</string>
+    <string name="about_version">Versione %1$s</string>
+    <string name="about_text">Un compagno per justOS: trackpad, tastiera, schermo, file, notifiche e appunti, cifrati da un capo all\'altro sulla tua rete.</string>
+    <string name="about_site">justos.dev</string>
+</resources>

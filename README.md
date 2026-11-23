@@ -53,6 +53,7 @@ onestà cosa funziona e cosa no.
 | **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con l'audio e il dizionario italiano, e si presenta ai siti come Firefox per Windows, così propongono i programmi Windows da scaricare. I programmi con un file `.desktop` compaiono in Applicazioni. Un pacchetto `.deb` si installa con un doppio clic insieme alle dipendenze che gli mancano, scaricate dall'archivio di Debian e controllate con la sua firma; `deb get <nome>` installa per nome. |
 | **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS e l'audio. |
 | **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione (in RAM, o s2idle sui portatili senza S3). |
+| **Telefono** | JustOS Connect: l'app Android abbina il telefono con un codice di sei cifre e poi manda e riceve file, mostra lo schermo del computer e lo comanda col tocco, fa da trackpad e da tastiera, porta sul desktop notifiche, batteria e appunti; dal computer si fa squillare il telefono. Tutto cifrato, sulla rete di casa. |
 | **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
 | **Installazione** | Dalla chiavetta o dal CD justOS si installa sul disco del computer, con scelta del disco, conferma e barra di avanzamento. |
 | **Primo avvio** | Configurazione guidata in 10 passi: aspetto, tastiera, rete, account, nome del dispositivo, privacy e sfondo. |
@@ -167,6 +168,7 @@ dischi su cui installare justOS.
 | App Android | In corso | Interprete Dalvik per programmi semplici e driver binder; le app vere non girano. |
 | Wi-Fi | In corso | WPA2 e WPA3, ricerca delle reti e connessione automatica provate con un access point simulato (`make test-wifi`); il driver della Realtek RTL8852BE non è ancora finito, quindi su una scheda vera non funziona. |
 | Bluetooth | In parte | Tastiere e mouse (BR/EDR e LE), con l'associazione; driver per gli adattatori USB e i Realtek come l'RTL8852BE. Provato su un controller emulato, non ancora su quello vero; niente audio. |
+| Telefono (JustOS Connect) | Funziona | Provato in QEMU contro un telefono simulato (`scripts/test-connect.py`); l'app Android per ora non è stata provata su un telefono vero. |
 | Più monitor | In parte | Con virtio-gpu (macchine virtuali), alla stessa risoluzione e in fila; sulle schede video vere un solo monitor. |
 | Accelerazione grafica | Non ancora | Il desktop è disegnato dal processore. |
 | Fusi orari, indirizzo IP statico | Non ancora | |
@@ -185,6 +187,7 @@ sandbox delle app di justOS. Cosa manca e in che ordine arriverà è nella
 | [docs/gui.md](docs/gui.md) | desktop, finestre, temi, scorciatoie |
 | [docs/compat.md](docs/compat.md) | programmi Linux, Windows (Wine), Java e Android, doppio clic |
 | [docs/driver.md](docs/driver.md) | formato dei driver e hardware supportato |
+| [docs/connect.md](docs/connect.md) | JustOS Connect: il telefono Android, il protocollo |
 | [docs/programmi.md](docs/programmi.md) | scrivere programmi per justOS |
 | [docs/roadmap.md](docs/roadmap.md) | cosa c'è, cosa manca, in che ordine |
 

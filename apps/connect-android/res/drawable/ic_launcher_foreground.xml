@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A monitor with a "J" on its screen and a phone in front of it. Safe zone: the inner 66x66. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Monitor frame -->
+    <path
+        android:strokeColor="#ffff5a1f"
+        android:strokeWidth="3.5"
+        android:strokeLineJoin="round"
+        android:pathData="M30,34 L72,34 Q75,34 75,37 L75,63 Q75,66 72,66 L30,66 Q27,66 27,63 L27,37 Q27,34 30,34 Z" />
+    <!-- Stand -->
+    <path
+        android:strokeColor="#ffff5a1f"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M51,66 L51,73 M42,74 L60,74" />
+    <!-- "J" -->
+    <path
+        android:strokeColor="#ffffffff"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M50,42 L50,53 Q50,58 45,58 Q41,58 40,54" />
+    <!-- Phone backing (cuts the monitor outline) -->
+    <path
+        android:fillColor="#ff0f0f10"
+        android:pathData="M63,47 L79,47 Q83,47 83,51 L83,77 Q83,81 79,81 L63,81 Q59,81 59,77 L59,51 Q59,47 63,47 Z" />
+    <!-- Phone -->
+    <path
+        android:strokeColor="#ffff5a1f"
+        android:strokeWidth="3"
+        android:strokeLineJoin="round"
+        android:pathData="M65,50 L77,50 Q80,50 80,53 L80,75 Q80,78 77,78 L65,78 Q62,78 62,75 L62,53 Q62,50 65,50 Z" />
+    <path
+        android:fillColor="#ffff5a1f"
+        android:pathData="M68.5,73 L73.5,73 L73.5,75 L68.5,75 Z" />
+</vector>
