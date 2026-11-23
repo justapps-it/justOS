@@ -552,6 +552,47 @@ pub struct KernelApi {
     /// Registers a sound input (see [`CaptureDesc`]); returns its number.
     /// The kernel starts it only while a program records.
     pub capture_register: unsafe extern "C" fn(device: u32, desc: *const CaptureDesc) -> Status,
+    // Bluetooth
+    /// Registers a Bluetooth controller (see [`HciDesc`]), once the driver
+    /// has set it up (firmware loaded); returns its number (`hci<N>`). The
+    /// kernel's Bluetooth stack then drives it with HCI commands.
+    pub hci_register: unsafe extern "C" fn(device: u32, desc: *const HciDesc) -> Status,
+    /// Hands a packet from controller `adapter` (the number `hci_register`
+    /// returned) to the kernel: an event ([`HCI_EVENT`]) or ACL data
+    /// ([`HCI_ACL`]), whole, without the H4 type byte. Safe from any
+    /// thread and from the controller's callbacks.
+    pub hci_receive: unsafe extern "C" fn(adapter: u32, kind: u32, data: *const u8, len: usize),
+    // Firmware
+    /// Reads firmware file `name` ("rtl_bt/rtl8852bu_fw.bin", from
+    /// `sys:/system/firmware`): copies up to `cap` bytes into `buf` (none
+    /// when `buf` is null) and returns the file's size, or [`E_NODEV`] when
+    /// there is no such file.
+    pub firmware_read: unsafe extern "C" fn(name: Str, buf: *mut u8, cap: usize) -> Status,
+}
+
+// ----------------------------------------------------------------------------
+// Bluetooth
+
+/// HCI packet types, as in the H4 transport.
+pub const HCI_COMMAND: u32 = 1;
+pub const HCI_ACL: u32 = 2;
+pub const HCI_SCO: u32 = 3;
+pub const HCI_EVENT: u32 = 4;
+
+/// Sends one HCI packet to the controller: a command ([`HCI_COMMAND`],
+/// opcode and parameters) or ACL data ([`HCI_ACL`], with its 4-byte
+/// header). Blocks until the controller took it.
+pub type HciSend = unsafe extern "C" fn(ctx: *mut c_void, kind: u32, data: *const u8, len: usize) -> Status;
+
+/// A Bluetooth controller a driver hands to the kernel: the transport
+/// (USB, UART) under the kernel's HCI. The kernel calls `send` from its
+/// Bluetooth threads, never from an interrupt handler.
+#[repr(C)]
+pub struct HciDesc {
+    pub ctx: *mut c_void,
+    pub send: HciSend,
+    /// Name of the controller ("Realtek RTL8852BU"), NUL-padded.
+    pub name: [u8; 40],
 }
 
 // ----------------------------------------------------------------------------

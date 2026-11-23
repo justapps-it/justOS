@@ -311,6 +311,7 @@ impl Manager {
         dev::audio::remove_device(id);
         dev::capture::remove_device(id);
         dev::display::remove_device(id);
+        crate::bt::remove_device(id);
         if let Some(i) = self.loaded.iter().position(|l| l.devices.contains(&id)) {
             let l = &mut self.loaded[i];
             l.devices.retain(|&x| x != id);

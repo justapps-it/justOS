@@ -206,6 +206,141 @@ pub fn start_services() {
     if crate::task::spawn("just.permissions", permissions_service).is_none() {
         crate::warn!("ipc", "could not start just.permissions");
     }
+    if crate::task::spawn("just.bluetooth", bluetooth_service).is_none() {
+        crate::warn!("ipc", "could not start just.bluetooth");
+    }
+}
+
+/// `just.bluetooth`, the Bluetooth stack ([`crate::bt`]) for apps:
+///
+/// - `{"state": true}`: `{"present", "name", "address", "on", "scanning",
+///   "devices": [{"address", "name", "kind", "le", "paired",
+///   "connected"}], "prompt": {"id", "address", "name", "kind":
+///   "confirm" | "show" | "enter", "number"} | null}`
+/// - `{"scan": seconds}`: `{"found": n}` when the scan is over
+/// - `{"pair" | "connect" | "disconnect" | "forget": address}`: `{"ok":
+///   true}` once done (pairing waits for the user's answers)
+/// - `{"power": true | false}`
+/// - `{"answer": id, "ok": bool, "passkey": n}`: answers the prompt
+///
+/// Errors come as `{"error": text}`. Apps in a sandbox need the
+/// "bluetooth" permission (asked the first time). Every request runs in a
+/// thread of its own: scans and pairings take a while.
+fn bluetooth_service() {
+    let port = match create(0, Some("just.bluetooth")) {
+        Ok(p) => p,
+        Err(e) => {
+            crate::warn!("ipc", "just.bluetooth: {}", e.as_str());
+            return;
+        }
+    };
+    loop {
+        let Ok(m) = recv(port, 0, None, &|| false) else { continue };
+        let (to, sender, data) = (m.reply, m.sender, m.data);
+        let started = crate::task::spawn("just.bluetooth.req", move || {
+            if let Some(app) = crate::user::app_of(sender) {
+                if !crate::sandbox::allowed(&app, sender, "bluetooth") {
+                    send_text(to, "{\"error\":\"permesso negato\"}");
+                    return;
+                }
+            }
+            let v = justjson::parse_bytes(&data).unwrap_or(justjson::Value::Null);
+            reply(to, &bluetooth_answer(&v));
+        });
+        if started.is_none() {
+            send_text(m.reply, "{\"error\":\"occupato\"}");
+        }
+    }
+}
+
+fn bluetooth_answer(v: &justjson::Value) -> justjson::Value {
+    use crate::bt;
+    use justjson::Value;
+    let ok = || Value::object(alloc::vec![("ok", Value::Bool(true))]);
+    let error = |e: &str| Value::object(alloc::vec![("error", Value::string(e))]);
+    let done = |r: Result<(), String>| match r {
+        Ok(()) => ok(),
+        Err(e) => error(&e),
+    };
+    let target = |key: &str| v.get(key).as_str().and_then(bt::find).and_then(|a| bt::parse_addr(&a));
+    if v.get("state").as_bool() == Some(true) {
+        let adapter = bt::adapter();
+        let devices = bt::devices()
+            .into_iter()
+            .map(|d| {
+                Value::object(alloc::vec![
+                    ("address", Value::string(&d.addr)),
+                    ("name", Value::string(&d.name)),
+                    ("kind", Value::string(d.kind.name())),
+                    ("le", Value::Bool(d.le)),
+                    ("paired", Value::Bool(d.paired)),
+                    ("connected", Value::Bool(d.connected)),
+                ])
+            })
+            .collect();
+        let prompt = bt::prompt().map_or(Value::Null, |p| {
+            let (kind, n) = match p.kind {
+                bt::PromptKind::Confirm(n) => ("confirm", n as f64),
+                bt::PromptKind::Display(n) => ("show", n as f64),
+                bt::PromptKind::Enter => ("enter", 0.0),
+            };
+            Value::object(alloc::vec![
+                ("id", Value::Num(p.id as f64)),
+                ("address", Value::string(&bt::addr_text(&p.addr))),
+                ("name", Value::string(&p.name)),
+                ("kind", Value::string(kind)),
+                ("number", Value::Num(n)),
+            ])
+        });
+        let (name, address, on) = adapter.clone().unwrap_or_default();
+        return Value::object(alloc::vec![
+            ("present", Value::Bool(adapter.is_some())),
+            ("name", Value::string(&name)),
+            ("address", Value::string(&address)),
+            ("on", Value::Bool(on)),
+            ("scanning", Value::Bool(bt::scanning())),
+            ("devices", Value::Arr(devices)),
+            ("prompt", prompt),
+        ]);
+    }
+    if let Some(secs) = v.get("scan").as_i64() {
+        return match bt::scan(secs.clamp(2, 30) as u32) {
+            Ok(n) => Value::object(alloc::vec![("found", Value::Num(n as f64))]),
+            Err(e) => error(&e),
+        };
+    }
+    if let Some(on) = v.get("power").as_bool() {
+        bt::set_powered(on);
+        return ok();
+    }
+    if let Some(id) = v.get("answer").as_i64() {
+        bt::answer(id as u32, v.get("ok").as_bool().unwrap_or(false), v.get("passkey").as_i64().unwrap_or(0) as u32);
+        return ok();
+    }
+    if v.get("pair").as_str().is_some() {
+        return match target("pair") {
+            Some(a) => done(bt::pair(&bt::addr_text(&a))),
+            None => error("dispositivo non trovato"),
+        };
+    }
+    for key in ["connect", "disconnect", "forget"] {
+        if v.get(key).as_str().is_none() {
+            continue;
+        }
+        let Some(a) = target(key) else { return error("dispositivo non trovato") };
+        return match key {
+            "connect" => done(bt::connect(&a)),
+            "disconnect" => {
+                bt::disconnect(&a);
+                ok()
+            }
+            _ => {
+                bt::forget(&a);
+                ok()
+            }
+        };
+    }
+    error("richiesta sconosciuta")
 }
 
 /// `just.permissions`, the sandbox's table ([`crate::sandbox`]):

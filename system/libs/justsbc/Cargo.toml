@@ -1,0 +1,10 @@
+[package]
+name = "justsbc"
+description = "SBC for justOS: the A2DP audio codec, an encoder in fixed point (no_std)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true

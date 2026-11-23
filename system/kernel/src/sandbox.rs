@@ -54,11 +54,12 @@ const FILE: &str = "sys:/system/permissions.json";
 
 /// What an app can ask for besides folders: its key, how the settings name
 /// it, and what the question asks to do.
-pub const DEVICES: [(&str, &str, &str); 5] = [
+pub const DEVICES: [(&str, &str, &str); 6] = [
     ("camera", "Fotocamera", "usare la fotocamera"),
     ("microphone", "Microfono", "usare il microfono"),
     ("location", "Posizione", "conoscere la tua posizione"),
     ("network", "Rete", "usare la rete"),
+    ("bluetooth", "Bluetooth", "usare il Bluetooth"),
     ("notifications", "Notifiche", "inviarti notifiche"),
 ];
 
@@ -287,6 +288,7 @@ pub fn detail(perm: &str) -> &'static str {
         "microphone" => "Potrà registrare l'audio.",
         "location" => "Potrà sapere dove si trova il computer.",
         "network" => "Potrà collegarsi a Internet.",
+        "bluetooth" => "Potrà cercare, associare e collegare dispositivi Bluetooth.",
         "notifications" => "Potrà mostrarti avvisi sulla scrivania.",
         _ => "Potrà leggere e cambiare i file che ci sono.",
     }

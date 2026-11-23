@@ -19,6 +19,8 @@
 
 #![no_std]
 
+extern crate alloc;
+
 pub use justdk::*;
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
@@ -826,6 +828,32 @@ pub fn audio_queued(output: Status, queued: AudioQueued) -> Status {
 pub fn capture_register(device: u32, desc: &'static CaptureDesc) -> Status {
     // SAFETY: kernel call with a valid descriptor.
     unsafe { (api().capture_register)(device, desc) }
+}
+
+/// Registers a Bluetooth controller; returns its number or an error.
+pub fn hci_register(device: u32, desc: &'static HciDesc) -> Status {
+    // SAFETY: kernel call with a valid descriptor.
+    unsafe { (api().hci_register)(device, desc) }
+}
+
+/// An HCI event or ACL packet from controller `adapter`.
+pub fn hci_receive(adapter: u32, kind: u32, data: &[u8]) {
+    // SAFETY: kernel call with a valid buffer.
+    unsafe { (api().hci_receive)(adapter, kind, data.as_ptr(), data.len()) }
+}
+
+/// A firmware file from `sys:/system/firmware` ("rtl_bt/x.bin"), or None.
+pub fn firmware(name: &str) -> Option<alloc::vec::Vec<u8>> {
+    let n = Str { ptr: name.as_ptr(), len: name.len() };
+    // SAFETY: kernel call; a null buffer only asks for the size.
+    let size = unsafe { (api().firmware_read)(n, core::ptr::null_mut(), 0) };
+    if size < 0 {
+        return None;
+    }
+    let mut buf = alloc::vec![0u8; size as usize];
+    // SAFETY: kernel call with a buffer of `size` bytes.
+    let got = unsafe { (api().firmware_read)(n, buf.as_mut_ptr(), buf.len()) };
+    (got == size).then_some(buf)
 }
 
 pub fn display_register(device: u32, desc: &'static DisplayDesc) -> Status {

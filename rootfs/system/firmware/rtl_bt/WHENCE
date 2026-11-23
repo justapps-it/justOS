@@ -1,0 +1,14 @@
+Firmware for the Bluetooth part of Realtek chips, loaded by the btusb
+driver (system/drivers/btusb) the way Linux's btrtl does.
+
+Source: linux-firmware, https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git
+Commit: 4ca3317e935e3e9ffad49eb51a3468136c3fdc96
+
+File: rtl_bt/rtl8852bu_fw.bin
+  sha256 c2b0d34a4ff8a8ea136993f0dc4ba657522d84231b4094c2a53cda39afc91c57
+File: rtl_bt/rtl8852bu_config.bin
+  a copy of rtl8761bu_config.bin (linux-firmware links one to the other)
+  sha256 6c28a3f07c6a30ed208c4b64862a23f02b7d93543ea980edd24df16bab45095f
+
+Licence: Redistributable. See LICENCE.rtlwifi_firmware.txt for details
+(the same entry of linux-firmware's WHENCE). Unmodified.

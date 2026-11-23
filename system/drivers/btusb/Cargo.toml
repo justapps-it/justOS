@@ -1,0 +1,19 @@
+[package]
+name = "btusb"
+description = "justOS driver: USB Bluetooth controllers (HCI)"
+version = "1.0.0"
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "btusb"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+justdrv.workspace = true
+
+[lints]
+workspace = true

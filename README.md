@@ -165,7 +165,8 @@ dischi su cui installare justOS.
 | Aggiornamenti A/B del sistema | Funziona | Provati in QEMU (`make test-update`), con ritorno indietro. |
 | Hardware reale | In parte | Molti driver sono provati solo in QEMU; dettagli in [docs/driver.md](docs/driver.md#hardware-supportato). |
 | App Android | In corso | Interprete Dalvik per programmi semplici e driver binder; le app vere non girano. |
-| Wi-Fi, Bluetooth | Non ancora | Nessun driver. |
+| Bluetooth | In parte | Tastiere e mouse (BR/EDR e LE), con l'associazione; driver per gli adattatori USB e i Realtek come l'RTL8852BE. Provato su un controller emulato, non ancora su quello vero; niente audio. |
+| Wi-Fi | Non ancora | Nessun driver. |
 | Più monitor | In parte | Con virtio-gpu (macchine virtuali), alla stessa risoluzione e in fila; sulle schede video vere un solo monitor. |
 | Accelerazione grafica | Non ancora | Il desktop è disegnato dal processore. |
 | Fusi orari, indirizzo IP statico | Non ancora | |
