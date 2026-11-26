@@ -103,7 +103,8 @@ framebuffer UEFI, tutti senza accelerazione 3D.
 | 120 Hz, VRR | ⬜ |
 | HiDPI (scala 2×) | ✅ automatica da 2560×1440, o scelta nelle Impostazioni |
 | Più monitor | ✅ con `virtiogpu`: principale, disposizione, *Duplica*, collegamento a caldo |
-| Dock con menu di sistema e stato, Applicazioni (Launchpad), centro di controllo | ✅ |
+| Barra dinamica (dock, launchpad, centro di controllo con Wi-Fi e Bluetooth, blocco con PIN, volume, notifiche, musica, spegnimento) | ✅ vetro sfocato solo sopra lo sfondo; sopra le finestre è scuro opaco |
+| Finestre: cornice chiara, 8 maniglie, genio nella barra, doppio clic per ingrandire, schermo intero con la barra nascosta | ✅ |
 | Centro notifiche con cronologia e *Non disturbare* | ✅ |
 | Ricerca globale (app, file, impostazioni, calcoli) con Ctrl+Spazio | ✅ |
 | Snap delle finestre (metà, quarti, tutto schermo) da mouse e tastiera | ✅ |

@@ -20,7 +20,7 @@ Linux e quelli Windows.
 
 <br>
 
-<img src="docs/screenshots/scrivania.png" alt="La scrivania di justOS: l'ora sullo sfondo e il dock in basso" width="800">
+<img src="docs/screenshots/scrivania.png" alt="La scrivania di justOS: l'ora in alto e la barra dinamica in basso" width="800">
 
 </div>
 
@@ -36,9 +36,11 @@ terze parti, solo il compilatore Rust con `core` e `alloc`.
 Sopra a questa base c'è uno strato di compatibilità con Linux, con un
 compositor Wayland dentro il kernel: ci girano Firefox ESR, che è già
 installato, GTK 3 e gli altri programmi Linux, in italiano; con Wine ci girano
-anche molti programmi Windows. L'interfaccia è un dock che si trasforma
-nell'isola di quello che sta succedendo, finestre a pixel morbidi, tema scuro
-o chiaro, più monitor e una configurazione guidata al primo avvio.
+anche molti programmi Windows. L'interfaccia ha una sola barra dinamica in
+basso: a riposo è il dock, e cambia forma per diventare la ricerca delle app,
+il centro di controllo, il blocco con il PIN, il volume, le notifiche, la
+musica e lo spegnimento. Le finestre hanno una cornice chiara, c'è il tema
+scuro o chiaro, più monitor e una configurazione guidata al primo avvio.
 
 È un progetto in sviluppo: [più sotto](#stato-del-progetto) c'è scritto con
 onestà cosa funziona e cosa no.
@@ -48,7 +50,7 @@ onestà cosa funziona e cosa no.
 | | |
 |---|---|
 | **Avvio** | JustBoot: loader scritti da zero per BIOS (MBR e secondo stadio in assembly) e per UEFI (applicazione EFI in Rust). La stessa immagine parte da chiavetta USB, disco o CD live. |
-| **Desktop** | Dock con menu di sistema e stato che diventa un'isola per notifiche, volume, programmi che si avviano, musica e timer; Applicazioni, centro di controllo, centro notifiche, ricerca globale anche dentro i file (Ctrl+Spazio), desktop virtuali, snap delle finestre, tema scuro e chiaro, HiDPI a 2×, più monitor. |
+| **Desktop** | Una barra dinamica in basso al centro che fa da dock, launchpad con ricerca globale anche dentro i file (Ctrl+Spazio), centro di controllo con le pagine Wi-Fi e Bluetooth, blocco con PIN, volume e luminosità, notifiche, lettore musicale e spegnimento; finestre con cornice chiara, otto maniglie, riduzione a genio e schermo intero con la barra nascosta; centro notifiche, desktop virtuali, snap, tema scuro e chiaro, HiDPI a 2×, più monitor. |
 | **App** | File (con le anteprime delle immagini), Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi. |
 | **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con l'audio e il dizionario italiano, e si presenta ai siti come Firefox per Windows, così propongono i programmi Windows da scaricare. I programmi con un file `.desktop` compaiono in Applicazioni. Un pacchetto `.deb` si installa con un doppio clic insieme alle dipendenze che gli mancano, scaricate dall'archivio di Debian e controllate con la sua firma; `deb get <nome>` installa per nome. |
 | **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS e l'audio. |
@@ -57,7 +59,7 @@ onestà cosa funziona e cosa no.
 | **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
 | **Installazione** | Dalla chiavetta o dal CD justOS si installa sul disco del computer, con scelta del disco, conferma e barra di avanzamento. |
 | **Primo avvio** | Configurazione guidata in 10 passi: aspetto, tastiera, rete, account, nome del dispositivo, privacy e sfondo. |
-| **Sicurezza** | Permessi come su un telefono: nessuna app ne riceve di base, e la prima volta che una ne vuole uno (una cartella, la rete, la fotocamera, il microfono, le notifiche) compare un popup con *Consenti*, *Solo questa volta* e *Non consentire*; in Impostazioni → Privacy si cambia idea. Vale anche per Firefox e i programmi Linux e Windows che usano il microfono. Password con sale e blocco automatico dello schermo. |
+| **Sicurezza** | Permessi come su un telefono: nessuna app ne riceve di base, e la prima volta che una ne vuole uno (una cartella, la rete, la fotocamera, il microfono, le notifiche) compare un popup con *Consenti*, *Solo questa volta* e *Non consentire*; in Impostazioni → Privacy si cambia idea. Vale anche per Firefox e i programmi Linux e Windows che usano il microfono. Password con sale (o un PIN di 4-8 cifre) e blocco automatico dello schermo. |
 
 ## Com'è
 

@@ -854,7 +854,7 @@ impl Desktop {
     }
 
     fn next_note(&mut self, l: &mut Looper) {
-        if self.sh.queue.is_empty() || self.sh.bar.state != BarState::Idle || self.bar_hidden() && self.sh.fs.window.is_some() && false {
+        if self.sh.queue.is_empty() || self.sh.bar.state != BarState::Idle {
             return;
         }
         let note = self.sh.queue.pop_front();

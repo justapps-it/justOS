@@ -65,68 +65,39 @@ Presa a modello da macOS:
   cifre in pixel morbidi (bianche o nere secondo lo sfondo, con una
   piccola ombra). Un clic apre il **centro notifiche** con il calendario
   del mese e le notifiche ricevute.
-- **Dock**: un unico pannello opaco del tema. A sinistra il marchio **J▮**
-  su un riquadro scuro, che apre il menu di sistema
-  (*Info su justOS*, *Impostazioni di sistema*, *Negozio*, *Monitor
+- **La barra dinamica**: un'unica superficie di vetro scuro in basso al
+  centro dello schermo principale, che prende il posto del dock, dell'isola,
+  del centro di controllo, di Applicazioni, della schermata di blocco e dei
+  banner delle notifiche (vedi [La barra dinamica](#la-barra-dinamica)). A
+  riposo è il dock: a sinistra il marchio **J▮** di justOS su una pillola
+  scura (un clic apre il launchpad, il tasto destro il menu di sistema:
+  *Info su justOS*, *Impostazioni di sistema*, *Negozio*, *Monitor
   attività*, *Desktop e finestre*, *Schermata*, *Blocca schermo*,
-  *Sospendi* quando il computer può, *Riavvia*, *Spegni*). Poi File,
-  Applicazioni, Editor di testo, Note, Calendario, Foto, Musica,
-  Calcolatrice, Negozio, Impostazioni e, dopo un separatore, le app aperte
-  che non ci sono già e il Cestino. Quella di un'app che parte **rimbalza**,
-  un quadratino arancione segna le app aperte; un clic su un'app aperta la
-  porta davanti (o la riapre se è ridotta). Con molte app aperte le icone si
-  rimpiccioliscono perché il dock stia nello schermo. Il dock cambia forma
-  per mostrare quello che succede (vedi [La barra dinamica](#la-barra-dinamica)).
-- **Dock compatto**: a riposo il dock è piccolo (icone di 34 unità invece
-  di 52, pannello più basso e più stretto, stessi angoli e quadratini).
-  Quando il puntatore ci arriva sopra o vicino **cresce** fino alla misura
-  piena in 220 ms (con un'accelerazione morbida, a tempo); quando se ne va
-  aspetta 400 ms e torna piccolo, così non sfarfalla passandoci accanto.
-  Resta grande finché è aperto un menu o il centro di controllo che vengono
-  dal dock (anche da tastiera) e mentre ci si trascinano sopra dei file.
-  Una volta grande, l'icona sotto il puntatore **si ingrandisce** di un poco
-  (circa 1,2×, le vicine meno) e sale di metà di quanto cresce. Il pannello
-  del dock resta fermo: le icone crescono sul posto, negli spazi tra l'una e
-  l'altra (crescono sempre meno di uno spazio, così non si toccano), e
-  nessuna si sposta di lato, così quella puntata resta sotto il puntatore; il
-  quadratino delle app aperte resta dov'è. Le icone sono sempre disegnate
-  dalla loro immagine alla misura giusta e i clic seguono quello che si vede. *Impostazioni →
-  Aspetto* ha due interruttori, accesi all'inizio: **Dock compatto** (spento,
-  il dock resta sempre grande; a riposo è identico a prima, pixel per pixel)
-  e **Ingrandimento icone**.
-- **Tasto destro su un'icona del dock**: un menu sopra l'icona (lo stesso
-  dei menu della scrivania, si chiude con Esc o con un clic fuori). Per
-  un'app: *Apri*, oppure *Mostra* se è aperta e *Nuova finestra* se ne può
-  avere più d'una; con due finestre o più, i loro nomi (un clic porta quella
-  davanti); *Rimuovi dal dock* / *Mantieni nel dock*; *Chiudi* (chiude le
-  sue finestre come il loro pulsante); *Impostazioni del dock…*, che apre le
-  Impostazioni ad *Aspetto*. Per il Cestino: *Apri* e *Svuota cestino*
-  (elimina per sempre quello che c'è in `sys:/home/Cestino`, senza chiedere
-  conferma come in File, e lo dice con una notifica). Il marchio J▮ e lo
-  stato hanno i loro pannelli, non questo menu. Le app tenute nel dock
-  stanno nelle impostazioni (`dock`: gli id delle app di sistema,
-  `launcher`, `spawn:<percorso>` per i programmi); finché non si cambia
-  niente sono le solite. Un'app aperta non tenuta resta nel dock finché è
-  aperta.
-- **Stato e centro di controllo**: a destra nel dock, in un incavo, i
-  simboli in pixel morbidi della rete (spento se non è collegata), del
-  suono e, sui portatili, della batteria (colorata secondo la carica). Un
-  clic apre il **centro di controllo**, un pannello sopra il dock fatto di
-  schede: il nome di chi usa il computer su un disco arancione, con la
-  carica (o *Alimentatore*) e un riquadro con l'ingranaggio delle
-  impostazioni; i riquadri *Rete* (blu quando è collegata), *Bluetooth*
-  (blu quando è acceso, con i dispositivi collegati; un clic apre
-  *Impostazioni → Bluetooth*: cerca, associa, collega, dimentica) e *Non
-  disturbare* (viola, con un interruttore); due barre a celle
-  orizzontali per luminosità e volume (l'altoparlante a sinistra spegne e
-  riaccende il suono); i pulsanti *Blocca*, *Riavvia* e *Spegni*
-  (arancione). Le misure sono quelle di un disegno per 1024×768,
-  rimpicciolite fino al 60% sugli schermi più piccoli.
+  *Sospendi* quando il computer può, *Riavvia*, *Spegni*), poi le app tenute
+  nella barra (File, Editor di testo, Note, Calendario, Foto, Musica,
+  Calcolatrice, Negozio, Impostazioni), quelle aperte che non ci sono già e
+  il Cestino; con una canzone in corso, la sua copertina e un equalizzatore;
+  a destra lo stato (rete, volume e, sui portatili, un anello intorno con la
+  carica della batteria). Un puntino sotto un'icona segna le app aperte;
+  quella di un'app che parte **rimbalza**. Il tasto destro su un'icona apre
+  il suo menu (*Apri* o *Mostra*, *Nuova finestra*, le sue finestre,
+  *Rimuovi dal dock* / *Mantieni nel dock*, *Chiudi*; per il Cestino *Apri*
+  e *Svuota cestino*). Le app tenute stanno nelle impostazioni (`dock`).
+- **Centro di controllo** (clic sullo stato): sopra la barra una pillola con
+  il nome dell'account e un pulsante con l'ingranaggio delle Impostazioni;
+  nella barra i riquadri *Wi-Fi* e *Bluetooth* (viola quando sono collegati;
+  la freccia apre la loro pagina con le reti o i dispositivi, l'interruttore
+  e *Impostazioni Wi-Fi…*), *Non disturbare*, due cursori verticali per
+  volume e luminosità (si trascinano o si gira la rotella), la canzone di
+  Musica con riproduci e avanti, *Blocca*, *Riavvia*, *Spegni* e la batteria
+  (o *Corrente* senza batteria). Esc o un clic fuori tornano indietro di un
+  passo.
 - **Widget** (tasto destro → *Mostra i widget*): saluto, calendario del
   mese, stato del sistema.
-- **Applicazioni** (come Launchpad, dal dock o con Ctrl+Spazio): tutte le app,
-  comprese quelle installate dal Negozio, con una ricerca; si scrive e Invio
-  apre la prima. La ricerca è anche quella di **Spotlight**: sopra le app
+- **Launchpad** (il marchio J▮ o Ctrl+Spazio): la barra diventa un campo di
+  ricerca e sopra compare la griglia di tutte le app, comprese quelle
+  installate dal Negozio, a pagine (pallini, frecce, rotella); si scrive e
+  Invio apre la prima, Esc chiude. La ricerca è anche quella di **Spotlight**: sopra le app
   compaiono i **calcoli** (`12*3+4` → `= 40`, Invio lo copia), le
   **impostazioni** per parola («sfondo», «volume», «password», «processore»...)
   e i **file e le cartelle** della home per nome, che si aprono con l'app
@@ -141,21 +112,25 @@ Presa a modello da macOS:
   (fino a 4 MiB) finché la ricerca è aperta, così la lettera seguente non
   rilegge il disco. Maiuscole e minuscole, anche accentate, sono uguali.
 - **Notifiche**: un'app installata, un timer scaduto, un file salvato, un
-  programma che si è chiuso per un errore. Quelle brevi escono dal dock
-  (vedi [La barra dinamica](#la-barra-dinamica)), le altre in alto a
-  destra. Spariscono da sole o con un clic e restano nel centro notifiche.
+  programma che si è chiuso per un errore. La barra diventa la notifica
+  (icona, app, titolo, testo e una linea che si consuma) per 4,6 secondi; con
+  *Non disturbare* acceso mostra solo *Notifica silenziata*. Restano nel
+  centro notifiche (clic sull'orologio).
 - **Tasto destro** sulla scrivania: cambiare sfondo, mostrare o
   nascondere i widget, impostazioni dello schermo, informazioni.
-- **Finestre**: un pannello opaco del tema (scuro o chiaro) con il nome
-  dell'app in alto a sinistra e, in alto a destra, tre riquadri con un
-  simbolo in pixel morbidi: riduci e schermo intero grigi, chiudi
-  arancione; il contenuto sta su un incavo. Si spostano trascinando
-  la riga del titolo (doppio clic per lo schermo intero), molte si
-  ridimensionano dall'angolo in basso a destra. A schermo intero (anche
-  **F11**) la finestra prende tutto lo schermo, l'ora passa nella sua riga
-  del titolo e il dock compare portando il puntatore in basso.
-  **Alt+Tab** passa alla finestra successiva, **Ctrl+Q** chiude quella in
-  primo piano.
+- **Finestre**: una cornice chiara smerigliata con il nome dell'app in alto
+  a sinistra e, in alto a destra, una pillola con tre pulsanti tondi: riduci
+  e schermo intero grigio scuro, chiudi arancione; il contenuto sta su un
+  incavo arrotondato. Si spostano trascinando la riga del titolo; il
+  **doppio clic** la ingrandisce fino alla barra, che resta visibile (un
+  altro doppio clic la riporta com'era). Si ridimensionano da tutti e
+  quattro i lati e gli angoli (otto maniglie), fino a 460 × 320 al minimo.
+  Ridotta, la finestra si piega a **genio** dentro la sua icona nella barra
+  (450 ms) e ne riesce allo stesso modo. A **schermo intero** (il pulsante
+  centrale o **F11**) la finestra prende tutto lo schermo e la barra si
+  nasconde: torna portando il puntatore sul bordo in basso o premendo da
+  solo il tasto logo; Esc o F11 escono. **Alt+Tab** passa alla finestra
+  successiva, **Ctrl+Q** chiude quella in primo piano.
 - **Dialoghi**, come in macOS e Windows: un dialogo che dice a quale
   finestra appartiene (un selettore di file o una domanda di un programma
   Linux, vedi [compat.md](compat.md)) si apre al centro di quella finestra
@@ -194,13 +169,17 @@ Presa a modello da macOS:
 - **Schermata**: il tasto **Stamp** (o *Schermata* nel menu J▮) salva
   lo schermo in `sys:/home/Immagini` come `Schermata <data> alle <ora>.qoi`,
   che Foto apre subito.
-- **Blocco**: **Ctrl+Maiusc+L** o *Blocca schermo* nel menu J▮ coprono tutto
-  con l'ora sullo sfondo sfocato. Con una password (*Impostazioni →
-  Blocco e password*) justOS si avvia bloccato, si blocca da solo dopo 2, 5 o 15
-  minuti senza usarlo e prima di ogni sospensione, così al risveglio chiede
-  la password; senza password basta Invio. La password non è salvata
-  in chiaro: nelle impostazioni c'è un sale casuale e 20 000 passaggi di
-  SHA-256.
+- **Blocco**: **Ctrl+Maiusc+L**, *Blocca schermo* nel menu J▮ o *Blocca* nel
+  centro di controllo nascondono le finestre: restano lo sfondo sfocato,
+  l'ora grande con la data e la barra, che diventa il blocco con l'iniziale e
+  il nome dell'account. Se la password è un **PIN** di 4-8 cifre compare un
+  tastierino (anche con i tasti numerici; all'ultima cifra controlla da
+  solo); altrimenti un campo per la password e Invio. Un errore scuote i
+  pallini in rosso. Con una password (*Impostazioni → Blocco e password*)
+  justOS si avvia bloccato, si blocca da solo dopo 2, 5 o 15 minuti senza
+  usarlo e prima di ogni sospensione; senza password basta Invio. La
+  password non è salvata in chiaro: nelle impostazioni c'è un sale casuale e
+  20 000 passaggi di SHA-256 (`settings::check_password`).
 - **Aggiornamenti**: con la rete, all'avvio e una volta al giorno justOS
   legge l'indice firmato degli aggiornamenti. Una versione nuova si
   scarica e si scrive nell'altro slot di sistema; con gli aggiornamenti
@@ -213,8 +192,9 @@ Presa a modello da macOS:
 
 ### Lo stile a pixel morbidi
 
-Finestre, dock, menu, notifiche e centro di controllo non sono più di vetro:
-sono superfici **opache**, senza sfocatura dello sfondo né contorni scuri.
+Menu, dialoghi e app sono superfici **opache**, senza sfocatura dello sfondo
+né contorni scuri. Fanno eccezione la barra dinamica (vetro scuro, vedi
+[La barra dinamica](#la-barra-dinamica)) e la cornice chiara delle finestre.
 
 - **Superfici** (`ui::panel`): una sfumatura dall'alto al basso
   (`panel_top` → `panel_bottom`), una linea sottile tutt'intorno e un
@@ -326,56 +306,59 @@ l'azione in `act`. Se cambia qualcosa dei colori, `act` restituisce
 
 ### La barra dinamica
 
-Il dock in basso si adatta a quello che succede: invece di aprire
-finestrelle altrove, è la barra stessa a cambiare forma. Diventa
-un'**isola**, un pannello arrotondato in basso al centro con quello che
-succede in quel momento: il pannello del dock si stringe o si allarga fino
-alla forma dell'isola (250 ms), il contenuto del dock sparisce a metà strada
-e quello dell'isola compare. Non spunta una seconda barra. Appena il puntatore
-arriva sulla barra (o su dove era l'isola), torna **subito** il dock con le
-app (140 ms); quando il puntatore se ne va, l'isola torna dopo 0,7 secondi
-se c'è ancora qualcosa da mostrare. Da un'isola a un'altra la barra passa
-dal dock. È fatta nello stesso stile a pixel morbidi del resto (pannello
-opaco, incavi, celle arancioni), non copia quello di altri sistemi. Il codice
-è in `system/kernel/src/gui/desktop/bar.rs`.
+La scrivania ha una sola superficie di sistema: la **barra dinamica**, in
+basso al centro dello schermo principale, a 28 unità dal bordo. Non ci sono
+altri pannelli: quando succede qualcosa la barra **cambia forma** (larghezza,
+altezza e raggio degli angoli, 520 ms con un leggero rimbalzo) e il suo
+contenuto si scambia (quello che esce sbiadisce in 200 ms e si rimpicciolisce
+del 3%, quello che entra aspetta 80 ms e cresce fino alla misura piena).
+Disegno e misure vengono da `docs/design/dynamic-bar/` (il documento e la
+demo `reference/dynamic-bar-demo.html`, che vale dove i due non sono
+d'accordo), con una scelta nostra: al posto del logo della demo ci sono il
+marchio e la scritta di justOS.
 
-| Cosa succede | Come cambia il dock |
-|---|---|
-| a riposo | il dock compatto (vedi [La scrivania](#la-scrivania)); con *Dock compatto* spento, come sempre: nessun pixel diverso |
-| un programma si avvia | la barra diventa l'isola del programma: la sua icona, il nome, *Si sta avviando…* (o una nota: *Si avvia con Wine…*, *Prima apertura: preparo Windows…*, *Si estrae, ci vuole un po'…*) e una fila di celle che scorre. Con il puntatore sul dock la sua icona è una **capsula** con le stesse cose. Spariscono quando arriva la finestra, quando il programma finisce senza finestra o dopo 120 secondi. Aprirlo di nuovo mentre parte non ne avvia un secondo: la capsula torna davanti e l'icona rimbalza |
-| volume o luminosità | la barra diventa una **barra di livello**: il simbolo, 16 celle e il valore; resta 1,5 secondi dopo l'ultimo cambio. Viene dai tasti del volume (su, giù, muto), dalle Impostazioni o da un'app; non compare con il centro di controllo aperto, che ha già i suoi cursori |
-| una notifica breve (titolo fino a 40 caratteri, testo fino a 60) | la barra diventa l'isola della notifica: icona, titolo e testo; resta 4,5 secondi. Quelle lunghe, quelle che arrivano con il puntatore sul dock o con il dock nascosto vanno in alto a destra come prima; tutte restano nel centro notifiche (clic sull'orologio) |
-| musica | quando parte una canzone (o ne parte un'altra) la barra diventa per 4 secondi l'isola con il titolo, *Musica · 0:42* e un equalizzatore di 5 barre a 8 passi al secondo. Poi torna il dock, dove l'icona di Musica è una capsula con le stesse cose; un clic apre Musica. Nel dock compatto la capsula ha una riga sola (icona, titolo accorciato, equalizzatore più basso) e diventa quella piena mentre il dock cresce; lo stesso per le capsule di avvio e del timer |
-| timer dell'Orologio | quando parte, l'isola per 4 secondi con il tempo che manca in cifre a pixel morbidi; poi la capsula nel dock. Quando suona, la barra torna l'isola, con le cifre arancioni, e pulsa per 30 secondi; esce davanti alle altre |
-| a schermo intero | il dock è nascosto; se c'è un'attività resta una **pillola** sottile in basso al centro con l'ora e l'equalizzatore, le celle o il tempo del timer. Un clic apre l'app; il dock torna come su macOS: sale dal bordo in basso (220 ms, frenando) quando il puntatore tocca le ultime 2 righe, oppure quando viene lanciato in giù nella fascia degli ultimi 48 punti a più di 600 punti al secondo (misurati sugli ultimi 80 ms); un avvicinamento lento non lo fa uscire, così i controlli in fondo alla finestra restano usabili. È il dock a dimensione piena, sopra la finestra; la pillola sparisce mentre c'è e torna dopo. Quando il puntatore esce dalla sua zona resta 350 ms e poi scende (180 ms, accelerando); non scende mai con un menu del dock, il menu di sistema o il centro di controllo aperti, né con file trascinati sopra. I clic vanno al dock solo dove si vede |
-| due attività o più | l'isola mostra la più importante (livello, notifica, timer che suona, programma che parte, canzone o timer appena partiti), a parità la più recente. Nel dock c'è una capsula (la più recente), le altre aspettano in una **bolla** a destra del dock, con il numero quando sono due o più; un clic sulla bolla le scambia |
+| Stato | Forma (unità a 1440 × 1024) | Cosa mostra |
+|---|---|---|
+| a riposo | larga quanto serve × 68 | il dock (vedi [La scrivania](#la-scrivania)) |
+| launchpad | 540 × 60 | la ricerca; sopra, la griglia delle app su un velo sfocato |
+| blocco | 340 × 540, centrata sotto l'ora | iniziale, nome, PIN o password |
+| centro di controllo | 712 × 316, con la pillola dell'account sopra | i riquadri; Wi-Fi e Bluetooth hanno una pagina loro (440 × 384) |
+| volume, luminosità | 400 × 68, 1,6 s | il simbolo, la barra e il valore |
+| notifica | 490 × 92, 4,6 s | l'icona e il nome dell'app, titolo, testo |
+| non disturbare | 300 × 56, 1,6 s | *Notifica silenziata* |
+| musica | 620 × 196 (clic sulla canzone nella barra) | copertina, titolo, artista, avanzamento trascinabile, casuale, indietro, riproduci, avanti, ripeti |
+| spegnimento | 420 × 180, poi 72 × 72 e un punto di 14 | *Spegnere il computer?* con *Annulla* e *Spegni*; poi una rotellina, la barra che diventa scura e lo schermo nero |
+| carica | 330 × 68, 2,6 s | *In carica* e la percentuale quando si attacca l'alimentatore |
 
-Come funziona:
+Come si comporta:
 
-- Ogni attività (`Activity`) ha il suo tipo (`ActKind`: `Starting`, `Music`,
-  `Timer`, `Volume`, `Brightness`, `Note`), una scadenza facoltativa e un
-  `Morph`, un valore da 0 a 1000 che va verso l'obiettivo in 250 ms: le
-  capsule si allargano dall'icona con questo valore.
-- L'isola ha un suo `Morph` (`Desktop::island`, 0 il dock, 1000 l'isola) e
-  ricorda quale attività mostra (`isl`). `island_pick` sceglie l'attività
-  con `Activity::island_rank`; `island_update`, chiamata a ogni movimento del
-  puntatore e dieci volte al secondo, la porta verso l'isola o verso il dock
-  (in 140 ms se il puntatore è arrivato sulla barra). Il pannello è
-  `lerp_rect` tra il rettangolo del dock e quello dell'isola
-  (`island_rect`).
-- Le app dicono cosa fanno con `App::activity()` (`wm::Live::Music` o
-  `Live::Timer`); `Desktop::bar_tick`, dieci volte al secondo, le
-  confronta con quelle che ci sono, legge volume e luminosità e toglie le
-  scadute.
-- Si ridisegna il meno possibile: quando cambia la forma, il rettangolo
-  vecchio unito al nuovo (`damage_bar`, che ricorda l'ultimo disegnato);
-  altrimenti solo le barre dell'equalizzatore, le celle o le cifre del
-  timer.
-- Un'app nuova che vuole la sua capsula implementa `activity()` restituendo
-  una variante di `Live`; se serve un tipo nuovo, si aggiunge a `Live`, ad
-  `ActKind`, a `draw_capsule`, a `draw_island` e a `island_rank`.
+- Gli stati e le forme sono in `system/libs/justshell/src/bar.rs` (`Bar`,
+  `BarState`), con le prove sul computer di sviluppo (`make check`): le
+  forme, le durate degli stati che tornano da soli al dock, i passaggi
+  vietati (dal blocco si esce solo sbloccando), la barra nascosta a schermo
+  intero. Il disegno e i clic sono in
+  `system/kernel/src/gui/desktop/shell.rs`.
+- Sotto il centro di controllo, la musica e lo spegnimento la scrivania si
+  scurisce; il launchpad, il blocco e lo spegnimento nascondono le finestre.
+- Il vetro: dove sotto c'è solo lo sfondo, la barra mostra lo sfondo sfocato
+  con una tinta scura; dove passa sopra una finestra, che non ha una copia
+  sfocata, diventa scura opaca (il colore rgba(18, 18, 22, 0,85) reso opaco). Non c'è
+  un vero `backdrop-filter`.
+- I dati sono veri: Wi-Fi (`net::wifi`: stato, reti, connessione a una rete
+  aperta o già salvata), Bluetooth (`bt`: acceso o spento, dispositivi),
+  batteria (`acpi::power`), volume e luminosità (gli stessi di tastiera e
+  Impostazioni), la canzone dell'app Musica (titolo, artista, durata,
+  comandi, attraverso `App::media`).
+- Si ridisegna solo quando qualcosa si muove: a riposo nessun fotogramma.
+  Quando un movimento finisce si disegna ancora un fotogramma completo, così
+  anche un fotogramma lento (QEMU senza accelerazione) non lascia la barra a
+  metà strada.
 - Dalla shell `notify <titolo> <testo> [icona]` manda una notifica per
   provarla.
+- Rispetto al dock di prima mancano le capsule dei programmi che si avviano
+  e del timer (il programma che parte ha la sua icona che rimbalza, la sua
+  nota arriva come notifica), i separatori e le etichette delle icone, e le
+  impostazioni *Dock compatto* e *Ingrandimento icone*.
 
 ### Le animazioni
 
@@ -386,13 +369,13 @@ si vedono meno fotogrammi ma l'animazione dura uguale.
 |---|---|
 | finestra che si apre | cresce dal 86% e compare in dissolvenza |
 | finestra che si chiude | si rimpicciolisce e svanisce |
-| riduci / riapri | la finestra vola nella sua icona del dock e ne esce |
-| ingrandisci / ripristina | la finestra si allarga fino allo schermo e torna |
-| Applicazioni | lo sfondo si sfoca e scurisce, le icone arrivano con uno zoom |
-| dock | da compatto a pieno in 220 ms e ritorno, ingrandimento morbido delle icone, rimbalzo all'avvio di un'app |
-| barra dinamica | la barra cambia forma in 250 ms: isole (livello, notifica, avvio, musica, timer), capsule, pillola, bolla; torna il dock in 140 ms quando ci arriva il puntatore |
-| menu e centro di controllo | si aprono in un attimo, dal dock verso l'alto |
-| notifiche | scivolano dentro da destra e poi via |
+| riduci / riapri | la finestra si piega a genio nella sua icona della barra e ne esce (450 ms) |
+| ingrandisci / ripristina | la finestra si allarga fino alla barra (o a tutto lo schermo) e torna |
+| launchpad | lo sfondo si sfoca sotto un velo, la barra diventa la ricerca |
+| dock | rimbalzo dell'icona all'avvio di un'app |
+| barra dinamica | cambia forma in 520 ms con un leggero rimbalzo, il contenuto si scambia in dissolvenza; a schermo intero scende sotto il bordo e risale |
+| menu | si aprono in un attimo, dalla barra verso l'alto |
+| notifiche | la barra diventa la notifica e poi torna il dock |
 | vista d'insieme | le finestre scivolano dal loro posto alla griglia, i desktop scendono dall'alto |
 | cambio di desktop | il nome del desktop e i suoi pallini al centro, per un attimo |
 | spegnimento | lo schermo sfuma nel nero con il logo |
@@ -513,14 +496,14 @@ Con più monitor (oggi `virtiogpu`, in QEMU `-device
 virtio-gpu-pci,max_outputs=2`) lo schermo è uno solo, diviso fra i monitor
 messi uno accanto all'altro, tutti alla stessa risoluzione e alla stessa
 scala (la risoluzione scelta è quella di ogni monitor). Uno è il
-*principale*: lì stanno l'orologio, il dock e la barra dinamica, e lì si
-aprono Applicazioni, la vista d'insieme, le notifiche, i menu del dock e
-del centro di controllo. Lo sfondo copre ogni monitor, scalato alla sua
+*principale*: lì stanno l'orologio e la barra dinamica, e lì si aprono il
+launchpad, la vista d'insieme, le notifiche, i menu della barra e il centro
+di controllo. Lo sfondo copre ogni monitor, scalato alla sua
 misura; il blocco schermo li copre tutti (l'ora e l'account sul
 principale).
 
 Una finestra appartiene al monitor che ha il suo centro: lì si massimizza
-(e a tutto schermo riempie quel monitor soltanto; il dock si nasconde solo
+(e a tutto schermo riempie quel monitor soltanto; la barra si nasconde solo
 se il monitor è il principale), lì si aggancia a metà o a un quarto, e il
 bordo fra due monitor non aggancia: il puntatore lo attraversa e la
 finestra trascinata passa all'altro. Una finestra nuova si apre sul
@@ -559,7 +542,7 @@ esterne.
 | `justgfx` (`gfx.rs`, `font.rs`, `qoi.rs`) | superfici e disegno: rettangoli arrotondati antialiasati, il riflesso sul bordo (`sheen_round`), i pixel morbidi (`soft_grid`), trasparenze (anche su livelli trasparenti), sfumature, ombre, sfocatura, linee, archi, ridimensionamento; il testo dall'atlante dei glifi; le immagini QOI (lettura e scrittura). Solo aritmetica intera |
 | `text.rs`, `res.rs` | i caratteri e le icone di sistema, gli sfondi |
 | `thumbs.rs` | le miniature delle immagini per File: un thread che legge a pezzi, decodifica e rimpicciolisce, una cache limitata in byte e in voci |
-| `splash.rs`, `setup.rs`, `desktop.rs` | avvio, configurazione guidata, scrivania con dock, Applicazioni, notifiche, centro di controllo e animazioni |
+| `splash.rs`, `setup.rs`, `desktop.rs` | avvio, configurazione guidata, scrivania, finestre e animazioni; `desktop/shell.rs`: la barra dinamica |
 | `wm.rs` | le finestre e l'interfaccia `App` delle app |
 | `window.rs` | le finestre dei programmi in modalità utente |
 | `ui.rs` | il tema e le sue tavolozze, superfici (pannelli, incavi, riquadri), pixel morbidi, componenti comuni (pulsanti, cursori a celle, interruttori, schede), animazioni (`Anim`, curve di accelerazione), appunti, il ciclo degli eventi |
