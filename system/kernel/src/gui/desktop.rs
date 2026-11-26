@@ -1445,9 +1445,8 @@ impl Desktop {
                 // (what it says meanwhile comes out of the bar). One
                 // already open just hops.
                 let capsule = s.icon.as_ref().is_some_and(|icon| !self.windows.iter().any(|w| w.app.kind() == icon));
-                if let Some(note) = s.note.clone() {
-                    self.notify(l, s.name.clone(), note, note_icon);
-                }
+                // No notification: its dock icon hops until the window comes.
+                let _ = (&s.note, &note_icon);
                 match s.icon {
                     Some(icon) if capsule => {
                         l.damage(self.dock_zone());
@@ -3005,6 +3004,9 @@ impl Desktop {
                         l.damage(area);
                         p.settled = p.anim.done();
                     }
+                }
+                if !self.starting.is_empty() {
+                    self.damage_bar(l);
                 }
                 if let Some((_, a)) = &self.bounce {
                     self.damage_bar(l);

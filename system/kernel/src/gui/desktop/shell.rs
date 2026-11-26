@@ -1786,6 +1786,11 @@ impl Desktop {
                     dy = if t < 350 { -7 * t / 350 } else { -7 * (1000 - t) / 650 };
                 }
             }
+            // A program on its way hops until its first window comes.
+            if self.starting.iter().any(|s| s.kind == item.kind) {
+                let t = (ms() % 650 * 1000 / 650) as i32;
+                dy = if t < 350 { -7 * t / 350 } else { -7 * (1000 - t) / 650 };
+            }
             let r = at(o, *r).offset(0, dy);
             res::draw_icon(c, &item.icon, 42, r.x, r.y);
             let open = item.kind != "trash" && self.windows.iter().any(|w| w.app.kind() == item.kind);
