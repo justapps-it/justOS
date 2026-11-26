@@ -75,14 +75,24 @@ onestà cosa funziona e cosa no.
 <td><img src="docs/screenshots/firefox.png" alt="Firefox ESR in una finestra di justOS" width="100%"><br><sub>Firefox ESR.</sub></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/lanciatore.png" alt="Applicazioni: tutte le app con la ricerca" width="100%"><br><sub>Applicazioni (Ctrl+Spazio).</sub></td>
+<td><img src="docs/screenshots/lanciatore.png" alt="Il launchpad: tutte le app e la barra diventata un campo di ricerca" width="100%"><br><sub>Il launchpad (Ctrl+Spazio).</sub></td>
 <td><img src="docs/screenshots/impostazioni-chiaro.png" alt="Impostazioni con il tema chiaro" width="100%"><br><sub>Impostazioni, tema chiaro.</sub></td>
-<td><img src="docs/screenshots/isola.png" alt="Il dock diventato un'isola mentre Firefox si avvia" width="100%"><br><sub>Il dock diventa un'isola mentre Firefox si avvia.</sub></td>
+<td><img src="docs/screenshots/centro-controllo.png" alt="La barra diventata il centro di controllo: Wi-Fi, Bluetooth, Non disturbare, volume, luminosità, musica, Blocca, Riavvia, Spegni" width="100%"><br><sub>La barra diventa il centro di controllo.</sub></td>
 </tr>
 <tr>
 <td><img src="docs/screenshots/permessi.png" alt="Popup che chiede se consentire a Firefox di usare il microfono" width="100%"><br><sub>Un permesso, chiesto come su un telefono.</sub></td>
 <td><img src="docs/screenshots/pacchetti.png" alt="Installazione di cowsay con 9 pacchetti dall'archivio di Debian" width="100%"><br><sub>Un .deb con le sue dipendenze da Debian.</sub></td>
 <td></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/blocco.png" alt="La schermata di blocco: l'ora grande e la barra con il tastierino del PIN" width="100%"><br><sub>Il blocco con il PIN.</sub></td>
+<td><img src="docs/screenshots/notifica.png" alt="La barra diventata una notifica del Calendario" width="100%"><br><sub>Una notifica, nella barra.</sub></td>
+<td><img src="docs/screenshots/wifi.png" alt="La pagina Wi-Fi del centro di controllo" width="100%"><br><sub>La pagina Wi-Fi.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/finestra-chiaro.png" alt="Una finestra di File con la cornice chiara, tema chiaro" width="100%"><br><sub>Una finestra, tema chiaro.</sub></td>
+<td><img src="docs/screenshots/schermo-intero.png" alt="Una finestra a schermo intero con la barra che risale dal bordo in basso" width="100%"><br><sub>Schermo intero: la barra risale dal bordo.</sub></td>
+<td><img src="docs/screenshots/bluetooth.png" alt="La pagina Bluetooth del centro di controllo" width="100%"><br><sub>La pagina Bluetooth.</sub></td>
 </tr>
 </table>
 
