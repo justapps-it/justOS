@@ -1,0 +1,13 @@
+[package]
+name = "justshell"
+description = "The desktop shell's logic for justOS: the dynamic bar's states and shapes, cubic-bezier curves, window geometry, the full-screen peek, the launchpad grid and vector icons (no_std, tested on the host)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+
+[dependencies]
+justmath.workspace = true
+
+[lints]
+workspace = true

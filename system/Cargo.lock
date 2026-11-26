@@ -159,6 +159,7 @@ dependencies = [
  "justgfx",
  "justimage",
  "justjson",
+ "justshell",
  "justtls",
  "justwifi",
  "justzip",
@@ -228,6 +229,13 @@ dependencies = [
 [[package]]
 name = "justsbc"
 version = "0.11.0"
+
+[[package]]
+name = "justshell"
+version = "0.11.0"
+dependencies = [
+ "justmath",
+]
 
 [[package]]
 name = "justtls"

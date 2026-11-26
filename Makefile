@@ -345,7 +345,7 @@ photos:
 	tools/assets/gen_thumbs.py rootfs/system/gui/wallpapers
 
 check:
-	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p justdk -p justfs -p justgfx -p justimage -p justmath -p justtls -p justzip -p justjson -p justdex -p justaml -p justdeb -p justsbc -p justwifi
+	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p justdk -p justfs -p justgfx -p justimage -p justmath -p justtls -p justzip -p justjson -p justdex -p justaml -p justdeb -p justsbc -p justwifi -p justshell
 	cd system && $(CARGO) test --target x86_64-unknown-linux-gnu -p rtw8852be --lib
 	cd tools && $(CARGO) test --release
 
