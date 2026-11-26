@@ -51,6 +51,19 @@ FONTS = [
     (SANS, 20, TEXT, 400),                  #   (the control centre)
     (SANS, 24, TEXT, 400),
     (SANS, 30, TEXT, 400),
+    # 13 to 26: the dynamic bar and the windows (docs/design/dynamic-bar).
+    (SANS, 13, TEXT, 500),                  # 13 launchpad labels
+    (SANS, 15, TEXT, 500),                  # 14 window titles
+    (SANS, 15, TEXT, 600),                  # 15 tile names
+    (SANS, 16, TEXT, 600),                  # 16 notification title, account
+    (SANS, 17, TEXT, 400),                  # 17 the search field
+    (SANS, 18, TEXT, 600),                  # 18 subpage headers
+    (SANS, 20, TEXT, 600),                  # 19 song title, power question
+    (SANS, 22, TEXT, 600),                  # 20 account name, battery
+    (SANS, 22, TEXT, 450),                  # 21 the desktop clock
+    (SANS, 26, DIGITS + list("⌫"), 400),    # 22 PIN keypad
+    (SANS, 120, DIGITS, 300),               # 23 the lock screen's clock
+    (SANS, 13, TEXT, 600),                  # 24 slider values
 ]
 
 
@@ -108,8 +121,11 @@ def main():
         ascent, line, glyphs = render(path, size, chars, weight, optical)
         tables += struct.pack("<HHhH", tag, line, ascent, len(glyphs))
         for code, w, h, x, y, adv, mask in glyphs:
-            assert w < 256 and h < 256 and -128 <= x < 128 and -128 <= y < 128 and adv < 256, (path, size, chr(code))
-            tables += struct.pack("<IBBbbBBI", code, w, h, x, y, adv, 0, len(data))
+            # Glyphs taller than 128 above the baseline keep the rest of
+            # their offset in the spare byte.
+            up = max(0, -128 - y)
+            assert w < 256 and h < 256 and -128 <= x < 128 and -128 <= y + up < 128 and up < 256 and adv < 256, (path, size, chr(code))
+            tables += struct.pack("<IBBbbBBI", code, w, h, x, y + up, adv, up, len(data))
             data += mask
     blob = bytes(header + tables + data)
     if sharp:

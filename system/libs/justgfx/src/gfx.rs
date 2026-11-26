@@ -398,6 +398,41 @@ impl Canvas {
         }
     }
 
+    /// A rounded rectangle with its own radius at each corner (top left,
+    /// top right, bottom right, bottom left), in one pass so that a
+    /// translucent colour is even all over.
+    pub fn fill_round_corners(&mut self, r: Rect, rads: [i32; 4], c: u32) {
+        let r = self.up(r);
+        let lim = |v: i32| (v * self.scale).min(r.w / 2).min(r.h / 2).max(0);
+        let [tl, tr, br, bl] = rads.map(lim);
+        let area = r.intersect(&self.clip);
+        let a = c >> 24;
+        if area.is_empty() || a == 0 {
+            return;
+        }
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                let top = y < r.y + tl.max(tr);
+                let bottom = y >= r.bottom() - bl.max(br);
+                let cov = if !top && !bottom {
+                    16
+                } else {
+                    let left = x < r.x + r.w / 2;
+                    let rad = match (y < r.y + r.h / 2, left) {
+                        (true, true) => tl,
+                        (true, false) => tr,
+                        (false, false) => br,
+                        (false, true) => bl,
+                    };
+                    round_cover(&r, rad, x, y)
+                };
+                if cov > 0 {
+                    self.put(x, y, c, a * cov / 16);
+                }
+            }
+        }
+    }
+
     /// A soft radial glow of `c` around (`cx`, `cy`), fading out at `radius`;
     /// `strength` is the opacity at the centre (0..=255).
     pub fn glow(&mut self, cx: i32, cy: i32, radius: i32, c: u32, strength: u32) {
@@ -1056,6 +1091,22 @@ fn box_blur_v(c: &mut Canvas, rad: i32) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn corners_have_their_own_radius() {
+        let mut c = Canvas::new(40, 40, 0xFF00_0000);
+        c.fill_round_corners(Rect::new(0, 0, 40, 40), [16, 0, 8, 0], 0xFFFF_FFFF);
+        assert_eq!(c.get(0, 0), 0xFF00_0000, "top left rounded");
+        assert_eq!(c.get(39, 0), 0xFFFF_FFFF, "top right square");
+        assert_eq!(c.get(0, 39), 0xFFFF_FFFF, "bottom left square");
+        assert_eq!(c.get(39, 39), 0xFF00_0000, "bottom right rounded");
+        assert_eq!(c.get(20, 20), 0xFFFF_FFFF);
+        // A translucent fill is even: no double blending where corners meet.
+        let mut d = Canvas::new(40, 40, 0xFF00_0000);
+        d.fill_round_corners(Rect::new(0, 0, 40, 40), [16, 16, 16, 16], 0x80FF_FFFF);
+        assert_eq!(d.get(20, 2), d.get(20, 20));
+    }
+
     use super::*;
 
     #[test]

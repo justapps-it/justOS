@@ -35,6 +35,23 @@ pub enum Font {
     Text20 = 10,
     Text24 = 11,
     Text30 = 12,
+    /// The dynamic bar and the windows (docs/design/dynamic-bar).
+    Label13 = 13,
+    Title15 = 14,
+    Strong15 = 15,
+    Strong16 = 16,
+    Text17 = 17,
+    Strong18 = 18,
+    Strong20 = 19,
+    Strong22 = 20,
+    /// The desktop clock (22, weight 450).
+    Clock22 = 21,
+    /// The PIN keypad's digits (26).
+    Key26 = 22,
+    /// The lock screen's clock (120, light; digits and ':' only).
+    LockClock = 23,
+    /// The bar's slider values (13, 600).
+    Strong13 = 24,
 }
 
 #[derive(Clone, Copy)]
@@ -43,7 +60,7 @@ struct Glyph {
     w: u8,
     h: u8,
     x: i8,
-    y: i8,
+    y: i16,
     advance: u8,
     data: u32,
 }
@@ -97,7 +114,7 @@ impl Fonts {
                     w: b[4],
                     h: b[5],
                     x: b[6] as i8,
-                    y: b[7] as i8,
+                    y: b[7] as i8 as i16 - b[9] as i16,
                     advance: b[8],
                     data: u32_at(at + 10)?,
                 });
