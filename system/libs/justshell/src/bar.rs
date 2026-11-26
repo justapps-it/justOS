@@ -120,9 +120,9 @@ pub fn scale(sw: f32, sh: f32) -> f32 {
     1.0f32.min((sw - 32.0) / 880.0).min((sh - 60.0) / 640.0).max(0.2)
 }
 
-/// Where the lock screen's big clock ends.
+/// Where the lock screen's big clock and its date end.
 pub fn clock_bottom(sh: f32) -> f32 {
-    sh * 0.07 + 120.0f32.min(sh * 0.14) + 40.0
+    sh * 0.07 + 120.0f32.min(sh * 0.14) + 56.0
 }
 
 /// The scale and the distance from the bottom for state `s` of height `h`

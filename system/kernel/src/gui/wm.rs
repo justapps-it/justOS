@@ -215,6 +215,8 @@ pub struct Window {
     pub space: usize,
     /// The window button under the pointer.
     pub hover: Option<usize>,
+    /// The title last drawn (a program may change it at any time).
+    pub drawn_title: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -257,7 +259,7 @@ impl Window {
     pub fn new(id: u32, app: Box<dyn App>, x: i32, y: i32) -> Window {
         let (w, h) = app.size();
         let (w, h) = Window::outer_size(w, h);
-        Window { id, app, rect: Rect::new(x, y, w, h), minimized: false, mode: Mode::Normal, snapped: None, space: 0, hover: None }
+        Window { id, app, rect: Rect::new(x, y, w, h), minimized: false, mode: Mode::Normal, snapped: None, space: 0, hover: None, drawn_title: String::new() }
     }
 
     /// Is it on desktop `space` and not minimised?
@@ -360,7 +362,8 @@ impl Window {
             let t = self.title_rect();
             let (lh, _) = text::metrics(Font::Title15);
             let pill = self.controls();
-            let name = text::fit(Font::Title15, &self.app.title(), pill.x - t.x - 34);
+            self.drawn_title = self.app.title();
+            let name = text::fit(Font::Title15, &self.drawn_title, pill.x - t.x - 34);
             let fg = if focused { TITLE_INK } else { TITLE_INK_DIM };
             text::draw(c, Font::Title15, t.x + 17, t.y + (TITLE_H - lh) / 2, &name, fg);
             c.fill_round(pill, pill.h / 2, CTL_PILL);

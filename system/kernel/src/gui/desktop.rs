@@ -2920,6 +2920,10 @@ impl Desktop {
                         let body = w.body();
                         l.damage(w.app.changed(body).map_or(body, |r| r.intersect(&body)));
                     }
+                    // A new title (Firefox names its window after the page).
+                    if !w.minimized && w.shown(self.space) && w.app.title() != w.drawn_title {
+                        l.damage(w.title_rect());
+                    }
                 }
                 // Programs that ended take their windows with them.
                 let gone: Vec<u32> = self.windows.iter().filter(|w| !w.app.alive()).map(|w| w.id).collect();
