@@ -38,6 +38,9 @@ pub enum Key {
     VolumeUp,
     VolumeDown,
     Mute,
+    /// The logo key pressed and released alone (no other key or click in
+    /// between): the bar comes up over a full-screen window.
+    Super,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +71,8 @@ struct State {
     altgr: bool,
     /// The logo key (left or right).
     logo: bool,
+    /// Whether the logo key went down and up alone.
+    super_key: justshell::wm::SuperKey,
     caps: bool,
     queue: VecDeque<KeyEvent>,
     /// While the graphical interface runs, keyboard keys go here; it passes
@@ -95,6 +100,7 @@ static STATE: IrqLock<State> = IrqLock::new(State {
     alt: false,
     altgr: false,
     logo: false,
+    super_key: justshell::wm::SuperKey::new(),
     caps: false,
     queue: VecDeque::new(),
     capture: false,
@@ -172,6 +178,11 @@ fn key(usage: u32, value: i32) {
             0xE3 | 0xE7 => s.logo = pressed,
             0x39 if value == justdk::KEY_PRESSED => s.caps = !s.caps,
             _ => {}
+        }
+        let alone = s.super_key.key(matches!(usage, 0xE3 | 0xE7), pressed);
+        if alone && s.capture && s.gui_queue.len() < QUEUE_MAX {
+            let ev = KeyEvent { key: Key::Super, ctrl: false, alt: false, shift: false };
+            s.gui_queue.push_back(ev);
         }
         if !pressed || (0xE0..=0xE7).contains(&usage) {
             return;
@@ -283,6 +294,7 @@ pub fn driver_event(_device: u32, kind: u32, code: u32, value: i32) {
             s.clicks.push_back((code as u8, value != 0, x, y));
             if value != 0 {
                 s.pointer.buttons |= 1 << code;
+                s.super_key.other();
             } else {
                 s.pointer.buttons &= !(1 << code);
             }

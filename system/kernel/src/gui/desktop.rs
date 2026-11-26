@@ -1,6 +1,7 @@
-//! The desktop: the clock floating at the top, the widgets, the dock (the
-//! justOS mark, the apps, the status), the launcher, the windows and the
-//! animations between them. There is no bar.
+//! The desktop: the clock floating at the top, the widgets, the windows,
+//! the animations between them, and the dynamic bar at the bottom (the
+//! dock, the launchpad, the lock screen, the control centre, the
+//! notifications: see [`shell`]).
 //!
 //! Everything that moves is driven by time ([`ui::Anim`]), not by frames:
 //! on a slow machine an animation shows fewer frames but takes as long.
@@ -11,12 +12,10 @@
 use super::apps::{self, Launch};
 use super::dnd;
 use super::gfx::{Canvas, Rect};
-use super::lock::{Lock, Outcome};
 use super::res;
 use super::settings;
-use super::splash::draw_logo;
 use super::text::{self, Font};
-use super::ui::{self, Anim, Event, Glide, Looper, View};
+use super::ui::{self, Anim, Event, Looper, View};
 use super::wm::{self, Action, App, Hit, Window};
 use super::Display;
 use crate::dev::input::{self, Key, KeyEvent};
@@ -29,8 +28,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::Cell;
 
-mod bar;
-use bar::{Activity, Morph};
+mod shell;
+use justshell::bar::BarState;
+use shell::Shell;
 
 const WEEKDAYS: [&str; 7] = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"];
 const WEEKDAYS_SHORT: [&str; 7] = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"];
@@ -41,200 +41,24 @@ const MONTHS_SHORT: [&str; 12] = ["gen", "feb", "mar", "apr", "mag", "giu", "lug
 /// The apps kept in the dock, in order, until the user changes them (the
 /// settings' `dock`): app ids, and the launcher.
 const PINNED: [&str; 10] = ["files", "launcher", "textedit", "notes", "calendar", "photos", "music", "calculator", "store", "settings"];
-const ICON: i32 = 52;
-/// The icons of the compact dock at rest (see [`Dims`]).
-const ICON_SMALL: i32 = 34;
-/// How much bigger the icon under the pointer gets (its neighbours a
-/// little less).
-const MAGNIFY: i32 = 10;
-const DOCK_GAP: i32 = 12;
-const DOCK_PAD: i32 = 11;
-const DOCK_RAD: i32 = 28;
-/// The room a separator adds between two icons: a thin line in the middle
-/// of two gaps.
-const SEP_W: i32 = 14;
-/// The status well at the right end of the dock: the room at its ends and
-/// between its symbols, and the size of their cells (thousandths of a unit).
-const STATUS_PAD: i32 = 16;
-const STATUS_GAP: i32 = 12;
-const STATUS_CELL: i32 = 4000;
-/// How long the compact dock takes to grow to full size (and back), and
-/// how long it stays grown after the pointer left it.
-const DOCK_GROW_MS: u64 = 220;
-const DOCK_STAY_MS: u64 = 400;
 
-// The dock over a full-screen window comes up like macOS's: at the bottom
-// edge (`REVEAL_EDGE` rows), or when the pointer is thrown down in the
-// bottom `REVEAL_BAND` rows faster than `REVEAL_SPEED` (units per second,
-// measured over the last `SPEED_WINDOW_MS`; a shorter gap counts as
-// `SPEED_MIN_DT_MS`, so a one-unit jitter is never a throw). A slow drift
-// into the band does not reveal it. It slides in and out in
-// `SLIDE_IN_MS` / `SLIDE_OUT_MS`, and stays `REVEAL_HIDE_MS` after the
-// pointer left its zone.
-const REVEAL_EDGE: i32 = 2;
-const REVEAL_BAND: i32 = 48;
-const REVEAL_SPEED: i32 = 600;
-const SPEED_WINDOW_MS: u64 = 80;
-const SPEED_MIN_DT_MS: u64 = 16;
-const REVEAL_HIDE_MS: u64 = 350;
-const SLIDE_IN_MS: u64 = 220;
-const SLIDE_OUT_MS: u64 = 180;
-/// Beyond the dock's own height, how far down it goes to be out of sight
-/// (its shadow).
-const SLIDE_MARGIN: i32 = 40;
-
-/// How far the dock is up over a full-screen window (0 hidden, 1000 in
-/// place): eased out coming in, eased in going away.
-struct Slide {
-    from: u32,
-    to: u32,
-    anim: Anim,
-    ms: u64,
-}
-
-impl Slide {
-    fn at(v: u32) -> Slide {
-        Slide { from: v, to: v, anim: Anim::new(1), ms: 1 }
-    }
-
-    fn value(&self) -> u32 {
-        let t = self.anim.t() as u64;
-        let p = if self.to >= self.from { ui::ease_out(t as u32) } else { (t * t * t / 1_000_000) as u32 };
-        ui::lerp(self.from as i32, self.to as i32, p) as u32
-    }
-
-    /// Towards `to` from where it is now; whether that is a change.
-    fn set(&mut self, to: u32) -> bool {
-        if to == self.to {
-            return false;
-        }
-        self.from = self.value();
-        self.to = to;
-        self.ms = if to > self.from { SLIDE_IN_MS } else { SLIDE_OUT_MS };
-        self.anim = Anim::new(self.ms);
-        true
-    }
-
-    /// Still sliding (and a little after, for a slow frame).
-    fn moving(&self) -> bool {
-        self.from != self.to && self.anim.elapsed() < self.ms + 40
-    }
-}
-
-/// The dock's measures at a size between compact (0) and full (1000): the
-/// full ones are the constants above, so the full-size dock is the dock as
-/// it always was.
-#[derive(Clone, Copy)]
-struct Dims {
-    icon: i32,
-    gap: i32,
-    pad: i32,
-    sep: i32,
-    rad: i32,
-    /// The status well's ends, the room between its symbols and their cells.
-    spad: i32,
-    sgap: i32,
-    cell: i32,
-}
-
-impl Dims {
-    /// With icons `full` square at full size (less than [`ICON`] when the
-    /// dock is crowded), at `size`.
-    fn at(full: i32, size: u32) -> Dims {
-        let l = |small: i32, big: i32| ui::lerp(small, big, size.min(1000));
-        Dims {
-            icon: l(full.min(ICON_SMALL), full),
-            gap: l(8, DOCK_GAP),
-            pad: l(7, DOCK_PAD),
-            sep: l(10, SEP_W),
-            rad: l(19, DOCK_RAD),
-            spad: l(10, STATUS_PAD),
-            sgap: l(8, STATUS_GAP),
-            cell: l(3000, STATUS_CELL),
-        }
-    }
-
-    /// The dock's height.
-    fn h(&self) -> i32 {
-        self.icon + 2 * self.pad + 4
-    }
-}
-/// The control centre is drawn from the justOS design for a screen of
-/// 1024 x 768: its measures are the design's pixels, scaled to the screen
-/// by `Desktop::cc`. The panel's width, padding, corner and the room
-/// between its cards; the height of each row of cards (the account, the
-/// network and Bluetooth, do not disturb, brightness, volume, the
-/// buttons); its distance above the dock.
-const CC_W: i32 = 352;
-const CC_PAD: i32 = 14;
-const CC_RAD: i32 = 26;
-const CC_GAP: i32 = 10;
-const CC_ROWS: [i32; 6] = [60, 62, 62, 38, 38, 40];
-const CC_ABOVE: i32 = 14;
-/// The gradients of the tiles of switches that are on, and of the battery.
-const BLUE_GRAD: (u32, u32) = (0xFF5A_A9FF, 0xFF25_63EB);
-const VIOLET_GRAD: (u32, u32) = (0xFFA7_8BFA, 0xFF6D_3FE0);
-/// The justOS mark's tile and the cream of its "J".
-const MARK_GRAD: (u32, u32) = (0xFF30_3032, 0xFF14_1414);
-const CREAM: u32 = 0xFFF2_EFE6;
 /// Light or dark overlays straight on the wallpaper (the clock under the
 /// pointer, the launcher, the overview), where the theme does not reach:
 /// the same in both themes.
 const WALL_LIT: u32 = 0x26FF_FFFF;
 const WALL_LIT_INK: u32 = 0x1F00_0000;
-const WALL_HOVER: u32 = 0x22FF_FFFF;
-const WALL_FIELD: u32 = 0x33FF_FFFF;
 const WALL_PANEL: u32 = 0x40FF_FFFF;
 const WALL_EDGE: u32 = 0x59FF_FFFF;
 const WALL_EDGE_STRONG: u32 = 0xE6FF_FFFF;
 /// The edge of where a dragged window will snap, over a dark or a light picture.
 const WALL_SNAP: u32 = 0x80FF_FFFF;
 const WALL_SNAP_INK: u32 = (ui::INK_DIM & 0xFF_FFFF) | 0x9900_0000;
-/// The soft shadow under the clock on a dark picture, the light halo under
-/// it on a light one.
-const WALL_SHADE: u32 = 0x4D00_0000;
-const WALL_SHADE_INK: u32 = 0x40FF_FFFF;
-
-// Soft-pixel symbols ('#': a filled cell, see `ui::soft_pixels_at`).
-const G_WIFI: [&str; 5] = [".###.", "#...#", "..#..", ".#.#.", "..#.."];
-const G_BLUETOOTH: [&str; 5] = ["..#..", "#.##.", ".##..", "#.##.", "..#.."];
-const G_MOON: [&str; 5] = ["..##.", ".##..", ".##..", ".###.", "..###"];
-const G_SUN: [&str; 5] = ["#.#.#", ".###.", "#####", ".###.", "#.#.#"];
-const G_VOLUME: [&str; 5] = ["..#..", "###.#", "###.#", "###.#", "..#.."];
-const G_MUTE: [&str; 5] = ["..#....", "###.#.#", "###..#.", "###.#.#", "..#...."];
-const G_LOCK: [&str; 5] = [".###.", ".#.#.", "#####", "#####", "#####"];
-const G_POWER: [&str; 5] = ["..#..", "#.#.#", "#.#.#", "#...#", ".###."];
-const G_RESTART: [&str; 5] = [".##.#", "#..##", "#....", "#...#", ".###."];
-const G_PLUG: [&str; 5] = [".#.#.", ".#.#.", "#####", ".###.", "..#.."];
-const G_GEAR: [&str; 7] = ["..#.#..", ".#####.", "##...##", ".#...#.", "##...##", ".#####.", "..#.#.."];
-/// The justOS mark: the "J" of the wordmark and the orange cursor ('o').
-const G_MARK: [&str; 7] = ["#####.ooo", "...#..ooo", "...#..ooo", "...#..ooo", "...#..ooo", "#..#..ooo", ".##...ooo"];
-/// The digits of the desktop clock, three cells by five, and its colon.
-const DIGITS: [[&str; 5]; 10] = [
-    ["###", "#.#", "#.#", "#.#", "###"],
-    [".#.", "##.", ".#.", ".#.", "###"],
-    ["###", "..#", "###", "#..", "###"],
-    ["###", "..#", "###", "..#", "###"],
-    ["#.#", "#.#", "###", "..#", "..#"],
-    ["###", "#..", "###", "..#", "###"],
-    ["###", "#..", "###", "#.#", "###"],
-    ["###", "..#", "..#", "..#", "..#"],
-    ["###", "#.#", "###", "#.#", "###"],
-    ["###", "#.#", "###", "..#", "###"],
-];
-const COLON: [&str; 5] = [".", "#", ".", "#", "."];
-/// The cell of the clock's digits (thousandths of a unit), and the room
-/// above them, between them and the date, and under the date.
-const CLOCK_CELL: i32 = 10_000;
-const CLOCK_TOP: i32 = 4;
-const CLOCK_DATE_GAP: i32 = 6;
-const CLOCK_BOTTOM: i32 = 6;
 
 /// "16:02" and "Gio 13 Ott".
 fn clock_strings() -> (String, String) {
     let d = now();
     (
-        format!("{:02}:{:02}", d.hour, d.min),
+        format!("{}:{:02}", d.hour, d.min),
         format!(
             "{} {} {}",
             capitalize(WEEKDAYS_SHORT[d.weekday as usize % 7]),
@@ -255,8 +79,6 @@ struct DockItem {
     kind: String,
     /// What it starts when nothing of its kind is open.
     launch: Option<Launch>,
-    /// A separator comes before it.
-    split: bool,
     /// What keeps it in the dock (an entry of the settings' `dock`: an app
     /// id, "launcher", or "spawn:" and a program's file); empty when that
     /// is not known yet.
@@ -274,7 +96,6 @@ fn pin_item(e: &str) -> Option<DockItem> {
         label,
         kind,
         launch,
-        split: false,
         pin: e.into(),
         kept: true,
     };
@@ -334,32 +155,8 @@ enum MenuAct {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PopupKind {
     Menu,
-    /// The control centre: the account, quick switches, volume, brightness
-    /// and the power buttons, above the status in the dock.
-    Control,
     /// The calendar and the notifications, under the clock.
     Notices,
-}
-
-/// The switches of the control centre.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tile {
-    Network,
-    Bluetooth,
-    Quiet,
-}
-
-/// What can be pressed in the control centre.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ControlHit {
-    Tile(Tile),
-    Volume,
-    Brightness,
-    Account,
-    Settings,
-    PowerOff,
-    Lock,
-    Restart,
 }
 
 struct Popup {
@@ -448,9 +245,13 @@ impl Fx {
         match kind {
             FxKind::Open => 230,
             FxKind::Close => 170,
-            FxKind::Minimize | FxKind::Restore => 340,
+            FxKind::Minimize | FxKind::Restore => 450,
             FxKind::Zoom(_) => 230,
         }
+    }
+
+    fn genie(at: Rect, dock: Rect, t: u32) -> Rect {
+        wm::from_r(justshell::wm::genie_at(wm::to_r(at), wm::to_r(dock), t as f32 / 1000.0))
     }
 
     /// Where the picture goes now, and how opaque it is.
@@ -464,64 +265,33 @@ impl Fx {
                 let t = self.anim.out();
                 (ui::scale_rect(self.at, ui::lerp(1000, 900, t)), (1000 - t) * 255 / 1000)
             }
+            // The genie: smaller and smaller towards its dock icon.
             FxKind::Minimize => {
                 let t = self.anim.in_out();
-                (ui::lerp_rect(self.at, self.dock, t), 255 - t * 175 / 1000)
+                (Self::genie(self.at, self.dock, t), 255 - t * 235 / 1000)
             }
             FxKind::Restore => {
                 let t = self.anim.in_out();
-                (ui::lerp_rect(self.dock, self.at, t), 80 + t * 175 / 1000)
+                (Self::genie(self.at, self.dock, 1000 - t), 20 + t * 235 / 1000)
             }
             FxKind::Zoom(from) => (ui::lerp_rect(from, self.at, self.anim.out()), 255),
         }
     }
 }
 
-/// A notification banner at the top right.
-struct Note {
-    title: String,
-    body: String,
-    icon: String,
-    born: Anim,
-}
-
-const NOTE_W: i32 = 340;
-const NOTE_H: i32 = 76;
-const NOTE_IN: u64 = 320;
-const NOTE_STAY: u64 = 4500;
-
-impl Note {
-    /// Slide offset 0..=1000 (1000: fully in).
-    fn slide(&self) -> u32 {
-        let e = self.born.elapsed();
-        if e < NOTE_IN {
-            ui::ease_out((e * 1000 / NOTE_IN) as u32)
-        } else if e < NOTE_IN + NOTE_STAY {
-            1000
-        } else {
-            let out = (e - NOTE_IN - NOTE_STAY).min(NOTE_IN);
-            1000 - ui::ease_in_out((out * 1000 / NOTE_IN) as u32)
-        }
-    }
-
-    fn moving(&self) -> bool {
-        let e = self.born.elapsed();
-        e < NOTE_IN || (NOTE_IN + NOTE_STAY..NOTE_IN * 2 + NOTE_STAY + 50).contains(&e)
-    }
-
-    fn gone(&self) -> bool {
-        self.born.elapsed() > NOTE_IN * 2 + NOTE_STAY + 50
-    }
-}
-
 enum Drag {
     Move(u32, i32, i32),
-    /// Resizing: the window and the pointer's offset from its corner.
-    Resize(u32, i32, i32),
+    /// Resizing: the window, the edge or corner held, the window's frame
+    /// and the pointer when it began.
+    Resize(u32, wm::Handle, wm::R, i32, i32),
     /// A press on a window's content: moves go to the app.
     Body(u32),
+    /// The bar's sliders: the control centre's, the volume or brightness
+    /// bar, the song's position.
     Volume,
     Brightness,
+    Hud,
+    Seek,
 }
 
 /// Files carried with the pointer out of a window, until the button goes up.
@@ -547,51 +317,6 @@ fn carry_rect(x: i32, y: i32) -> Rect {
 /// Does a dock icon take files dropped on it?
 fn takes_files(item: &DockItem) -> bool {
     matches!(item.kind.as_str(), "trash" | "files" | "textedit" | "photos" | "viewer" | "music")
-}
-
-struct Launcher {
-    query: String,
-    entries: Vec<apps::Entry>,
-    anim: Anim,
-    closing: bool,
-    /// Drawn once more after fading in (see [`Popup::settled`]).
-    settled: bool,
-    /// What to start once it has faded out.
-    then: Option<Launch>,
-    scroll: i32,
-    /// Calculations, settings and files for the query: by name at once,
-    /// then by what they say as the search inside files finds them.
-    found: Vec<apps::search::Found>,
-    index: apps::search::Index,
-}
-
-/// The rows of search results shown at most: up to five files by name and
-/// three by what they say, with room for a setting.
-const FOUND_ROWS: usize = 9;
-
-impl Launcher {
-    fn visible(&self) -> Vec<&apps::Entry> {
-        let q = self.query.to_lowercase();
-        self.entries.iter().filter(|e| q.is_empty() || e.name.to_lowercase().contains(&q)).collect()
-    }
-
-    /// The height the search results take above the apps.
-    fn found_h(&self) -> i32 {
-        match self.found.len().min(FOUND_ROWS) as i32 {
-            0 => 0,
-            n => n * 44 + 12 + 18,
-        }
-    }
-
-    /// How far it has faded in, 0..=1000.
-    fn shown(&self) -> u32 {
-        let t = self.anim.out();
-        if self.closing {
-            1000 - t
-        } else {
-            t
-        }
-    }
 }
 
 /// The overview (Mission Control): the desktops at the top, the windows of
@@ -624,6 +349,7 @@ const MAX_SPACES: usize = 6;
 /// How long the desktop's name stays up after a switch.
 const SPACE_HUD_MS: u64 = 900;
 
+#[derive(Clone, Copy)]
 enum Ending {
     PowerOff,
     Restart,
@@ -644,9 +370,6 @@ struct Starting {
     since: u64,
     /// It may take minutes ([`SLOW_START_TIMEOUT_MS`]).
     slow: bool,
-    /// What it says while it starts, when it has more to say than that it
-    /// is starting (Wine preparing its C: drive).
-    note: Option<String>,
     /// What to say if it ends without a window (None: the usual words).
     fail: Option<String>,
 }
@@ -672,14 +395,8 @@ struct Desktop {
     windows: Vec<Window>,
     next_id: u32,
     drag: Option<Drag>,
-    launcher: Option<Launcher>,
     popup: Option<Popup>,
     fx: Vec<Fx>,
-    notes: Vec<Note>,
-    /// The dock item under the pointer.
-    hover: Option<usize>,
-    /// The dock's magnification, 0..=1000.
-    mag: Glide,
     /// An icon bouncing because its app is starting.
     bounce: Option<(String, Anim)>,
     /// Programs launched that have no window yet.
@@ -693,26 +410,11 @@ struct Desktop {
     last_new: Option<u32>,
     /// The window under the pointer that was told about it last.
     hovered: Option<u32>,
-    ending: Option<(Ending, Anim)>,
-    /// A full-screen window is in front (no bar, no dock).
-    was_full: bool,
-    /// Full screen, pointer at the bottom edge: the dock is shown.
-    dock_reveal: bool,
-    /// The dock's slide up over a full-screen window.
-    slide: Slide,
-    /// When the pointer left the dock's zone (0: it is there, or the dock
-    /// is away).
-    reveal_left: u64,
-    /// Two recent pointer samples (y, ms) for its downward speed.
-    ptr_a: (i32, u64),
-    ptr_b: (i32, u64),
     /// The notifications shown so far (newest last), for the notification
     /// centre: title, text, icon, "hh:mm".
     history: Vec<(String, String, String, String)>,
     /// Do not disturb: notifications go to the centre without a banner.
     quiet: bool,
-    /// The lock screen, while the computer is locked.
-    lock: Option<Lock>,
     /// When the user last pressed a key or moved the pointer (uptime, ms).
     last_input: u64,
     /// Where the window being dragged would snap if dropped now.
@@ -725,40 +427,8 @@ struct Desktop {
     space_hud: Option<Anim>,
     /// Files being dragged out of a window.
     carry: Option<Carry>,
-    /// The charge shown in the bar, and whether it charges (a laptop).
-    battery: Option<(u8, bool)>,
-    /// What the dock shows going on (see [`bar`]): programs starting,
-    /// music, timers, the volume, short notifications.
-    acts: Vec<Activity>,
-    /// The bubble beside the dock (a second activity): how far it is out,
-    /// and the icon it shows.
-    bubble: Morph,
-    bubble_icon: String,
-    /// The island the whole bar becomes (see [`bar`]): how far it is one
-    /// (0: the dock), the activity it shows, when the pointer was last on
-    /// the bar, and where the island was when the pointer came onto it (the
-    /// dock stays while the pointer is there).
-    island: Morph,
-    isl: Option<bar::IslandId>,
-    near_at: u64,
-    isl_hold: Rect,
-    /// The volume and the brightness last seen (None before the first look).
-    levels: Option<(u32, u32)>,
-    /// Where the bar was painted since its area was last damaged: its shape
-    /// changes with time, so it may have been painted where it is no more.
-    bar_painted: Cell<Rect>,
-    /// The part of the bar under the pointer (a notification's buttons, the
-    /// bubble).
-    bar_hover: Option<bar::BarHit>,
-    /// The step of the bar's moving cells (equaliser, progress) drawn last.
-    bar_phase: u64,
-    /// How far the dock is grown: 0 compact, 1000 full size (see
-    /// [`Desktop::update_dock_size`]).
-    grow: Morph,
-    /// When the pointer left the grown dock (uptime, ms; 0: it has not).
-    left_at: u64,
-    /// The pointer is on the dock or near it.
-    near_dock: bool,
+    /// The dynamic bar and what it shows.
+    sh: Shell,
     /// The apps kept in the dock, and the settings' list they come from.
     pinned: Vec<DockItem>,
     pins_from: Option<Vec<String>>,
@@ -773,19 +443,15 @@ fn now() -> DateTime {
 }
 
 impl Desktop {
-    /// The clock and the date, floating at the top in the middle (in the
-    /// title row of a full-screen window, on one line): they open the
+    /// The time and the date, floating at the top in the middle (gone
+    /// under a full-screen window and the launchpad): they open the
     /// notifications.
     fn clock_btn(&self) -> Rect {
         let (clock, date) = clock_strings();
         let m = self.main_mon();
-        if self.full_screen() {
-            let w = text::width(Font::Strong, &clock) + 12 + text::width(Font::Strong, &date) + 28;
-            return Rect::new(m.x + (m.w - w) / 2, m.y + (wm::TITLE_H - 32) / 2, w, 32);
-        }
-        let (cw, _) = clock_size(&clock);
-        let w = cw.max(text::width(Font::Strong, &date)) + 40;
-        Rect::new(m.x + (m.w - w) / 2, m.y + 10, w, clock_height())
+        let w = text::width(Font::Clock22, &clock) + 18 + text::width(Font::Clock22, &date) + 32;
+        let (h, _) = text::metrics(Font::Clock22);
+        Rect::new(m.x + (m.w - w) / 2, m.y + 26 - 8, w, h + 16)
     }
 
     /// A dot for each desktop under the clock, when there is more than one:
@@ -793,14 +459,14 @@ impl Desktop {
     fn spaces_btn(&self) -> Option<Rect> {
         let cb = self.clock_btn();
         let w = self.spaces as i32 * 14 + 18;
-        (self.spaces > 1 && !self.full_screen()).then(|| Rect::new(cb.x + cb.w / 2 - w / 2, cb.bottom() + 2, w, 20))
+        (self.spaces > 1 && self.clock_shown()).then(|| Rect::new(cb.x + cb.w / 2 - w / 2, cb.bottom() + 2, w, 20))
     }
 
     /// Is a window over the clock (one taller than the work area, or moved
     /// up there)? Then the clock is part of the desktop under it, and clicks
     /// there are the window's.
     fn clock_covered(&self) -> bool {
-        if self.full_screen() {
+        if !self.clock_shown() {
             return false;
         }
         let mut cb = self.clock_btn();
@@ -808,6 +474,12 @@ impl Desktop {
             cb = cb.union(&sp);
         }
         self.windows.iter().any(|w| w.shown(self.space) && w.rect.overlaps(&cb))
+    }
+
+    /// The clock is on the desktop (not under a full-screen window, the
+    /// launchpad or the lock screen, which has its own).
+    fn clock_shown(&self) -> bool {
+        !self.full_screen() && !self.sh.locked && self.sh.bar.state != BarState::Launch
     }
 
     /// What the clock and the desktop dots may paint.
@@ -844,9 +516,8 @@ impl Desktop {
 
     fn dock_items(&self) -> Vec<DockItem> {
         let mut v: Vec<DockItem> = self.pinned.clone();
-        // Running apps that are not pinned, after a separator (a built-in
-        // one can be kept in the dock from its menu).
-        let mut first = true;
+        // Running apps that are not pinned (a built-in one can be kept in
+        // the dock from its menu).
         for w in &self.windows {
             let kind = w.app.kind();
             if kind == "trash" || v.iter().any(|d| d.kind == kind) {
@@ -859,11 +530,9 @@ impl Desktop {
                 label: apps::app_name(w.app.kind(), &w.app.title()),
                 kind: kind.into(),
                 launch: built_in.map(Launch::App),
-                split: first,
                 pin: built_in.unwrap_or("").into(),
                 kept: false,
             });
-            first = false;
         }
         // Programs starting, where their first window's icon will go.
         for s in &self.starting {
@@ -877,11 +546,9 @@ impl Desktop {
                 kind: s.kind.clone(),
                 // Pressed again: it hops (no second copy).
                 launch: Some(Launch::Spawn(s.path.clone())),
-                split: first,
                 pin: String::new(),
                 kept: false,
             });
-            first = false;
         }
         v.push(DockItem {
             id: "trash".into(),
@@ -889,271 +556,21 @@ impl Desktop {
             label: "Cestino".into(),
             kind: "trash".into(),
             launch: Some(Launch::App("trash")),
-            split: true,
             pin: String::new(),
             kept: false,
         });
         v
     }
 
-    /// The dock's base layout, before magnification, with the measures
-    /// `d`, each item `extras` wider for its capsule (see [`bar`]): (x of
-    /// each icon, total width). The mark comes first and the status last,
-    /// `status_w` wide.
-    fn dock_base(items: &[DockItem], status_w: i32, d: &Dims, extras: &[i32]) -> (Vec<i32>, i32) {
-        let mut xs = Vec::new();
-        // The mark, as wide as an icon, and a separator after it.
-        let mut x = d.pad + d.icon + d.gap + d.sep;
-        for (i, it) in items.iter().enumerate() {
-            if it.split && i > 0 {
-                x += d.sep;
-            }
-            xs.push(x);
-            x += d.icon + d.gap + extras.get(i).copied().unwrap_or(0);
-        }
-        (xs, x + status_w + d.pad)
-    }
-
-    /// The size of the dock's icons at full size: [`ICON`], or less when so
-    /// many windows are open (or a capsule is so wide) that the dock would
-    /// not fit on the screen.
-    fn dock_icon(&self, items: &[DockItem]) -> i32 {
-        let d = Dims::at(ICON, 1000);
-        let (_, total) = Self::dock_base(items, self.status_w(&d), &d, &self.cap_extras(items, 1000));
-        let room = self.main_mon().w - 24 - self.bubble_room(d.h());
-        if total <= room || items.is_empty() {
-            return ICON;
-        }
-        let n = items.len() as i32;
-        (ICON - (total - room + n - 1) / n).max(32)
-    }
-
-    /// How far the dock is grown: 0 compact, 1000 full size.
-    fn dock_size(&self) -> u32 {
-        // The dock that comes up over a full-screen window is the full one.
-        if self.full_screen() {
-            return 1000;
-        }
-        self.grow.value()
-    }
-
-    /// The dock's measures for `items` at size `size`.
-    fn dims_at(&self, items: &[DockItem], size: u32) -> Dims {
-        Dims::at(self.dock_icon(items), size)
-    }
-
-    /// The width of the status well with the measures `d`: network, sound
-    /// and, on a laptop, the battery (room for the widest symbol of each).
-    fn status_w(&self, d: &Dims) -> i32 {
-        let w = |g: &[&str]| ui::soft_size(g, d.cell).0 / 1000;
-        let mut total = 2 * d.spad + w(&G_WIFI) + d.sgap + w(&G_MUTE);
-        if self.battery.is_some() {
-            total += d.sgap + battery_rows(100)[0].len() as i32 * d.cell / 1000;
-        }
-        total
-    }
-
-    /// The dock's background at rest, at full size (no icon magnified):
-    /// what opens from the dock opens above it.
-    fn dock_rest(&self) -> Rect {
-        self.dock_geometry_at(&self.dock_items(), 1000, false).2
-    }
-
-    /// The justOS mark at the left end of the dock at rest (where the
-    /// system menu opens from).
-    fn mark_rest(&self) -> Rect {
-        let rest = self.dock_rest();
-        let icon = rest.h - 2 * DOCK_PAD - 4;
-        Rect::new(rest.x + DOCK_PAD, rest.y + DOCK_PAD, icon, icon)
-    }
-
-    /// The status at the right end of the dock `bg`, with the measures `d`.
-    fn status_pill(&self, bg: Rect, d: &Dims) -> Rect {
-        let w = self.status_w(d);
-        Rect::new(bg.right() - d.pad - w, bg.y + d.pad, w, bg.h - 2 * d.pad - 4)
-    }
-
-    /// The icons' rectangles on the screen, magnified around the pointer,
-    /// and the dock's background.
-    fn dock_layout(&self, items: &[DockItem]) -> (Vec<Rect>, Rect) {
-        let (_, rects, bg) = self.dock_geometry(items);
-        (rects, bg)
-    }
-
-    /// The justOS mark (it opens the system menu) and the icons, as they
-    /// are now (grown or compact, magnified around the pointer), and the
-    /// dock's background.
-    fn dock_geometry(&self, items: &[DockItem]) -> (Rect, Vec<Rect>, Rect) {
-        let (mut mark, mut rects, mut bg) = self.dock_geometry_at(items, self.dock_size(), true);
-        // Over a full-screen window the dock slides in from below the edge.
-        if self.full_screen() {
-            let dy = (1000 - self.slide.value().min(1000)) as i32 * (bg.h + 12 + SLIDE_MARGIN) / 1000;
-            if dy > 0 {
-                mark.y += dy;
-                bg.y += dy;
-                for r in rects.iter_mut() {
-                    r.y += dy;
-                }
-            }
-        }
-        (mark, rects, bg)
-    }
-
-    /// The same at size `size`, magnified if `magnify` (and the settings
-    /// want it).
-    fn dock_geometry_at(&self, items: &[DockItem], size: u32, magnify: bool) -> (Rect, Vec<Rect>, Rect) {
-        let d = self.dims_at(items, size);
-        let icon = d.icon;
-        let extras = self.cap_extras(items, size);
-        let (apps, total) = Self::dock_base(items, self.status_w(&d), &d, &extras);
-        // The mark grows like an icon.
-        let xs: Vec<i32> = core::iter::once(d.pad).chain(apps).collect();
-        let dock_h = d.h();
-        // The bubble beside the dock takes room at its right.
-        let bubble = self.bubble_room(dock_h);
-        let m = self.main_mon();
-        let x0 = m.x + (m.w - total - bubble) / 2;
-        let bottom = m.bottom() - 12 - d.pad - 4;
-        // The background stays where it is: the icons near the pointer grow
-        // in place, into the gaps beside them (MAGNIFY is less than a gap,
-        // so neighbours never touch), and rise by half as much. None moves
-        // sideways, so the one aimed at stays under the pointer.
-        let mag = if magnify && settings::dock_magnify() { self.mag.value.clamp(0, 1000) as i64 * size as i64 / 1000 } else { 0 };
-        let range = (icon + d.gap) as i64 * 3 / 2;
-        let mx = self.mouse.0 as i64;
-        let mut rects: Vec<Rect> = xs
-            .iter()
-            .enumerate()
-            .map(|(k, &x)| {
-                let left = x0 + x;
-                // A capsule does not grow.
-                let grow = if mag == 0 || (k > 0 && extras[k - 1] > 0) {
-                    0
-                } else {
-                    let dist = (mx - (left + icon / 2) as i64).abs();
-                    let f = if dist >= range { 0 } else { 1000 - dist * dist * 1000 / (range * range) };
-                    (MAGNIFY.min(d.gap - 2) as i64 * mag * f / 1_000_000) as i32
-                };
-                let s = (icon + grow) & !1;
-                Rect::new(left + (icon - s) / 2, bottom - s - grow / 2, s, s)
-            })
-            .collect();
-        let bg = Rect::new(x0, m.bottom() - dock_h - 12, total, dock_h);
-        let mark = rects.remove(0);
-        (mark, rects, bg)
-    }
-
-    fn dock(&self) -> Rect {
-        self.dock_layout(&self.dock_items()).1
-    }
-
-    /// The area the dock may paint (icons grow above it, the compact dock
-    /// grows to full size), with the rest of the bar (see [`bar`]).
-    fn dock_zone(&self) -> Rect {
-        let items = self.dock_items();
-        let d = self.dock_geometry(&items).2;
-        let full = self.dock_geometry_at(&items, 1000, false).2;
-        let r = d.union(&full);
-        let zone = Rect::new(r.x - MAGNIFY * 4 - 30, r.y - MAGNIFY - 60, r.w + MAGNIFY * 8 + 60, r.h + MAGNIFY + 80);
-        zone.union(&self.bar_extent(d)).union(&self.bar_extent(full))
-    }
-
-    /// The dock stays at full size: a menu or the control centre opened
-    /// from it, files carried onto it.
-    fn dock_held(&self) -> bool {
-        let popup = self.popup.as_ref().is_some_and(|p| p.up && matches!(p.kind, PopupKind::Menu | PopupKind::Control));
-        popup || self.carry.as_ref().is_some_and(|c| c.dock.is_some())
-    }
-
-    /// The compact dock grows to full size while the pointer is near it
-    /// (or something holds it, see [`Desktop::dock_held`]), and goes back
-    /// [`DOCK_STAY_MS`] after it left. Called after every event.
-    fn update_dock_size(&mut self, l: &mut Looper) {
-        let full = !settings::dock_compact() || self.dock_held() || (self.near_dock && self.dock_shown());
-        let want = if full {
-            self.left_at = 0;
-            1000
-        } else if self.grow.target() == 0 {
-            0
-        } else {
-            let now = time::uptime_ms();
-            if self.left_at == 0 {
-                self.left_at = now;
-            }
-            if now >= self.left_at + DOCK_STAY_MS {
-                0
-            } else {
-                1000
-            }
-        };
-        if self.grow.set_in(want, DOCK_GROW_MS) {
-            if want == 0 {
-                self.left_at = 0;
-            }
-            self.damage_bar(l);
-        }
-    }
-
-    /// The pointer moved to (`x`, `y`): whether it is near the dock (it
-    /// then grows), and on it where the icons magnify (it then returns the
-    /// icon under it, if any).
-    fn dock_near(&mut self, x: i32, y: i32, live: bool) -> (bool, Option<usize>) {
-        let items = self.dock_items();
-        let (_, rects, bg) = self.dock_geometry(&items);
-        let d = self.dims_at(&items, self.dock_size());
-        // Above the full-size dock, the room its icons grow into.
-        let lift = if self.dock_size() >= 1000 && settings::dock_magnify() { MAGNIFY + 10 } else { 10 };
-        let mut near = Rect::new(bg.x - 20, bg.y - lift, bg.w + 40, self.main_mon().bottom() - (bg.y - lift));
-        if self.bubble.value() > 0 {
-            near = near.union(&self.bubble_rect(bg).grow(10));
-        }
-        // The island, and where it was when the pointer came onto it: the
-        // dock stays the dock while the pointer is there.
-        let island = self.island_zone().map(|r| r.grow(10));
-        if let Some(r) = island {
-            near = near.union(&r);
-        }
-        if self.near_dock {
-            near = near.union(&self.isl_hold);
-        }
-        let on = near.contains(x, y);
-        self.near_dock = on && self.dock_shown();
-        if !self.near_dock {
-            self.isl_hold = Rect::EMPTY;
-        } else if let Some(r) = island {
-            self.isl_hold = self.isl_hold.union(&r);
-        }
-        let inside = on && live;
-        if !inside {
-            return (false, None);
-        }
-        let wide = self.wide_rects(&items, &rects);
-        let g = d.gap / 2;
-        (true, wide.iter().position(|r| r.grow(g).contains(x, y) || (x >= r.x - g && x < r.right() + g && y > r.y - 4)))
-    }
-
-    /// The dock icon of a window kind (where it minimises to).
-    fn dock_icon_of(&self, kind: &str) -> Rect {
-        let items = self.dock_items();
-        let (rects, bg) = self.dock_layout(&items);
-        items.iter().position(|d| d.kind == kind).map(|i| rects[i]).unwrap_or(Rect::new(bg.x + bg.w / 2 - 20, bg.y, 40, 40))
-    }
-
-    /// Where windows go on the primary monitor: under the clock, above the
-    /// dock.
-    fn work_area(&self) -> Rect {
-        self.work_area_on(self.main_mon())
-    }
-
-    /// Where windows go on monitor `m`: on the primary under the clock and
-    /// above the dock, on the others all of it but a margin.
+    /// Where windows go on monitor `m`: on the primary all of it above the
+    /// bar at rest but a margin, on the others all of it but a margin.
     fn work_area_on(&self, m: Rect) -> Rect {
         if m != self.main_mon() {
             return m.grow(-8);
         }
-        let top = m.y + 10 + clock_height() + 8;
-        let dock_top = m.bottom() - (ICON + 2 * DOCK_PAD + 4) - 12;
-        Rect::new(m.x + 8, top, m.w - 16, dock_top - top - 8)
+        let k = justshell::bar::scale(m.w as f32, m.h as f32);
+        let wh = justshell::wm::work_h(m.h, k);
+        Rect::new(m.x + 14, m.y + 14, m.w - 28, wh - 14)
     }
 
     /// The whole screen: every monitor.
@@ -1188,58 +605,8 @@ impl Desktop {
     /// Is a full-screen window in front on the primary monitor? Then the
     /// dock hides (one on another monitor leaves the dock and the clock be).
     fn full_screen(&self) -> bool {
-        self.launcher.is_none()
+        self.sh.bar.state != BarState::Launch
             && self.focused().and_then(|id| self.window(id)).is_some_and(|w| w.full() && self.monitor_of(w.rect) == self.main_mon())
-    }
-
-    /// Is the dock on the screen?
-    fn dock_shown(&self) -> bool {
-        !self.full_screen() || self.dock_reveal || self.slide.value() > 0
-    }
-
-    /// The pointer at height `y`, `now` ms: how fast it goes down (units
-    /// per second), the greater of the speeds from the last two samples
-    /// that are at most [`SPEED_WINDOW_MS`] old.
-    fn throw_speed(&mut self, y: i32, now: u64) -> i32 {
-        let mut best = 0;
-        for (sy, st) in [self.ptr_a, self.ptr_b] {
-            let dt = now.saturating_sub(st);
-            if st != 0 && dt <= SPEED_WINDOW_MS {
-                best = best.max((y - sy) * 1000 / dt.max(SPEED_MIN_DT_MS) as i32);
-            }
-        }
-        if now.saturating_sub(self.ptr_b.1) >= 20 {
-            self.ptr_a = self.ptr_b;
-        }
-        self.ptr_b = (y, now);
-        best
-    }
-
-    /// Over a full-screen window: lets the dock go [`REVEAL_HIDE_MS`] after
-    /// the pointer left it (never while a menu or the control centre from
-    /// it is open, or files are over it), and starts its slide. Called
-    /// after every event.
-    fn update_reveal(&mut self, l: &mut Looper) {
-        if !self.full_screen() {
-            return;
-        }
-        if self.dock_reveal {
-            let (x, y) = self.mouse;
-            if self.dock_zone().contains(x, y) || self.dock_held() {
-                self.reveal_left = 0;
-            } else {
-                let now = time::uptime_ms();
-                if self.reveal_left == 0 {
-                    self.reveal_left = now;
-                } else if now - self.reveal_left >= REVEAL_HIDE_MS {
-                    self.dock_reveal = false;
-                    self.reveal_left = 0;
-                }
-            }
-        }
-        if self.slide.set(if self.dock_reveal { 1000 } else { 0 }) {
-            self.damage_bar(l);
-        }
     }
 
     // ------------------------------------------------------------------
@@ -1551,15 +918,50 @@ impl Desktop {
         l.damage(self.clock_zone());
     }
 
+    /// Where window `id` goes maximised: its monitor above the bar (on
+    /// another monitor, all of it but a margin).
+    fn max_area(&self, r: Rect) -> Rect {
+        let m = self.monitor_of(r);
+        if m != self.main_mon() {
+            return m.grow(-8);
+        }
+        let k = justshell::bar::scale(m.w as f32, m.h as f32);
+        wm::from_r(justshell::wm::maximized(m.w, m.h, k)).offset(m.x, m.y)
+    }
+
+    /// Maximises window `id`, or puts it back (the bar stays in sight).
     fn zoom(&mut self, l: &mut Looper, id: u32) {
-        let Some(screen) = self.window(id).map(|w| self.full_area(w.rect)) else { return };
+        let Some(max) = self.window(id).map(|w| self.max_area(w.rect)) else { return };
         let Some(win) = self.window_mut(id) else { return };
+        if win.full() || !win.app.resizable() && win.mode.free() {
+            return;
+        }
         let before = win.bounds();
-        win.toggle_maximize(screen);
+        let (mode, r) = win.mode.toggle_max(wm::to_r(win.rect), wm::to_r(max));
+        win.mode = mode;
+        win.rect = wm::from_r(r);
+        win.snapped = None;
         l.damage(before);
         let after = win.bounds();
         l.damage(after);
         self.start_fx(l, id, FxKind::Zoom(before));
+        l.damage(self.clock_zone());
+    }
+
+    /// Window `id` full screen (the whole monitor, the bar hides), or back.
+    fn full(&mut self, l: &mut Looper, id: u32) {
+        let Some(screen) = self.window(id).map(|w| self.full_area(w.rect)) else { return };
+        let Some(win) = self.window_mut(id) else { return };
+        let before = win.bounds();
+        let (mode, r) = win.mode.toggle_full(wm::to_r(win.rect), wm::to_r(screen));
+        win.mode = mode;
+        win.rect = wm::from_r(r);
+        l.damage(before);
+        let after = win.bounds();
+        l.damage(after);
+        self.start_fx(l, id, FxKind::Zoom(before));
+        l.damage(self.screen());
+        self.sync_hidden(l);
     }
 
     /// Where a window dropped at (`x`, `y`) snaps: a half at the left or
@@ -1616,15 +1018,19 @@ impl Desktop {
     /// Fits window `id` into `zone` (a whole monitor means maximised).
     fn snap(&mut self, l: &mut Looper, id: u32, zone: Rect) {
         if self.mons.contains(&zone) {
-            if self.window(id).is_some_and(|w| !w.full()) {
+            if self.window(id).is_some_and(|w| w.mode.free()) {
                 self.zoom(l, id);
             }
             return;
         }
         let Some(win) = self.window_mut(id) else { return };
+        if win.full() {
+            return;
+        }
         let before = win.bounds();
-        if let Some(r) = win.restore.take() {
-            win.rect = r;
+        if let wm::Mode::Maximized { restore } = win.mode {
+            win.rect = wm::from_r(restore);
+            win.mode = wm::Mode::Normal;
         }
         if win.snapped.is_none() {
             win.snapped = Some(win.rect);
@@ -1639,6 +1045,10 @@ impl Desktop {
     /// Back to the size and place it had before snapping or maximising.
     fn unsnap(&mut self, l: &mut Looper, id: u32) {
         if self.window(id).is_some_and(|w| w.full()) {
+            self.full(l, id);
+            return;
+        }
+        if self.window(id).is_some_and(|w| w.mode.is_max()) {
             self.zoom(l, id);
             return;
         }
@@ -1717,7 +1127,9 @@ impl Desktop {
         if self.overview.is_some() {
             return;
         }
-        self.launcher = None;
+        if self.sh.bar.state != BarState::Idle && !self.sh.locked {
+            self.go(l, BarState::Idle);
+        }
         self.popup = None;
         self.drag = None;
         self.snap_preview = None;
@@ -1898,40 +1310,9 @@ impl Desktop {
                 l.damage(ui::with_shadow(p.rect));
             }
         }
-        if self.quiet {
-            return;
-        }
-        // A short one comes out of the bar instead of a banner.
-        if self.bar_note(l, &title, &body, &icon) {
-            return;
-        }
-        self.notes.retain(|n| !n.gone());
-        if self.notes.len() >= 3 {
-            self.notes.remove(0);
-        }
-        self.notes.push(Note { title, body, icon, born: Anim::new(1) });
-        l.damage(self.notes_zone());
-    }
-
-    /// Where banners come in: the top right corner (under the title row of
-    /// a full-screen window).
-    fn notes_top(&self) -> i32 {
-        if self.full_screen() {
-            wm::TITLE_H
-        } else {
-            0
-        }
-    }
-
-    fn notes_zone(&self) -> Rect {
-        Rect::new(self.main_mon().right() - NOTE_W - 60, self.notes_top(), NOTE_W + 60, 3 * (NOTE_H + 10) + 30)
-    }
-
-    fn note_rect(&self, i: usize, slide: u32) -> Rect {
-        let right = self.main_mon().right();
-        let x_in = right - NOTE_W - 18;
-        let x = ui::lerp(right + 20, x_in, slide);
-        Rect::new(x, self.notes_top() + 12 + i as i32 * (NOTE_H + 10), NOTE_W, NOTE_H)
+        // It comes out of the bar (with "Non disturbare" the bar only says
+        // one came).
+        self.shell_notify(l, title, body, icon);
     }
 
     fn act(&mut self, l: &mut Looper, from: Option<u32>, action: Action) {
@@ -2032,7 +1413,6 @@ impl Desktop {
     /// and its icon hops (no second copy). Whether there was one.
     fn hop_again(&mut self, l: &mut Looper, key: &str) -> bool {
         let Some(kind) = self.starting.iter().find(|s| s.path == key).map(|s| s.kind.clone()) else { return false };
-        self.bar_front(l, &kind);
         self.bounce_icon(&kind);
         l.damage(self.dock_zone());
         true
@@ -2061,14 +1441,12 @@ impl Desktop {
                     let file = s.key.rsplit('/').next().unwrap_or(&s.key);
                     WINE_WATCH.lock().push((pid, String::from(file), s.icon.clone().unwrap_or_else(|| String::from("file-exe"))));
                 }
-                // Its icon waits in the dock, widened into a capsule that
-                // says it is starting, until its first window comes; then
-                // there is no notification. One already open just hops.
+                // Its icon waits in the dock until its first window comes
+                // (what it says meanwhile comes out of the bar). One
+                // already open just hops.
                 let capsule = s.icon.as_ref().is_some_and(|icon| !self.windows.iter().any(|w| w.app.kind() == icon));
-                if !capsule {
-                    if let Some(note) = s.note.clone() {
-                        self.notify(l, s.name.clone(), note, note_icon);
-                    }
+                if let Some(note) = s.note.clone() {
+                    self.notify(l, s.name.clone(), note, note_icon);
                 }
                 match s.icon {
                     Some(icon) if capsule => {
@@ -2081,12 +1459,11 @@ impl Desktop {
                             pid,
                             since: time::uptime_ms(),
                             slow: s.slow,
-                            note: s.note,
                             fail: s.fail,
                         });
-                        // The capsule comes now, not at the next tick.
-                        self.bar_tick(l);
-                        l.damage(self.dock_zone());
+                        // Its icon comes now, not at the next tick.
+                        self.sync_idle(l);
+                        self.damage_bar(l);
                     }
                     Some(icon) => self.bounce_icon(&icon),
                     None => self.bounce = Some((format!("@{}", s.key), Anim::new(900))),
@@ -2179,80 +1556,13 @@ impl Desktop {
     // ------------------------------------------------------------------
     // The launcher
 
-    fn toggle_launcher(&mut self, l: &mut Looper) {
-        match &mut self.launcher {
-            Some(la) if !la.closing => {
-                la.closing = true;
-                la.anim = Anim::new(200);
-            }
-            Some(la) => {
-                la.closing = false;
-                la.settled = false;
-                la.anim = Anim::new(260);
-            }
-            None => {
-                self.launcher =
-                    Some(Launcher { query: String::new(), entries: apps::catalog(), anim: Anim::new(260), closing: false, settled: false, then: None, scroll: 0, found: Vec::new(), index: Default::default() });
-            }
-        }
-        self.popup = None;
-        l.damage(self.screen());
-    }
-
-    fn close_launcher(&mut self, l: &mut Looper, then: Option<Launch>) {
-        if let Some(la) = &mut self.launcher {
-            if !la.closing {
-                la.closing = true;
-                la.anim = Anim::new(200);
-            }
-            la.then = then;
-        }
-        l.damage(self.screen());
-    }
-
-    fn launcher_tiles(&self, count: usize, scroll: i32) -> Vec<Rect> {
-        let m = self.main_mon();
-        let cols = 7.min(((m.w - 80) / 128) as usize).max(1);
-        let (tw, th) = (128, 120);
-        let total_w = cols as i32 * tw;
-        let x0 = m.x + (m.w - total_w) / 2;
-        (0..count).map(|i| Rect::new(x0 + (i % cols) as i32 * tw, 150 + (i / cols) as i32 * th - scroll, tw, th)).collect()
-    }
-
-    fn search_rect(&self) -> Rect {
-        let m = self.main_mon();
-        Rect::new(m.x + m.w / 2 - 200, 74, 400, 40)
-    }
-
-    /// The rows of search results, under the search field.
-    fn found_rows(&self, n: usize) -> Vec<Rect> {
-        let m = self.main_mon();
-        let w = 560.min(m.w - 32);
-        (0..n.min(FOUND_ROWS)).map(|i| Rect::new(m.x + m.w / 2 - w / 2 + 6, 134 + i as i32 * 44, w - 12, 42)).collect()
-    }
-
-    /// Does what a search result is for: copies a result, opens the rest.
-    fn choose_found(&mut self, l: &mut Looper, i: usize) {
-        let Some(la) = &self.launcher else { return };
-        let Some(f) = la.found.get(i) else { return };
-        if let Some(v) = &f.copy {
-            ui::copy(v);
-            let v = v.clone();
-            self.close_launcher(l, None);
-            self.notify(l, String::from("Calcolo"), format!("{v} copiato negli appunti."), String::from("calculator"));
-            return;
-        }
-        let then = f.launch.clone();
-        self.close_launcher(l, then);
-    }
-
     // ------------------------------------------------------------------
     // Menus and the control centre
 
     fn menu_act(&mut self, l: &mut Looper, act: MenuAct) {
         match act {
-            MenuAct::Restart => self.end(l, Ending::Restart),
-            MenuAct::PowerOff => self.end(l, Ending::PowerOff),
+            MenuAct::Restart => self.start_ending(l, Ending::Restart),
+            MenuAct::PowerOff => self.go(l, BarState::Power),
             MenuAct::Sleep => crate::sleep::request("sleep chosen from the menu"),
             MenuAct::About => self.open_id(l, "about"),
             MenuAct::Lock => self.lock_screen(l),
@@ -2315,19 +1625,6 @@ impl Desktop {
         }
     }
 
-    /// Locks the computer: the lock screen covers everything.
-    fn lock_screen(&mut self, l: &mut Looper) {
-        if self.lock.is_none() {
-            self.close_popup(l);
-            if self.launcher.is_some() {
-                self.close_launcher(l, None);
-            }
-            self.drag = None;
-            self.lock = Some(Lock::new());
-            l.damage(self.screen());
-        }
-    }
-
     /// Saves a picture of the screen in Immagini.
     fn screenshot(&mut self, l: &mut Looper) {
         let screen = self.screen();
@@ -2348,25 +1645,11 @@ impl Desktop {
         }
     }
 
-    fn end(&mut self, l: &mut Looper, how: Ending) {
-        crate::fs::sync_all();
-        for w in self.windows.iter_mut() {
-            w.app.close();
-        }
-        self.ending = Some((how, Anim::new(700)));
-        l.damage(self.screen());
-    }
-
     fn show_popup(&mut self, l: &mut Looper, p: Popup) {
         if let Some(old) = self.popup.take() {
             l.damage(self.popup_area(&old));
         }
         l.damage(self.popup_area(&p));
-        // The dock settles: the popup may open from it.
-        self.mag.target = 0;
-        if self.hover.take().is_some() {
-            l.damage(self.dock_zone());
-        }
         self.dock_menu = None;
         self.popup = Some(p);
     }
@@ -2424,9 +1707,9 @@ impl Desktop {
             line(&mut menu);
             menu.push((String::from("Impostazioni del dock…"), Some(MenuAct::DockSettings)));
         }
-        let (_, rest, bg) = self.dock_geometry_at(items, 1000, false);
-        let r = rest[i];
-        let p = Popup::menu(r.x + r.w / 2 - 115, 0, menu, self.main_mon()).above(bg.y, 12);
+        let r = self.bar_app_rect(i);
+        let top = self.bar_rest().y;
+        let p = Popup::menu(r.x + r.w / 2 - 115, 0, menu, self.main_mon()).above(top, 12);
         self.show_popup(l, p);
         self.dock_menu = Some(item);
     }
@@ -2508,197 +1791,6 @@ impl Desktop {
     // settings, the network and Bluetooth, do not disturb, brightness and
     // volume, and the buttons to lock, restart and power off.
 
-    /// A length of the design, in units: the design's frame (1024 x 768)
-    /// fitted to the screen, at 0.6 to 1 times its size.
-    fn cc(&self, px: i32) -> i32 {
-        let m = self.main_mon();
-        let k = (m.w * 1000 / 1024).min(m.h * 1000 / 768).clamp(600, 1000);
-        (px * k + 500) / 1000
-    }
-
-    /// The panel: over the status well, inside the screen, above the dock.
-    fn control_panel(&self) -> Rect {
-        // Open, it stays where it opened while the bar changes shape.
-        if let Some(p) = self.popup.as_ref().filter(|p| p.kind == PopupKind::Control) {
-            return p.rect;
-        }
-        let w = self.cc(CC_W);
-        let h = 2 * self.cc(CC_PAD) + CC_ROWS.iter().map(|&r| self.cc(r)).sum::<i32>() + (CC_ROWS.len() as i32 - 1) * self.cc(CC_GAP);
-        let rest = self.dock_rest();
-        let status = self.status_pill(rest, &Dims::at(ICON, 1000));
-        let m = self.main_mon();
-        let x = (status.x + status.w / 2 - w / 2).min(m.right() - 16 - w).max(m.x + 16);
-        Rect::new(x, rest.y - self.cc(CC_ABOVE) - h, w, h)
-    }
-
-    /// The panel's rows of cards, top to bottom.
-    fn cc_rows(&self) -> [Rect; 6] {
-        let p = self.control_panel();
-        let pad = self.cc(CC_PAD);
-        let mut y = p.y + pad;
-        CC_ROWS.map(|h| {
-            let r = Rect::new(p.x + pad, y, p.w - 2 * pad, self.cc(h));
-            y += r.h + self.cc(CC_GAP);
-            r
-        })
-    }
-
-    /// All of the control centre.
-    fn control_rect(&self) -> Rect {
-        self.control_panel()
-    }
-
-    /// The account's card (it opens the settings).
-    fn control_account(&self) -> Rect {
-        self.cc_rows()[0]
-    }
-
-    /// The switches: the network and Bluetooth side by side, do not disturb
-    /// under them.
-    fn control_tiles(&self) -> [(Tile, Rect); 3] {
-        let rows = self.cc_rows();
-        let gap = self.cc(CC_GAP);
-        let q = rows[1];
-        let half = (q.w - gap) / 2;
-        [
-            (Tile::Network, Rect::new(q.x, q.y, half, q.h)),
-            (Tile::Bluetooth, Rect::new(q.x + half + gap, q.y, q.w - half - gap, q.h)),
-            (Tile::Quiet, rows[2]),
-        ]
-    }
-
-    /// The sliders' cards: volume and brightness (drawn brightness first).
-    fn control_sliders(&self) -> [Rect; 2] {
-        let rows = self.cc_rows();
-        [rows[4], rows[3]]
-    }
-
-    /// The row of cells inside a slider's card; its symbol is at the left.
-    fn slider_bar(&self, s: Rect) -> Rect {
-        let x = s.x + self.cc(42);
-        Rect::new(x, s.y, s.right() - self.cc(12) - x, s.h)
-    }
-
-    /// The buttons at the bottom: lock, restart, power off.
-    fn control_buttons(&self) -> [Rect; 3] {
-        let b = self.cc_rows()[5];
-        let gap = self.cc(CC_GAP);
-        let third = (b.w - 2 * gap) / 3;
-        [
-            Rect::new(b.x, b.y, third, b.h),
-            Rect::new(b.x + third + gap, b.y, third, b.h),
-            Rect::new(b.x + 2 * (third + gap), b.y, b.w - 2 * (third + gap), b.h),
-        ]
-    }
-
-    /// The settings: a tile at the right end of the account's card.
-    fn settings_btn(&self) -> Rect {
-        let a = self.control_account();
-        let d = self.cc(36);
-        Rect::new(a.right() - self.cc(12) - d, a.y + (a.h - d) / 2, d, d)
-    }
-
-    fn control_hit(&self, x: i32, y: i32) -> Option<ControlHit> {
-        if let Some((t, _)) = self.control_tiles().iter().find(|(_, r)| r.contains(x, y)) {
-            return Some(ControlHit::Tile(*t));
-        }
-        let [vol, bri] = self.control_sliders();
-        if vol.contains(x, y) {
-            return Some(ControlHit::Volume);
-        }
-        if bri.contains(x, y) {
-            return Some(ControlHit::Brightness);
-        }
-        let [lock, restart, off] = self.control_buttons();
-        if off.contains(x, y) {
-            Some(ControlHit::PowerOff)
-        } else if lock.contains(x, y) {
-            Some(ControlHit::Lock)
-        } else if restart.contains(x, y) {
-            Some(ControlHit::Restart)
-        } else if self.settings_btn().contains(x, y) {
-            Some(ControlHit::Settings)
-        } else if self.control_account().contains(x, y) {
-            Some(ControlHit::Account)
-        } else {
-            None
-        }
-    }
-
-    /// Is `x` on the symbol at the left of the slider `s`, before its cells?
-    fn on_slider_foot(&self, s: Rect, x: i32) -> bool {
-        x < self.slider_bar(s).x - self.cc(6)
-    }
-
-    fn control_press(&mut self, l: &mut Looper, hit: ControlHit, x: i32) {
-        let [vol, bri] = self.control_sliders();
-        match hit {
-            ControlHit::Volume if !crate::dev::audio::available() => {}
-            ControlHit::Volume if self.on_slider_foot(vol, x) => {
-                // The speaker: the sound off, or back on.
-                let v = if crate::dev::audio::volume() == 0 { 60 } else { 0 };
-                super::change_volume(v);
-                l.damage(ui::with_shadow(self.control_rect()));
-                l.damage(self.dock_zone());
-            }
-            ControlHit::Volume => {
-                self.drag = Some(Drag::Volume);
-                self.set_volume_at(l, x);
-            }
-            ControlHit::Brightness => {
-                if !self.on_slider_foot(bri, x) {
-                    self.drag = Some(Drag::Brightness);
-                    self.set_brightness_at(l, x);
-                }
-            }
-            ControlHit::Tile(Tile::Bluetooth) => {
-                self.close_popup(l);
-                super::apps::settings_at_bluetooth();
-                self.open_id(l, "settings");
-            }
-            ControlHit::Tile(Tile::Network) if crate::net::wifi::present() => {
-                // The Wi-Fi networks, in Impostazioni.
-                self.close_popup(l);
-                super::apps::settings_at_wifi();
-                self.open_id(l, "settings");
-            }
-            ControlHit::Tile(Tile::Network) | ControlHit::Settings | ControlHit::Account => {
-                self.close_popup(l);
-                self.open_id(l, "settings");
-            }
-            ControlHit::Tile(Tile::Quiet) => {
-                self.quiet = !self.quiet;
-                l.damage(ui::with_shadow(self.control_rect()));
-                l.damage(self.dock_zone());
-            }
-            ControlHit::Lock => self.lock_screen(l),
-            ControlHit::Restart => {
-                self.close_popup(l);
-                self.end(l, Ending::Restart);
-            }
-            ControlHit::PowerOff => {
-                self.close_popup(l);
-                self.end(l, Ending::PowerOff);
-            }
-        }
-    }
-
-    /// The value (0..=100) of a slider's cells `r` for a pointer at `x`.
-    fn bar_value(r: Rect, x: i32) -> u32 {
-        ((ui::slider_value(r, x) + 5) / 10).min(100)
-    }
-
-    fn set_volume_at(&mut self, l: &mut Looper, x: i32) {
-        super::change_volume(Self::bar_value(self.slider_bar(self.control_sliders()[0]), x));
-        l.damage(ui::with_shadow(self.control_rect()));
-        l.damage(self.dock_zone());
-    }
-
-    fn set_brightness_at(&mut self, l: &mut Looper, x: i32) {
-        super::set_brightness(Self::bar_value(self.slider_bar(self.control_sliders()[1]), x).max(20));
-        l.damage(self.screen());
-    }
-
     // The notification centre: the month, and the notifications.
 
     fn notices_rect(&self) -> Rect {
@@ -2723,30 +1815,14 @@ impl Desktop {
     // Input
 
     fn press(&mut self, l: &mut Looper, x: i32, y: i32, double: bool) {
-        if self.ending.is_some() {
+        if self.sh.ending.is_some() {
             return;
         }
         if self.overview.is_some() {
             self.overview_press(l, x, y);
             return;
         }
-        // Notifications go away when clicked.
-        for i in (0..self.notes.len()).rev() {
-            let r = self.note_rect(i, self.notes[i].slide());
-            if r.contains(x, y) {
-                l.damage(ui::with_shadow(r));
-                self.notes.remove(i);
-                l.damage(self.notes_zone());
-                return;
-            }
-        }
         if let Some(p) = &self.popup {
-            if p.kind == PopupKind::Control && p.rect.contains(x, y) {
-                if let Some(hit) = self.control_hit(x, y) {
-                    self.control_press(l, hit, x);
-                }
-                return;
-            }
             if p.kind == PopupKind::Notices && p.rect.contains(x, y) {
                 if !self.history.is_empty() && self.clear_btn().contains(x, y) {
                     self.history.clear();
@@ -2764,57 +1840,9 @@ impl Desktop {
             }
             return;
         }
-        if let Some(la) = &self.launcher {
-            if la.closing {
-                return;
-            }
-            let visible: Vec<Launch> = la.visible().iter().map(|e| e.launch.clone()).collect();
-            let top = la.found_h();
-            let tiles = self.launcher_tiles(visible.len(), la.scroll - top);
-            if let Some(i) = self.found_rows(la.found.len()).iter().position(|r| r.contains(x, y)) {
-                self.choose_found(l, i);
-            } else if let Some(i) = tiles.iter().position(|t| t.contains(x, y) && y > 130 + top) {
-                let what = visible[i].clone();
-                self.close_launcher(l, Some(what));
-            } else if !self.search_rect().contains(x, y) {
-                self.close_launcher(l, None);
-            }
-            return;
-        }
-        // The bar's own parts: a notification's buttons, the bubble, the
-        // level, the pill over a full-screen window.
-        if self.bar_press(l, x, y) {
-            return;
-        }
-        let items = self.dock_items();
-        let (mark, rects, bg) = self.dock_geometry(&items);
-        let live = self.dock_live();
-        if live && mark.contains(x, y) {
-            let mut items = alloc::vec![
-                ("Info su justOS", Some(MenuAct::About)),
-                ("", None),
-                ("Impostazioni di sistema…", Some(MenuAct::Settings)),
-                ("Negozio…", Some(MenuAct::Store)),
-                ("Monitor attività", Some(MenuAct::Activity)),
-                ("Desktop e finestre (F3)", Some(MenuAct::Overview)),
-                ("Schermata", Some(MenuAct::Screenshot)),
-                ("", None),
-                ("Blocca schermo", Some(MenuAct::Lock)),
-            ];
-            if crate::sleep::available().is_ok() {
-                items.push(("Sospendi", Some(MenuAct::Sleep)));
-            }
-            items.push(("Riavvia…", Some(MenuAct::Restart)));
-            items.push(("Spegni…", Some(MenuAct::PowerOff)));
-            let rest = self.mark_rest();
-            let p = Popup::menu(rest.x, 0, items, self.main_mon()).above(rest.y - DOCK_PAD, 12);
-            self.show_popup(l, p);
-            return;
-        }
-        let d = self.dims_at(&items, self.dock_size());
-        if live && self.status_pill(bg, &d).contains(x, y) {
-            let p = Popup { kind: PopupKind::Control, rect: self.control_rect(), items: Vec::new(), anim: Anim::new(180), up: true, settled: false };
-            self.show_popup(l, p);
+        // The bar, and what it opened (the launchpad, the control centre,
+        // the player): a press outside closes those.
+        if self.shell_press(l, x, y) {
             return;
         }
         let covered = self.clock_covered();
@@ -2822,20 +1850,13 @@ impl Desktop {
             self.open_overview(l);
             return;
         }
-        if !covered && self.clock_btn().contains(x, y) {
+        if !covered && self.clock_shown() && self.clock_btn().contains(x, y) {
             let p = Popup { kind: PopupKind::Notices, rect: self.notices_rect(), items: Vec::new(), anim: Anim::new(180), up: false, settled: false };
             self.show_popup(l, p);
             return;
         }
-        if live && (bg.contains(x, y) || rects.iter().any(|r| r.contains(x, y))) {
-            // A capsule is pressed like its icon.
-            let wide = self.wide_rects(&items, &rects);
-            if let Some(i) = wide.iter().position(|r| r.grow(d.gap / 2).contains(x, y)) {
-                self.dock_press(l, &items[i]);
-            }
-            return;
-        }
         // Windows, the top one first.
+
         let hit = self
             .windows
             .iter()
@@ -2843,13 +1864,14 @@ impl Desktop {
             .filter(|w| w.shown(self.space) && !self.moving(w.id))
             .find_map(|w| w.hit(x, y).map(|h| (w.id, h)));
         if let Some((id, hit)) = hit {
+            self.shell_window_click(l);
             if self.focused() != Some(id) {
                 self.raise(l, id);
             }
             match hit {
                 Hit::Close => self.close_window(l, id),
                 Hit::Minimize => self.minimize(l, id),
-                Hit::Maximize => self.zoom(l, id),
+                Hit::Full => self.full(l, id),
                 Hit::Title => {
                     if double {
                         self.zoom(l, id);
@@ -2857,9 +1879,9 @@ impl Desktop {
                         self.drag = Some(Drag::Move(id, x - win.rect.x, y - win.rect.y));
                     }
                 }
-                Hit::Resize => {
+                Hit::Edge(h) => {
                     if let Some(win) = self.window(id) {
-                        self.drag = Some(Drag::Resize(id, win.rect.right() - x, win.rect.bottom() - y));
+                        self.drag = Some(Drag::Resize(id, h, wm::to_r(win.rect), x, y));
                     }
                 }
                 Hit::Body(bx, by) => {
@@ -2901,7 +1923,8 @@ impl Desktop {
     }
 
     fn key(&mut self, l: &mut Looper, k: KeyEvent) {
-        if self.ending.is_some() {
+        if self.sh.ending.is_some() || self.sh.locked {
+            self.shell_key(l, k);
             return;
         }
         if self.overview.is_some() {
@@ -2931,29 +1954,7 @@ impl Desktop {
             self.close_popup(l);
             return;
         }
-        if let Some(la) = &mut self.launcher {
-            if la.closing {
-                return;
-            }
-            match k.key {
-                Key::Escape => self.close_launcher(l, None),
-                Key::Enter => {
-                    // The first app, or else the first thing found.
-                    let first = la.visible().first().map(|e| e.launch.clone());
-                    if first.is_some() {
-                        self.close_launcher(l, first);
-                    } else if !la.found.is_empty() {
-                        self.choose_found(l, 0);
-                    }
-                }
-                _ => {
-                    if ui::edit_text(&mut la.query, &k, 40) {
-                        la.scroll = 0;
-                        la.found = apps::search::find(&la.query, &mut la.index);
-                    }
-                    l.damage(self.screen());
-                }
-            }
+        if self.shell_key(l, k) {
             return;
         }
         // The overview, and the desktop beside: with the logo key as in
@@ -2998,7 +1999,7 @@ impl Desktop {
             }
             // F11: full screen and back.
             if k.key == Key::F(11) {
-                self.zoom(l, id);
+                self.full(l, id);
                 return;
             }
             // Ctrl+Alt: snap to a half or a quarter, Up fills the screen,
@@ -3006,8 +2007,10 @@ impl Desktop {
             if k.ctrl && k.alt && self.window(id).is_some_and(|w| w.app.resizable()) {
                 match k.key {
                     Key::Up => {
-                        let full = self.window(id).map_or(self.main_mon(), |w| self.full_area(w.rect));
-                        return self.snap(l, id, full);
+                        if self.window(id).is_some_and(|w| w.mode.free()) {
+                            self.zoom(l, id);
+                        }
+                        return;
                     }
                     Key::Down => return self.unsnap(l, id),
                     key => {
@@ -3067,14 +2070,16 @@ impl Desktop {
                             let off = (dx * prev.w / win.rect.w.max(1)).clamp(20, prev.w - 20);
                             win.rect = Rect::new(x - off, y - dy, prev.w, prev.h);
                             new_drag = Some(Drag::Move(id, off, dy));
-                        } else if win.restore.take().is_some() {
+                        } else if let wm::Mode::Maximized { restore } = win.mode {
                             // Dragging a maximised window: back to its size,
                             // under the pointer.
-                            let (w, h) = (win.rect.w, win.rect.h);
-                            let (ow, oh) = Window::outer_size(win.app.size().0, win.app.size().1);
-                            let ow = ow.min(w);
-                            win.rect = Rect::new(x - ow / 2, y - 20, ow, oh.min(h));
-                            new_drag = Some(Drag::Move(id, ow / 2, 20));
+                            let r = wm::from_r(restore);
+                            win.mode = wm::Mode::Normal;
+                            let off = (dx * r.w / win.rect.w.max(1)).clamp(20, (r.w - 20).max(20));
+                            win.rect = Rect::new(x - off, y - dy, r.w, r.h);
+                            new_drag = Some(Drag::Move(id, off, dy));
+                        } else if win.full() {
+                            // Full screen: it stays.
                         } else {
                             win.rect.x = (x - dx).clamp(area.x - win.rect.w + 80, area.right() - 80);
                             win.rect.y = (y - dy).clamp(0, area.bottom() - 60);
@@ -3087,13 +2092,13 @@ impl Desktop {
                     }
                     return;
                 }
-                Some(Drag::Resize(id, dx, dy)) => {
-                    let area = self.work_area();
+                Some(Drag::Resize(id, h, start, mx, my)) => {
                     if let Some(win) = self.window_mut(id) {
                         let before = win.bounds();
                         let (mw, mh) = win.min_size();
-                        win.rect.w = (x + dx - win.rect.x).clamp(mw, area.right() - win.rect.x);
-                        win.rect.h = (y + dy - win.rect.y).clamp(mh, (area.bottom() - win.rect.y).max(mh));
+                        let r = justshell::wm::resize(start, h, x - mx, y - my, (mw, mh));
+                        win.rect = wm::from_r(r);
+                        win.snapped = None;
                         let after = win.bounds();
                         l.damage(before.union(&after));
                     }
@@ -3119,12 +2124,8 @@ impl Desktop {
                     }
                     return;
                 }
-                Some(Drag::Volume) => {
-                    self.set_volume_at(l, x);
-                    return;
-                }
-                Some(Drag::Brightness) => {
-                    self.set_brightness_at(l, x);
+                Some(Drag::Volume | Drag::Brightness | Drag::Hud | Drag::Seek) => {
+                    self.slide(l, x, y);
                     return;
                 }
                 None => {}
@@ -3133,39 +2134,12 @@ impl Desktop {
         if let Some(p) = &self.popup {
             l.damage(p.rect);
         }
-        if let Some(la) = &self.launcher {
-            if !la.closing {
-                l.damage(Rect::new(0, 130, self.w, self.h - 130));
-            }
+        // The bar's parts light up; over a full-screen window it peeks up
+        // at the bottom edge.
+        self.shell_move(l, x, y);
+        if self.sh.bar.state == BarState::Launch {
             return;
         }
-        // The bar's buttons, bubble and pill light up.
-        let bar_hover = self.bar_hit(x, y);
-        if bar_hover != self.bar_hover {
-            self.bar_hover = bar_hover;
-            l.damage(self.dock_zone());
-        }
-        // Full screen: the dock comes up at the bottom edge, or when the
-        // pointer is thrown down towards it (see [`Desktop::update_reveal`]).
-        let speed = self.throw_speed(y, time::uptime_ms());
-        if self.full_screen() {
-            let fast = speed >= REVEAL_SPEED;
-            let m = self.main_mon();
-            if m.contains(x, y) && (y >= m.bottom() - REVEAL_EDGE || (y >= m.bottom() - REVEAL_BAND && fast)) {
-                self.dock_reveal = true;
-                self.reveal_left = 0;
-            }
-        }
-        // The dock grows near the pointer and magnifies around it; an
-        // island the bar has become gives way to it at once.
-        let live = self.popup.is_none() && self.dock_live();
-        let (inside, hover) = self.dock_near(x, y, live);
-        self.island_update(l);
-        self.mag.target = if inside && settings::dock_magnify() { 1000 } else { 0 };
-        if inside || self.mag.moving() || hover != self.hover {
-            l.damage(self.dock_zone());
-        }
-        self.hover = hover;
         // Window buttons light up; the app under the pointer hears of it.
         let under = self
             .windows
@@ -3209,17 +2183,11 @@ impl Desktop {
         let Some(mut carry) = self.carry.take() else { return };
         let (ctrl, alt, _) = input::mods();
         carry.copy = ctrl || alt;
-        // The dock grows and magnifies as usual; some of its icons take files.
-        let live = self.popup.is_none() && self.dock_shown();
-        let (inside, hover) = self.dock_near(x, y, live);
-        self.island_update(l);
-        self.mag.target = if inside && settings::dock_magnify() { 1000 } else { 0 };
-        let items = self.dock_items();
-        if inside || self.mag.moving() || hover != self.hover {
-            l.damage(self.dock_zone());
-        }
-        self.hover = hover;
-        carry.dock = hover.filter(|&i| takes_files(&items[i]));
+        // Some of the dock's icons take files.
+        let items = self.bar_items();
+        let hover = self.carry_hover(l, x, y);
+        let inside = self.bar_rest().contains(x, y);
+        carry.dock = hover.filter(|&i| items.get(i).is_some_and(takes_files));
         // The window under the pointer, if not the dock.
         let under = if inside {
             None
@@ -3257,7 +2225,7 @@ impl Desktop {
             l.damage(win.bounds());
         }
         if let Some(i) = carry.dock {
-            let items = self.dock_items();
+            let items = self.bar_items();
             let Some(item) = items.get(i) else { return };
             l.damage(self.dock_zone());
             if item.kind == "trash" {
@@ -3349,6 +2317,9 @@ impl Desktop {
             self.carry_drop(l, carry);
             return;
         }
+        if self.shell_release(l) {
+            return;
+        }
         match self.drag {
             Some(Drag::Body(id)) => {
                 if let Some(win) = self.window_mut(id) {
@@ -3376,42 +2347,22 @@ impl Desktop {
     /// line in the title row of a full-screen window), and the desktops'
     /// dots under them.
     fn draw_clock(&self, c: &mut Canvas) {
+        if !self.clock_shown() {
+            return;
+        }
         let cb = self.clock_btn();
         let (clock, date) = clock_strings();
         let lit = (cb.contains(self.mouse.0, self.mouse.1) && !self.clock_covered())
             || self.popup.as_ref().is_some_and(|p| p.kind == PopupKind::Notices);
-        if self.full_screen() {
-            // On the window's frame, like its name.
-            if lit {
-                c.fill_round(cb, 12, ui::sel());
-            }
-            let (sh, _) = text::metrics(Font::Strong);
-            let y = cb.y + (cb.h - sh) / 2;
-            let w = text::draw(c, Font::Strong, cb.x + 14, y, &clock, ui::text());
-            text::draw(c, Font::Strong, cb.x + 14 + w + 12, y, &date, ui::text_dim());
-            return;
-        }
         let ink = ui::luminance(&self.blur, cb) > 150;
-        let (fg, shade, hover_bg) = if ink { (ui::INK, WALL_SHADE_INK, WALL_LIT_INK) } else { (ui::WHITE, WALL_SHADE, WALL_LIT) };
+        let (fg, hover_bg) = if ink { (0xFF15_151A, WALL_LIT_INK) } else { (ui::WHITE, WALL_LIT) };
         if lit {
-            c.fill_round(cb, 20, hover_bg);
+            c.fill_round(cb, cb.h / 2, hover_bg);
         }
-        let cx = cb.x + cb.w / 2;
-        let rows = clock_rows(&clock);
-        let rows: Vec<&str> = rows.iter().map(|s| s.as_str()).collect();
-        let (cw, ch) = clock_size(&clock);
-        let (x, y) = ((cx - cw / 2) * 1000, (cb.y + CLOCK_TOP) * 1000);
-        // A soft shade under the digits keeps them readable on busy
-        // pictures: the same digits a little lower, a few times, faintly.
-        let faint = (((shade >> 24) / 2) << 24) | (shade & 0xFF_FFFF);
-        for (dx, dy, col) in [(0, 2000, faint), (-1000, 2000, faint), (1000, 2000, faint), (0, 1000, shade)] {
-            ui::soft_pixels_at(c, &rows, x + dx, y + dy, CLOCK_CELL, &|_| col);
-        }
-        ui::soft_pixels_at(c, &rows, x, y, CLOCK_CELL, &|_| fg);
-        let dy = cb.y + CLOCK_TOP + ch + CLOCK_DATE_GAP;
-        for (off, col) in [(1, shade), (0, fg)] {
-            text::draw_centered(c, Font::Strong, cx, dy + off, &date, col);
-        }
+        let (_, y) = (0, cb.y + 8);
+        let x = cb.x + 16;
+        let w = text::draw(c, Font::Clock22, x, y, &clock, fg);
+        text::draw(c, Font::Clock22, x + w + 18, y, &date, fg);
         if let Some(sp) = self.spaces_btn() {
             if sp.contains(self.mouse.0, self.mouse.1) {
                 c.fill_round(sp, sp.h / 2, hover_bg);
@@ -3479,218 +2430,6 @@ impl Desktop {
         }
     }
 
-    fn draw_dock(&self, c: &mut Canvas) {
-        let items = self.dock_items();
-        let (mark, rects, bg) = self.dock_geometry(&items);
-        let size = self.dock_size();
-        let d = self.dims_at(&items, size);
-        let extras = self.cap_extras(&items, size);
-        // The bar's panel, on its way to being an island (then the dock's
-        // content is cut to it).
-        let Some(panel) = self.bar_frame(c, bg, d.rad) else { return };
-        let away = self.island_t();
-        let saved = c.clip();
-        if away > 0 {
-            c.set_clip(saved.intersect(&panel));
-        }
-        // The justOS mark on a dark tile, like an app's icon: it opens the
-        // system menu.
-        let menu = self.popup.as_ref().is_some_and(|p| p.kind == PopupKind::Menu && p.up);
-        let on_mark = menu || mark.contains(self.mouse.0, self.mouse.1);
-        draw_mark_tile(c, mark, on_mark);
-        // The status in a well: network, sound and the battery; it opens
-        // the control centre.
-        let sp = self.status_pill(bg, &d);
-        let open = self.popup.as_ref().is_some_and(|p| p.kind == PopupKind::Control);
-        let on_status = open || sp.contains(self.mouse.0, self.mouse.1);
-        let rad = 18.min(sp.h / 2);
-        ui::well_pane(c, sp, rad);
-        if on_status {
-            c.fill_round(sp, rad, ui::sel());
-        }
-        let net = if crate::net::online() { ui::text() } else { ui::text_faint() };
-        // No sound card: the speaker is off and faint, as the network is offline.
-        let audio = crate::dev::audio::available();
-        let sound: &[&str] = if !audio || crate::dev::audio::volume() == 0 { &G_MUTE } else { &G_VOLUME };
-        let sound_col = if !audio { ui::text_faint() } else if self.quiet { ui::text_dim() } else { ui::text() };
-        let battery = self.battery.map(|(pct, _)| battery_rows(pct));
-        let battery: Option<Vec<&str>> = battery.as_ref().map(|rows| rows.iter().map(|s| s.as_str()).collect());
-        let mut symbols: Vec<(&[&str], u32)> = alloc::vec![(&G_WIFI[..], net), (sound, sound_col)];
-        if let Some(rows) = &battery {
-            symbols.push((rows.as_slice(), ui::text()));
-        }
-        let widths: Vec<i32> = symbols.iter().map(|(g, _)| ui::soft_size(g, d.cell).0).collect();
-        let total = widths.iter().sum::<i32>() + (symbols.len() as i32 - 1) * d.sgap * 1000;
-        let mut x = sp.x * 1000 + (sp.w * 1000 - total) / 2;
-        let charge = self.battery.map_or(ui::text(), |(pct, charging)| battery_color(pct, charging));
-        for ((g, col), w) in symbols.iter().zip(&widths) {
-            let (_, h) = ui::soft_size(g, d.cell);
-            let col = *col;
-            ui::soft_pixels_at(c, g, x, sp.y * 1000 + (sp.h * 1000 - h) / 2, d.cell, &|k| if k == b'f' { charge } else { col });
-            x += w + d.sgap * 1000;
-        }
-        let sep = (ui::text() & 0xFF_FFFF) | 0x2900_0000;
-        let sep_h = ui::lerp(20, 30, size);
-        let sep_at = |c: &mut Canvas, r: Rect| {
-            let x = r.x - (d.sep + d.gap) / 2 - 1;
-            c.fill_round(Rect::new(x, bg.y + (bg.h - 4 - sep_h) / 2, 2, sep_h), 1, sep);
-        };
-        // The dot under the icon of an app that is open: it stays where it
-        // is while the icon grows.
-        let dot = ui::lerp(4, 5, size);
-        let dot_y = bg.bottom() - d.pad - 1;
-        if let Some(first) = rects.first() {
-            sep_at(c, *first);
-        }
-        for (i, it) in items.iter().enumerate() {
-            let r = rects[i];
-            if it.split && i > 0 {
-                sep_at(c, r);
-            }
-            let mut lift = 0;
-            if let Some((what, a)) = &self.bounce {
-                if *what == it.kind || (what.starts_with('@') && it.icon == *what) {
-                    // Two hops, the second lower.
-                    let t = a.t() as i64;
-                    let (phase, height) = if t < 600 { (t * 1000 / 600, 22) } else { ((t - 600) * 1000 / 400, 10) };
-                    lift = (height * 4 * phase * (1000 - phase) / 1_000_000) as i32;
-                }
-            }
-            if self.carry.as_ref().is_some_and(|c| c.dock == Some(i)) {
-                // It takes the files carried over it.
-                c.fill_round(r.grow(6), 18, ui::sel());
-                c.stroke_round(r.grow(6), 18, 2, ui::ACCENT);
-            }
-            let open = self.windows.iter().any(|w| w.app.kind() == it.kind) && it.id != "trash";
-            match self.cap_of(&it.kind) {
-                // Widened into a capsule: its dot under its smaller tile,
-                // clear of the well.
-                Some(a) => {
-                    let (tile, well) = self.draw_capsule(c, &it.icon, a, r, extras[i], lift, size);
-                    if open {
-                        c.fill_round(Rect::new(tile.x + tile.w / 2 - 2, well.bottom() + 2, dot, dot), 1, ui::ORANGE);
-                    }
-                }
-                None => {
-                    // A program starting whose capsule is not out (another
-                    // is): its icon waits, faded.
-                    if self.starting.iter().any(|s| s.kind == it.kind) {
-                        res::draw_icon_faded(c, &it.icon, r.w, r.x, r.y - lift, 150);
-                    } else {
-                        res::draw_icon(c, &it.icon, r.w, r.x, r.y - lift);
-                    }
-                    if open {
-                        c.fill_round(Rect::new(r.x + r.w / 2 - 2, dot_y, dot, dot), 1, ui::ORANGE);
-                    }
-                }
-            }
-        }
-        c.set_clip(saved);
-        // The name over the icon under the pointer (a capsule says it).
-        if away > 0 {
-            return;
-        }
-        if let Some(i) = self.hover.filter(|&i| i < items.len() && extras[i] == 0) {
-            let r = rects[i];
-            let label = &items[i].label;
-            let w = text::width(Font::Strong, label) + 24;
-            let tip = Rect::new(r.x + r.w / 2 - w / 2, r.y - 44, w, 30);
-            ui::drop_shadow(c, tip, 12, 10, 60);
-            ui::panel(c, tip, 12);
-            let (lh, _) = text::metrics(Font::Strong);
-            text::draw_centered(c, Font::Strong, tip.x + w / 2, tip.y + (tip.h - lh) / 2, label, ui::text());
-        }
-    }
-
-    fn draw_launcher(&self, c: &mut Canvas, la: &Launcher) {
-        let t = la.shown();
-        let full = t >= 1000;
-        let screen = self.screen();
-        let m = self.main_mon();
-        if full {
-            c.blit(&self.blur, 0, 0, screen);
-        } else {
-            let cl = c.clip();
-            c.blit_faded(&self.blur, cl.x, cl.y, cl, t * 255 / 1000);
-        }
-        c.fill(c.clip(), ((0x8C * t / 1000) << 24) | 0x10_0A16);
-        let alpha = |col: u32| (((col >> 24) * t / 1000) << 24) | (col & 0xFF_FFFF);
-        let s = self.search_rect();
-        let s = Rect::new(s.x, s.y - (1000 - t as i32) * 20 / 1000, s.w, s.h);
-        c.fill_round(s, 20, alpha(WALL_FIELD));
-        c.stroke_round(s, 20, 1, alpha(ui::GLASS_EDGE));
-        res::draw_icon_faded(c, "g-search", 16, s.x + 16, s.y + 12, t * 255 / 1000);
-        let (lh, _) = text::metrics(Font::Body);
-        if la.query.is_empty() {
-            text::draw(c, Font::Body, s.x + 42, s.y + (s.h - lh) / 2, "Cerca", alpha(ui::WHITE_FAINT));
-        } else {
-            let w = text::draw(c, Font::Body, s.x + 42, s.y + (s.h - lh) / 2, &la.query, alpha(ui::WHITE));
-            c.fill(Rect::new(s.x + 44 + w, s.y + 10, 2, s.h - 20), alpha(ui::ACCENT));
-        }
-        let visible = la.visible();
-        let top = la.found_h();
-        if visible.is_empty() && la.found.is_empty() {
-            let note = if apps::search::searching(&la.index) { "Cerco nel contenuto dei file…" } else { "Nessun risultato" };
-            text::draw_centered(c, Font::Body, m.x + m.w / 2, 190, note, alpha(ui::WHITE_DIM));
-        }
-        // Calculations, settings and files, in a glass list; a thin line
-        // where a section ends and the next begins.
-        let rows = self.found_rows(la.found.len());
-        if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
-            let panel = Rect::new(first.x - 6, first.y - 6, first.w + 12, last.bottom() - first.y + 12);
-            c.fill_round(panel, 18, alpha(WALL_PANEL));
-            c.stroke_round(panel, 18, 1, alpha(ui::GLASS_EDGE));
-            let mut section = "";
-            for (f, r) in la.found.iter().zip(&rows) {
-                if !section.is_empty() && f.section != section {
-                    c.fill(Rect::new(r.x + 10, r.y - 2, r.w - 20, 1), alpha(ui::GLASS_EDGE));
-                }
-                section = f.section;
-                if full && r.contains(self.mouse.0, self.mouse.1) {
-                    c.fill_round(*r, 12, WALL_HOVER);
-                }
-                res::draw_icon_faded(c, f.icon, 28, r.x + 10, r.y + 7, t * 255 / 1000);
-                let font = if f.copy.is_some() { Font::Heading } else { Font::Strong };
-                let (lh, _) = text::metrics(font);
-                let tag_w = text::width(Font::Small, f.section) + 12;
-                // A line found in a file says more than its name: the name
-                // gives it more room.
-                let name = text::fit(font, &f.name, if f.mark.is_some() { r.w / 3 } else { r.w / 2 });
-                let w = text::draw(c, font, r.x + 50, r.y + (r.h - lh) / 2, &name, alpha(ui::WHITE));
-                let detail = text::fit(Font::Small, &f.detail, r.w - 50 - w - 24 - tag_w);
-                let (sh, _) = text::metrics(Font::Small);
-                let (dx, dy) = (r.x + 62 + w, r.y + (r.h - sh) / 2);
-                match f.mark {
-                    Some(mark) => draw_marked(c, Font::Small, (dx, dy), &detail, mark, alpha(ui::WHITE_FAINT), alpha(ui::WHITE)),
-                    None => {
-                        text::draw(c, Font::Small, dx, dy, &detail, alpha(ui::WHITE_FAINT));
-                    }
-                }
-                text::draw_right(c, Font::Small, r.right() - 12, r.y + (r.h - sh) / 2, f.section, alpha(ui::WHITE_DIM));
-            }
-        }
-        // Tiles zoom in from a little larger, as in Launchpad.
-        let zoom = ui::lerp(1120, 1000, t);
-        let cx = m.x + m.w / 2;
-        let saved = c.clip();
-        c.set_clip(saved.intersect(&Rect::new(m.x, 128 + top, m.w, m.h - 128 - top)));
-        for (e, tile) in visible.iter().zip(self.launcher_tiles(visible.len(), la.scroll - top)) {
-            let tile = Rect::new(cx + (tile.x - cx) * zoom / 1000, 150 + (tile.y - 150) * zoom / 1000, tile.w, tile.h);
-            if tile.bottom() < 128 || tile.y > self.h {
-                continue;
-            }
-            if full && tile.contains(self.mouse.0, self.mouse.1) {
-                c.fill_round(tile.grow(-6), 18, WALL_HOVER);
-            }
-            let size = (64 * zoom / 1000) & !1;
-            res::draw_icon_faded(c, &e.icon, size, tile.x + (tile.w - size) / 2, tile.y + 12, t * 255 / 1000);
-            let label = text::fit(Font::Body, &e.name, tile.w - 12);
-            text::draw_centered(c, Font::Body, tile.x + tile.w / 2, tile.y + 86, &label, alpha(ui::WHITE));
-        }
-        c.set_clip(saved);
-        text::draw_centered(c, Font::Small, m.x + m.w / 2, m.bottom() - 36, "Ctrl+Spazio apre e chiude · Esc per uscire", alpha(ui::WHITE_FAINT));
-    }
-
     fn draw_popup(&self, c: &mut Canvas, p: &Popup) {
         let saved = c.clip();
         c.set_clip(saved.intersect(&p.shown()));
@@ -3715,182 +2454,9 @@ impl Desktop {
                     y += 34;
                 }
             }
-            PopupKind::Control => self.draw_control(c),
             PopupKind::Notices => self.draw_notices(c),
         }
         c.set_clip(saved);
-    }
-
-    /// The fonts of the control centre's cards: names and their states
-    /// (smaller ones when the design is drawn small).
-    fn cc_fonts(&self) -> (Font, Font) {
-        if self.cc(14) >= 13 {
-            (Font::Strong, Font::Small)
-        } else {
-            (Font::Small, Font::Small)
-        }
-    }
-
-    /// A name and, under it, its state, in the middle of `r` from its left
-    /// end, at most `w` wide.
-    fn cc_label(&self, c: &mut Canvas, x: i32, r: Rect, w: i32, name: &str, state: &str) {
-        let (nf, sf) = self.cc_fonts();
-        let (nh, _) = text::metrics(nf);
-        let (sh, _) = text::metrics(sf);
-        let y = r.y + (r.h - nh - sh) / 2;
-        text::draw(c, nf, x, y, &text::fit(nf, name, w), ui::text());
-        text::draw(c, sf, x, y + nh, &text::fit(sf, state, w), ui::text_dim());
-    }
-
-    fn draw_control(&self, c: &mut Canvas) {
-        let hover = self.control_hit(self.mouse.0, self.mouse.1);
-        let lit = |h: ControlHit| hover == Some(h);
-        let panel = self.control_panel();
-        let rad = self.cc(CC_RAD);
-        let card_rad = self.cc(18);
-        ui::drop_shadow(c, panel, rad, 18, 80);
-        ui::panel(c, panel, rad);
-        let card = |c: &mut Canvas, r: Rect, hot: bool| {
-            ui::well_pane(c, r, card_rad);
-            if hot {
-                c.fill_round(r, card_rad, ui::sel());
-            }
-        };
-        let pad = self.cc(12);
-
-        // Who uses this computer: the initial on an orange disc, the name
-        // and the account, the battery, and the settings at the right.
-        let acc = self.control_account();
-        card(c, acc, lit(ControlHit::Account));
-        let d = self.cc(36);
-        let photo = Rect::new(acc.x + pad, acc.y + (acc.h - d) / 2, d, d);
-        c.fill_round_grad(photo, d / 2, ui::ORANGE_GRAD.0, ui::ORANGE_GRAD.1);
-        c.sheen_round(photo, d / 2, 1, ui::TILE_SHEEN);
-        let name = settings::get().name;
-        let name = if name.is_empty() { String::from("Utente") } else { name };
-        let initial: String = name.chars().next().map(|ch| ch.to_uppercase().collect()).unwrap_or_default();
-        let pf = if d >= 32 { Font::Heading } else { Font::Strong };
-        let (ph, _) = text::metrics(pf);
-        text::draw_centered(c, pf, photo.x + d / 2, photo.y + (d - ph) / 2, &initial, ui::WHITE);
-        let sb = self.settings_btn();
-        let grad = if lit(ControlHit::Settings) { ui::lighten_grad(ui::knob_grad(), 30) } else { ui::knob_grad() };
-        ui::tile(c, sb, sb.w / 4, grad);
-        tile_glyph(c, &G_GEAR, sb, ui::knob_glyph());
-        // The battery's charge, or the power supply.
-        let (_, sf) = self.cc_fonts();
-        let (sh, _) = text::metrics(sf);
-        let cell = self.cc(3000);
-        let (power, label, col) = match self.battery {
-            Some((pct, charging)) => (battery_rows(pct), format!("{pct} %"), battery_color(pct, charging)),
-            None => (G_PLUG.iter().map(|s| String::from(*s)).collect(), String::from("Alimentatore"), ui::text_dim()),
-        };
-        let power: Vec<&str> = power.iter().map(|s| s.as_str()).collect();
-        let (gw, gh) = ui::soft_size(&power, cell);
-        let lw = text::width(sf, &label);
-        let right = sb.x - self.cc(12);
-        let gx = right - lw - self.cc(6) - gw / 1000;
-        let dim = ui::text_dim();
-        ui::soft_pixels_at(c, &power, gx * 1000, acc.y * 1000 + (acc.h * 1000 - gh) / 2, cell, &|k| if k == b'f' { col } else { dim });
-        text::draw(c, sf, right - lw, acc.y + (acc.h - sh) / 2, &label, dim);
-        let tx = photo.right() + pad;
-        self.cc_label(c, tx, acc, gx - self.cc(10) - tx, &name, "Account locale");
-
-        // The switches: a tile with a symbol, coloured when on, grey when
-        // off; the name and the state.
-        let online = crate::net::online();
-        for (tile, r) in self.control_tiles() {
-            let (on, title, state, symbol, color): (bool, &str, String, &[&str], (u32, u32)) = match tile {
-                // With a Wi-Fi card: the network joined and its address,
-                // or what the station is doing.
-                Tile::Network => match (crate::net::wifi::status(), crate::net::address()) {
-                    (Some(w), a) if w.state == justwifi::sta::State::Connected => {
-                        let state = match a {
-                            Some(a) if online => format!("{} · {a}", w.ssid),
-                            _ => w.ssid.clone(),
-                        };
-                        (true, "Wi-Fi", state, &G_WIFI[..], BLUE_GRAD)
-                    }
-                    (_, Some(a)) if online => (true, "Rete", format!("{a}"), &G_WIFI[..], BLUE_GRAD),
-                    (Some(w), _) => (false, "Wi-Fi", w.text(), &G_WIFI[..], BLUE_GRAD),
-                    _ => (false, "Rete", String::from("Non connessa"), &G_WIFI[..], BLUE_GRAD),
-                },
-                Tile::Bluetooth => {
-                    let state = match crate::bt::adapter() {
-                        None => (false, String::from("Assente")),
-                        Some((_, _, false)) => (false, String::from("Spento")),
-                        Some(_) => match crate::bt::devices().iter().filter(|d| d.connected).count() {
-                            0 => (true, String::from("Acceso")),
-                            1 => (true, String::from("1 collegato")),
-                            n => (true, format!("{n} collegati")),
-                        },
-                    };
-                    (state.0, "Bluetooth", state.1, &G_BLUETOOTH[..], BLUE_GRAD)
-                }
-                Tile::Quiet => (self.quiet, "Non disturbare", String::from(if self.quiet { "Attivo" } else { "Spento" }), &G_MOON[..], VIOLET_GRAD),
-            };
-            let hot = lit(ControlHit::Tile(tile));
-            card(c, r, hot);
-            let s = self.cc(38);
-            let t = Rect::new(r.x + pad, r.y + (r.h - s) / 2, s, s);
-            let (grad, fg) = if on { (color, ui::WHITE) } else { (ui::knob_grad(), ui::knob_glyph()) };
-            ui::tile(c, t, s / 4, grad);
-            tile_glyph(c, symbol, t, fg);
-            let tx = t.right() + self.cc(10);
-            let mut end = r.right() - pad;
-            if tile == Tile::Quiet {
-                // Its switch at the right.
-                let (sw, sh) = (self.cc(44), self.cc(26));
-                let at = Rect::new(r.right() - pad - sw, r.y + (r.h - sh) / 2, sw, sh);
-                ui::toggle(c, at, self.quiet);
-                end = at.x - self.cc(10);
-            }
-            self.cc_label(c, tx, r, end - tx, title, &state);
-        }
-
-        // Brightness and volume: a row of cells each, a symbol at the left
-        // (the speaker turns the sound off and on). Without a sound card the
-        // volume is off and grey, and does not move (Impostazioni → Suono
-        // says why).
-        let audio = crate::dev::audio::available();
-        let vol = if audio { crate::dev::audio::volume() } else { 0 };
-        let [vs, bs] = self.control_sliders();
-        let glyph_cell = self.cc(3000);
-        for (s, value, symbol, accent, hit) in [
-            (bs, super::brightness(), &G_SUN[..], false, ControlHit::Brightness),
-            (vs, vol, if vol == 0 { &G_MUTE[..] } else { &G_VOLUME[..] }, audio, ControlHit::Volume),
-        ] {
-            card(c, s, false);
-            let bar = self.slider_bar(s);
-            let foot = Rect::new(s.x + pad, s.y, bar.x - self.cc(12) - s.x - pad, s.h);
-            if accent && lit(hit) && self.on_slider_foot(s, self.mouse.0) {
-                c.fill_round(foot.grow(-self.cc(4)), self.cc(8), ui::sel());
-            }
-            let (gw, gh) = ui::soft_size(symbol, glyph_cell);
-            let gx = foot.x * 1000 + (foot.w * 1000 - gw) / 2;
-            let fg = ui::text();
-            ui::soft_pixels_at(c, symbol, gx, s.y * 1000 + (s.h * 1000 - gh) / 2, glyph_cell, &|_| fg);
-            ui::cell_bar(c, Rect::new(bar.x, bar.y + (bar.h - self.cc(14)) / 2, bar.w, self.cc(14)), value.min(100) * 10, accent);
-        }
-
-        // Lock and restart, and power off in orange.
-        let [lock, restart, off] = self.control_buttons();
-        for (r, hit, symbol, label, primary) in [
-            (lock, ControlHit::Lock, &G_LOCK, "Blocca", false),
-            (restart, ControlHit::Restart, &G_RESTART, "Riavvia", false),
-            (off, ControlHit::PowerOff, &G_POWER, "Spegni", true),
-        ] {
-            ui::button(c, r, "", primary, lit(hit));
-            let fg = if primary { ui::WHITE } else { ui::text() };
-            let bf = if self.cc(14) >= 13 { Font::Strong } else { Font::Small };
-            let cell = self.cc(2000).max(1000);
-            let (gw, gh) = ui::soft_size(symbol, cell);
-            let lw = text::width(bf, label);
-            let gap = self.cc(8);
-            let x = r.x + (r.w - gw / 1000 - gap - lw) / 2;
-            ui::soft_pixels_at(c, symbol, x * 1000, r.y * 1000 + (r.h * 1000 - gh) / 2, cell, &|_| fg);
-            let (lh, _) = text::metrics(bf);
-            text::draw(c, bf, x + gw / 1000 + gap, r.y + (r.h - lh) / 2, label, fg);
-        }
     }
 
     fn draw_notices(&self, c: &mut Canvas) {
@@ -4032,38 +2598,6 @@ impl Desktop {
         }
     }
 
-    fn draw_notes(&self, c: &mut Canvas) {
-        // They slide in from the primary monitor's edge, not over the
-        // monitor beyond it.
-        let m = self.main_mon();
-        let saved = c.clip();
-        c.set_clip(saved.intersect(&m));
-        for (i, n) in self.notes.iter().enumerate() {
-            let r = self.note_rect(i, n.slide());
-            if r.x >= m.right() {
-                continue;
-            }
-            ui::drop_shadow(c, r, 22, 18, 80);
-            ui::panel(c, r, 22);
-            res::draw_icon(c, &n.icon, 40, r.x + 14, r.y + 18);
-            text::draw(c, Font::Strong, r.x + 66, r.y + 14, &text::fit(Font::Strong, &n.title, r.w - 84), ui::text());
-            let lines = text::wrap(Font::Small, &n.body, r.w - 84);
-            for (k, line) in lines.iter().take(2).enumerate() {
-                text::draw(c, Font::Small, r.x + 66, r.y + 36 + k as i32 * 17, line, ui::text_dim());
-            }
-        }
-        c.set_clip(saved);
-    }
-
-    fn draw_ending(&self, c: &mut Canvas, a: &Anim) {
-        let t = a.out();
-        c.fill(c.clip(), (t * 255 / 1000) << 24);
-        if t > 300 {
-            let o = (t - 300) * 255 / 700;
-            let m = self.main_mon();
-            draw_logo(c, m.x + m.w / 2, m.y + m.h / 2 - 20, 35, (o << 24) | (CREAM & 0xFF_FFFF));
-        }
-    }
 }
 
 /// The window at the bottom of window `i`'s family (`up`: what each window
@@ -4146,86 +2680,6 @@ fn capitalize(s: &str) -> String {
     ch.next().map(|f| f.to_uppercase().chain(ch).collect()).unwrap_or_default()
 }
 
-/// "16:02" in the clock's soft-pixel digits, one row of cells per string,
-/// a column of space between characters.
-fn clock_rows(s: &str) -> [String; 5] {
-    let mut rows: [String; 5] = Default::default();
-    let mut first = true;
-    for ch in s.chars() {
-        let glyph = match ch.to_digit(10) {
-            Some(d) => &DIGITS[d as usize],
-            None if ch == ':' => &COLON,
-            None => continue,
-        };
-        for (row, part) in rows.iter_mut().zip(glyph.iter()) {
-            if !first {
-                row.push('.');
-            }
-            row.push_str(part);
-        }
-        first = false;
-    }
-    rows
-}
-
-/// The size of the clock's digits for `s`, in units.
-fn clock_size(s: &str) -> (i32, i32) {
-    let cols = clock_rows(s)[0].len() as i32;
-    (cols * CLOCK_CELL / 1000, 5 * CLOCK_CELL / 1000)
-}
-
-/// The height of the clock and the date under it, floating at the top.
-fn clock_height() -> i32 {
-    let (sh, _) = text::metrics(Font::Strong);
-    CLOCK_TOP + 5 * CLOCK_CELL / 1000 + CLOCK_DATE_GAP + sh + CLOCK_BOTTOM
-}
-
-/// The battery as soft pixels: its outline and, inside, up to four cells of
-/// charge ('f').
-fn battery_rows(pct: u8) -> Vec<String> {
-    let n = match pct {
-        0 => 0,
-        p => (usize::from(p.min(100)) * 4).div_ceil(100),
-    };
-    let fill: String = (0..4).map(|i| if i < n { 'f' } else { '.' }).collect();
-    alloc::vec![
-        String::from("########."),
-        String::from("#......##"),
-        format!("#.{fill}.##"),
-        String::from("#......##"),
-        String::from("########."),
-    ]
-}
-
-/// The colour of the battery's charge: green while charging, red when low.
-fn battery_color(pct: u8, charging: bool) -> u32 {
-    if charging {
-        ui::GREEN
-    } else if pct <= 10 {
-        ui::RED
-    } else {
-        ui::text()
-    }
-}
-
-/// A soft-pixel symbol in the middle of tile `t`, about two thirds of it
-/// wide, its cells a whole number of units (crisp).
-fn tile_glyph(c: &mut Canvas, rows: &[&str], t: Rect, color: u32) {
-    let (w, h) = ui::soft_size(rows, 1);
-    let n = w.max(h).max(1);
-    let cell = ((t.w * 13 + 10 * n) / (20 * n)).max(1) * 1000;
-    ui::soft_pixels_in(c, rows, t, cell, color);
-}
-
-/// The justOS mark on its dark tile, as large as a dock icon (`hot`: under
-/// the pointer, a little lighter).
-fn draw_mark_tile(c: &mut Canvas, r: Rect, hot: bool) {
-    let grad = if hot { ui::lighten_grad(MARK_GRAD, 25) } else { MARK_GRAD };
-    ui::tile(c, r, r.w / 4, grad);
-    // Cells of a thirteenth of the tile, as on justapps.it.
-    ui::soft_pixels_keyed(c, &G_MARK, r, r.w * 1000 / 13, &|k| if k == b'o' { ui::ORANGE } else { CREAM });
-}
-
 /// The month of `d` in `g`: its name, the weekdays and the days, today on
 /// an orange tile.
 fn draw_month(c: &mut Canvas, g: Rect, d: &DateTime, fg: u32, dim: u32) {
@@ -4283,41 +2737,41 @@ impl View for Desktop {
         self.popup = None;
         self.overview = None;
         self.fx.clear();
+        let m = self.main_mon();
+        self.sh.bar.set_screen(m.w as f32, m.h as f32, time::uptime_ms());
         // Each window stays on its monitor (the nearest one, if its monitor
         // went away), fitted into it.
-        let places: Vec<(Rect, Rect)> = self
+        let places: Vec<(Rect, Rect, Rect)> = self
             .windows
             .iter()
             .map(|win| {
                 let m = self.monitor_of(win.rect);
-                (m, self.work_area_on(m))
+                (m, self.work_area_on(m), self.max_area(win.rect))
             })
             .collect();
-        for (win, (full, area)) in self.windows.iter_mut().zip(places) {
-            if let Some(r) = win.restore.as_mut() {
-                win.rect = full; // maximised: fill its monitor
-                *r = fit_into(*r, area);
-            } else {
-                win.rect = fit_into(win.rect, area);
+        for (win, (full, area, max)) in self.windows.iter_mut().zip(places) {
+            match &mut win.mode {
+                wm::Mode::Normal => win.rect = fit_into(win.rect, area),
+                wm::Mode::Maximized { restore } => {
+                    win.rect = max;
+                    *restore = wm::to_r(fit_into(wm::from_r(*restore), area));
+                }
+                wm::Mode::Fullscreen { restore, max_restore } => {
+                    win.rect = full;
+                    *restore = wm::to_r(fit_into(wm::from_r(*restore), area));
+                    if let Some(r) = max_restore {
+                        *r = wm::to_r(fit_into(wm::from_r(*r), area));
+                    }
+                }
             }
         }
     }
 
     fn animating(&self) -> bool {
-        if let Some(lock) = &self.lock {
-            return lock.animating();
-        }
         !self.fx.is_empty()
-            || self.launcher.as_ref().is_some_and(|l| !l.settled || l.closing || apps::search::searching(&l.index))
             || self.popup.as_ref().is_some_and(|p| !p.settled)
-            || self.mag.moving()
-            || self.grow.moving()
-            || self.slide.moving()
-            || (self.dock_reveal && self.reveal_left != 0)
             || self.bounce.is_some()
-            || self.bar_moving()
-            || self.notes.iter().any(|n| n.moving())
-            || self.ending.is_some()
+            || self.shell_animating()
             || self.windows.iter().any(|w| w.shown(self.space) && w.app.animating())
             || self.overview.as_ref().is_some_and(|o| !o.settled || o.closing || o.held.is_some())
             || self.space_hud.is_some()
@@ -4325,17 +2779,8 @@ impl View for Desktop {
 
     fn event(&mut self, l: &mut Looper, ev: Event) -> bool {
         let quit = self.handle(l, ev);
-        self.update_dock_size(l);
-        self.update_reveal(l);
-        // Into or out of full screen: the bar and the dock come and go.
-        let full = self.full_screen();
-        if full != self.was_full {
-            self.was_full = full;
-            self.dock_reveal = false;
-            self.reveal_left = 0;
-            self.slide = Slide::at(0);
-            l.damage(self.screen());
-        }
+        // Into or out of full screen: the bar goes down or comes back.
+        self.sync_hidden(l);
         quit
     }
 
@@ -4345,43 +2790,12 @@ impl View for Desktop {
 }
 
 impl Desktop {
-    /// Events while the computer is locked: only the lock screen sees them
-    /// (and the clock keeps going).
-    fn handle_locked(&mut self, l: &mut Looper, ev: Event) {
-        let Some(lock) = &mut self.lock else { return };
-        let outcome = match ev {
-            Event::Key(k) => lock.key(k),
-            Event::Press { .. } => lock.press(),
-            Event::Tick => {
-                let d = now();
-                let minute = d.hour * 60 + d.min;
-                if minute != self.minute {
-                    self.minute = minute;
-                    Outcome::Redraw
-                } else {
-                    Outcome::Stay
-                }
-            }
-            Event::Frame => {
-                if lock.finished() {
-                    self.lock = None;
-                    self.last_input = time::uptime_ms();
-                    self.minute = u64::MAX; // the bar and the widgets show the time again
-                }
-                Outcome::Redraw
-            }
-            _ => Outcome::Stay,
-        };
-        if outcome != Outcome::Stay {
-            l.damage(self.screen());
-        }
-    }
 
     /// Locks the screen after the minutes chosen in the settings without
     /// input, when a password is set.
     fn idle_lock(&mut self, l: &mut Looper) {
         let s = settings::get();
-        if s.lock_after == 0 || s.password.is_empty() || self.ending.is_some() {
+        if s.lock_after == 0 || s.password.is_empty() || self.sh.ending.is_some() {
             return;
         }
         if time::uptime_ms().saturating_sub(self.last_input) > u64::from(s.lock_after) * 60_000 {
@@ -4393,36 +2807,46 @@ impl Desktop {
         if matches!(ev, Event::Press { .. } | Event::Key(_) | Event::Move { .. } | Event::Wheel { .. }) {
             self.last_input = time::uptime_ms();
         }
-        if self.lock.is_some() {
-            self.handle_locked(l, ev);
-            return false;
-        }
-        if matches!(ev, Event::Tick) {
+        if matches!(ev, Event::Tick) && !self.sh.locked {
             self.idle_lock(l);
-            if self.lock.is_some() {
-                return false;
+        }
+        if self.sh.locked {
+            // The keypad, the keys, the clock: nothing else.
+            match ev {
+                Event::Press { x, y, .. } => {
+                    self.shell_press(l, x, y);
+                }
+                Event::Move { x, y, .. } => {
+                    self.mouse = (x, y);
+                    self.shell_move(l, x, y);
+                }
+                Event::Key(k) => {
+                    self.shell_key(l, k);
+                }
+                Event::Tick => {
+                    let d = now();
+                    let minute = d.hour * 60 + d.min;
+                    if minute != self.minute {
+                        self.minute = minute;
+                        l.damage(self.screen());
+                    }
+                    self.shell_tick(l);
+                }
+                Event::Frame => self.shell_frame(l),
+                _ => {}
             }
+            return false;
         }
         match ev {
             Event::Press { x, y, double } => self.press(l, x, y, double),
             Event::Menu { x, y } => {
-                if self.launcher.is_some() || self.overview.is_some() || self.ending.is_some() {
+                if self.overview.is_some() || self.sh.ending.is_some() {
                     return false;
                 }
-                // The dock is over the windows: an app's icon (or the bin's)
-                // has a menu; the mark and the status have none.
-                if self.dock_live() {
-                    let items = self.dock_items();
-                    let (mark, rects, bg) = self.dock_geometry(&items);
-                    if bg.contains(x, y) || rects.iter().any(|r| r.contains(x, y)) {
-                        let d = self.dims_at(&items, self.dock_size());
-                        let wide = self.wide_rects(&items, &rects);
-                        let on_own = mark.contains(x, y) || self.status_pill(bg, &d).contains(x, y);
-                        if let Some(i) = wide.iter().position(|r| r.grow(d.gap / 2).contains(x, y)).filter(|_| !on_own) {
-                            self.dock_menu(l, &items, i);
-                        }
-                        return false;
-                    }
+                // The bar: an app's icon (or the bin's) has its menu, the
+                // mark the system's.
+                if self.shell_menu(l, x, y) {
+                    return false;
                 }
                 let on_window = self
                     .windows
@@ -4439,9 +2863,6 @@ impl Desktop {
                             self.act(l, Some(id), action);
                         }
                     }
-                    return false;
-                }
-                if self.dock().contains(x, y) {
                     return false;
                 }
                 let widgets = if settings::get().widgets { "Nascondi i widget" } else { "Mostra i widget" };
@@ -4463,14 +2884,7 @@ impl Desktop {
             Event::Move { x, y, held } => self.moved(l, x, y, held),
             Event::Wheel { lines } => {
                 let (x, y) = self.mouse;
-                let m = self.main_mon();
-                if let Some(la) = &mut self.launcher {
-                    let n = la.visible().len() as i32;
-                    let cols = 7.min((m.w - 80) / 128).max(1);
-                    let rows = (n + cols - 1) / cols;
-                    let max = (rows * 120 + 170 + la.found_h() - (m.h - 70)).max(0);
-                    la.scroll = (la.scroll + lines * 60).clamp(0, max);
-                    l.damage(self.screen());
+                if self.shell_wheel(l, lines) {
                     return false;
                 }
                 if self.overview.is_some() {
@@ -4493,23 +2907,12 @@ impl Desktop {
                     for w in self.widgets().iter().take(self.show_widgets()) {
                         l.damage(ui::with_shadow(*w));
                     }
-                    // The pill over a full-screen window shows the time too.
-                    if self.full_screen() {
-                        l.damage(self.dock_zone());
-                    }
                 }
                 let second = time::uptime_ms() / 5000;
                 if second != self.second {
                     self.second = second;
                     if self.show_widgets() > 2 {
                         l.damage(ui::with_shadow(self.widgets()[2]));
-                    }
-                    let battery = crate::acpi::power::battery();
-                    if battery != self.battery {
-                        // The dock may change width: damage it before and after.
-                        l.damage(self.dock_zone());
-                        self.battery = battery;
-                        l.damage(self.dock_zone());
                     }
                 }
                 for w in self.windows.iter_mut() {
@@ -4567,11 +2970,8 @@ impl Desktop {
                 if super::take_sleep_lock() && settings::has_password() {
                     self.lock_screen(l);
                 }
-                if self.notes.iter().any(|n| n.gone()) {
-                    self.notes.retain(|n| !n.gone());
-                    l.damage(self.notes_zone());
-                }
-                self.bar_tick(l);
+                self.shell_tick(l);
+                self.sync_idle(l);
             }
             Event::Frame => {
                 // Windows in motion.
@@ -4595,27 +2995,6 @@ impl Desktop {
                         l.damage(self.dock_zone());
                     }
                 }
-                if let Some(la) = &mut self.launcher {
-                    if !la.settled || la.closing {
-                        l.damage(Rect::new(0, 0, self.w, self.h));
-                        la.settled = la.anim.done();
-                    }
-                    // The search inside files goes on a little each frame;
-                    // what it finds goes after the files found by name.
-                    if !la.closing && apps::search::searching(&la.index) {
-                        let more = apps::search::step(&mut la.index);
-                        if !more.is_empty() || !apps::search::searching(&la.index) {
-                            la.found.extend(more);
-                            l.damage(Rect::new(0, 0, self.w, self.h));
-                        }
-                    }
-                    if la.closing && la.anim.done() {
-                        let then = self.launcher.take().and_then(|la| la.then);
-                        if let Some(what) = then {
-                            self.launch(l, what);
-                        }
-                    }
-                }
                 let area = self.popup.as_ref().map(|p| self.popup_area(p));
                 if let (Some(p), Some(area)) = (self.popup.as_mut(), area) {
                     if !p.settled {
@@ -4623,43 +3002,13 @@ impl Desktop {
                         p.settled = p.anim.done();
                     }
                 }
-                let magnified = self.mag.step();
-                if magnified {
-                    l.damage(self.dock_zone());
-                }
                 if let Some((_, a)) = &self.bounce {
-                    l.damage(self.dock_zone());
+                    self.damage_bar(l);
                     if a.done() {
                         self.bounce = None;
                     }
                 }
-                // The bar changing shape (the dock growing or shrinking too):
-                // where it is now and where it was.
-                let growing = self.grow.moving();
-                if self.bar_moving() || growing || self.slide.moving() {
-                    self.damage_bar(l);
-                }
-                // The icons move under a pointer that stays still while the
-                // dock grows or magnifies: the one under it (its name, its
-                // click) is found again.
-                let returning = self.island.moving() && self.island.target() == 0;
-                if (magnified || growing || returning) && self.carry.is_none() && (self.near_dock || self.hover.is_some()) {
-                    let (x, y) = self.mouse;
-                    let live = self.popup.is_none() && self.dock_live();
-                    let (inside, hover) = self.dock_near(x, y, live);
-                    let mag = if inside && settings::dock_magnify() { 1000 } else { 0 };
-                    if mag != self.mag.target {
-                        self.mag.target = mag;
-                        l.damage(self.dock_zone());
-                    }
-                    if hover != self.hover {
-                        self.hover = hover;
-                        l.damage(self.dock_zone());
-                    }
-                }
-                if self.notes.iter().any(|n| n.moving()) {
-                    l.damage(self.notes_zone());
-                }
+                self.shell_frame(l);
                 let space = self.space;
                 for w in self.windows.iter_mut() {
                     if w.shown(space) && w.app.animating() && w.app.frame() {
@@ -4682,46 +3031,26 @@ impl Desktop {
                         self.space_hud = None;
                     }
                 }
-                if let Some((how, a)) = &self.ending {
-                    l.damage(self.screen());
-                    if a.elapsed() > 900 {
-                        match how {
-                            Ending::Restart => crate::acpi::reboot(),
-                            Ending::PowerOff => crate::acpi::power_off(),
-                        }
-                    }
-                }
             }
         }
         false
     }
 
     fn paint(&mut self, c: &mut Canvas, r: Rect) {
-        if let Some(lock) = &self.lock {
-            let covered = lock.anim.done() && lock.leaving.is_none();
-            if covered {
-                lock.draw(c, &self.blur, r, &now(), self.main_mon());
-                return;
+        if self.sh.locked {
+            self.draw_lock_screen(c, r);
+            if r.overlaps(&self.dock_zone()) {
+                self.draw_bar(c);
             }
+            self.draw_black(c);
+            return;
         }
         self.paint_desktop(c, r);
-        if let Some(lock) = &self.lock {
-            lock.draw(c, &self.blur, r, &now(), self.main_mon());
-        }
     }
 
     fn paint_desktop(&mut self, c: &mut Canvas, r: Rect) {
-        if let Some(la) = &self.launcher {
-            if la.shown() >= 1000 {
-                self.draw_launcher(c, la);
-                return;
-            }
-        }
         if let Some(o) = &self.overview {
             self.draw_overview(c, o);
-            if !self.notes.is_empty() && r.overlaps(&self.notes_zone()) {
-                self.draw_notes(c);
-            }
             return;
         }
         c.blit(&self.sharp, r.x, r.y, r);
@@ -4762,9 +3091,7 @@ impl Desktop {
                 f.last = f.last.union(&dst.grow(2));
             }
         }
-        if r.overlaps(&self.dock_zone()) {
-            self.draw_bar(c);
-        }
+        self.draw_dim(c);
         if !clock_under && r.overlaps(&self.clock_zone()) {
             self.draw_clock(c);
         }
@@ -4773,8 +3100,9 @@ impl Desktop {
                 self.draw_popup(c, p);
             }
         }
-        if !self.notes.is_empty() && r.overlaps(&self.notes_zone()) {
-            self.draw_notes(c);
+        self.draw_launchpad(c);
+        if r.overlaps(&self.dock_zone()) {
+            self.draw_bar(c);
         }
         if let Some(a) = &self.space_hud {
             if r.overlaps(&ui::with_shadow(self.space_hud_rect())) {
@@ -4786,12 +3114,7 @@ impl Desktop {
                 self.draw_carry(c, carry);
             }
         }
-        if let Some(la) = &self.launcher {
-            self.draw_launcher(c, la);
-        }
-        if let Some((_, a)) = &self.ending {
-            self.draw_ending(c, a);
-        }
+        self.draw_black(c);
     }
 }
 
@@ -4843,6 +3166,10 @@ pub fn run(d: &mut Display) {
     let (mons, main_at) = screens(w, h);
     let (sharp, blur) = wallpapers(&settings::get().wallpaper, w, h, &mons);
     let pins = settings::get().dock;
+    let m = mons[main_at];
+    // With a password, the computer starts locked.
+    let mut sh = Shell::new(settings::has_password(), m.w, m.h);
+    sh.locked = settings::has_password();
     let mut desk = Desktop {
         w,
         h,
@@ -4853,12 +3180,8 @@ pub fn run(d: &mut Display) {
         windows: Vec::new(),
         next_id: 1,
         drag: None,
-        launcher: None,
         popup: None,
         fx: Vec::new(),
-        notes: Vec::new(),
-        hover: None,
-        mag: Glide::new(0),
         bounce: None,
         starting: Vec::new(),
         crashed: Vec::new(),
@@ -4867,17 +3190,8 @@ pub fn run(d: &mut Display) {
         second: 0,
         last_new: None,
         hovered: None,
-        ending: None,
-        was_full: false,
-        dock_reveal: false,
-        slide: Slide::at(0),
-        reveal_left: 0,
-        ptr_a: (0, 0),
-        ptr_b: (0, 0),
         history: Vec::new(),
         quiet: false,
-        // With a password, the computer starts locked.
-        lock: settings::has_password().then(Lock::new),
         last_input: time::uptime_ms(),
         snap_preview: None,
         space: 0,
@@ -4885,26 +3199,13 @@ pub fn run(d: &mut Display) {
         overview: None,
         space_hud: None,
         carry: None,
-        battery: None,
-        acts: Vec::new(),
-        bubble: Morph::new(),
-        bubble_icon: String::new(),
-        island: Morph::new(),
-        isl: None,
-        near_at: 0,
-        isl_hold: Rect::EMPTY,
-        levels: None,
-        bar_painted: Cell::new(Rect::EMPTY),
-        bar_hover: None,
-        bar_phase: 0,
-        grow: Morph::at(if settings::dock_compact() { 0 } else { 1000 }),
-        left_at: 0,
-        near_dock: false,
+        sh,
         pinned: load_pinned(pins.as_deref()),
         pins_from: pins,
         settings_seen: settings::changes(),
         dock_menu: None,
     };
+    desk.sync_idle_now();
     let mut l = Looper::new(d);
     l.damage_all(d);
     startup_sound();

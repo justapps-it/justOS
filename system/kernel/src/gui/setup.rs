@@ -353,6 +353,7 @@ impl Setup {
         let (name, wall) = (String::from(self.name.trim()), res::WALLPAPERS[self.wall].0);
         let (theme, device) = (self.theme, self.device.clone());
         let hash = settings::password_hash(&self.password);
+        let pin = settings::pin_len(&self.password);
         let [_, sound, widgets] = self.switches;
         settings::update(|s| {
             s.name = name;
@@ -360,6 +361,7 @@ impl Setup {
             s.wallpaper = String::from(wall);
             s.theme = theme;
             s.password = hash;
+            s.pin = pin;
             s.device_name = device;
             s.startup_sound = sound;
             s.widgets = widgets;

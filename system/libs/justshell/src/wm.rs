@@ -368,6 +368,10 @@ pub struct SuperKey {
 }
 
 impl SuperKey {
+    pub const fn new() -> SuperKey {
+        SuperKey { down: false, used: false }
+    }
+
     /// A key went down or up; true when the logo key was released with no
     /// other key in between.
     pub fn key(&mut self, is_super: bool, pressed: bool) -> bool {

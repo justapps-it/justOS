@@ -1,29 +1,47 @@
-//! Windows, as in the justOS design: an opaque panel of the theme with the
-//! app's name at the top left and three tiles at the top right (minimise
-//! and full screen grey, close orange); the content sits in a well inside
-//! the frame. Their content is an [`App`].
-//!
-//! An app with a sidebar gets two wells side by side, with a gap of frame
-//! between them. A maximised window fills the whole screen, frame and all,
-//! with square corners.
+//! Windows, as in the dynamic bar's design (docs/design/dynamic-bar): a
+//! light frosted frame with the app's name at the top left and a pill of
+//! three round buttons at the top right (minimise, full screen, close in
+//! orange); the content sits in a pane inside the frame, two panes for an
+//! app with a sidebar. Eight handles resize it; maximised it fills the
+//! desktop above the bar, in full screen all of the screen (square corners,
+//! the bar hides). Their content is an [`App`].
 
 use super::gfx::{Canvas, Rect};
+use super::icons;
 use super::text::{self, Font};
 use super::ui;
 use crate::dev::input::KeyEvent;
 use alloc::boxed::Box;
 use alloc::string::String;
+pub use justshell::wm::{Handle, Mode, R};
+use justshell::wm::{handle_at, MIN_H, MIN_W};
 
-pub const TITLE_H: i32 = 44;
+/// The title row.
+pub const TITLE_H: i32 = 60;
 /// The frame around the content pane, and the gap between panes.
-pub const GAP: i32 = 8;
-/// The side of a window button, the gap between them and the margin at the
-/// right end of the title row.
-const KNOB: i32 = 26;
-const KNOB_GAP: i32 = 8;
-const KNOB_MARGIN: i32 = 14;
-/// The corner that resizes a window.
-const GRIP: i32 = 18;
+pub const GAP: i32 = 9;
+const FRAME_RAD: i32 = 26;
+const PANE_RAD: i32 = 18;
+const PANE_JOIN: i32 = 6;
+/// The buttons: 28 across, 9 apart, in a pill with 10 and 8 of padding.
+const CTL_BTN: i32 = 28;
+const CTL_GAP: i32 = 9;
+const CTL_PAD_X: i32 = 10;
+const CTL_PAD_Y: i32 = 8;
+// rgba(238,228,230,.9) over the blurred wallpaper, then a faint gradient
+// from rgb(242,236,240) to rgb(220,218,222) (the design's 160deg one).
+const FRAME_TINT: u32 = 0xE6EE_E4E6;
+const FRAME_TOP: u32 = 0x33F2_ECF0;
+const FRAME_BOTTOM: u32 = 0x33DC_DADE;
+const FRAME_EDGE: u32 = 0x8CFF_FFFF;
+const TITLE_INK: u32 = 0xFF1C_1C20;
+const TITLE_INK_DIM: u32 = 0x991C_1C20;
+const CTL_PILL: u32 = 0x8CFF_FFFF;
+const CTL_PILL_EDGE: u32 = 0x99FF_FFFF;
+const CTL_BTN_BG: u32 = 0xFF4B_4B50;
+const CTL_BTN_HOT: u32 = 0xFF2E_2E33;
+const CTL_CLOSE: u32 = 0xFFFF_5A1F;
+const CTL_CLOSE_HOT: u32 = 0xFFE8_4A12;
 
 /// What an app asks the desktop to do after an event.
 pub enum Action {
@@ -50,14 +68,28 @@ pub enum Action {
 /// [`App::activity`]).
 #[derive(Clone, PartialEq, Eq)]
 pub enum Live {
-    /// A song playing: its title and the time played ("1:42").
-    Music { title: String, elapsed: String },
+    /// A song loaded in the player: its title, its album, where it is and
+    /// how long it is (seconds), whether it plays, and the player's
+    /// shuffle and repeat.
+    Music { title: String, album: String, pos: u32, len: u32, playing: bool, shuffle: bool, repeat: bool },
     /// A timer: the time left ("04:59"), its name, and whether it rings.
     Timer { left: String, label: String, ringing: bool },
 }
 
 /// The content of a window. Positions handed to it are relative to the
 /// content area unless said otherwise.
+/// What the bar's music player asks of the app playing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Media {
+    Toggle,
+    Next,
+    Prev,
+    /// Go to this thousandth of the song.
+    Seek(u32),
+    Shuffle,
+    Repeat,
+}
+
 pub trait App {
     fn title(&self) -> String;
     fn icon(&self) -> &str;
@@ -150,6 +182,11 @@ pub trait App {
     fn activity(&self) -> Option<Live> {
         None
     }
+    /// The bar's player controls the song (only an app that shows
+    /// [`Live::Music`]); true if it did something.
+    fn media(&mut self, _m: Media) -> bool {
+        false
+    }
     /// A number for the window that no other window has, for
     /// [`parent`](Self::parent) to name it (0: none).
     fn ident(&self) -> u64 {
@@ -163,19 +200,20 @@ pub trait App {
     }
 }
 
+/// A window: its frame on the screen (title row included), its content and
+/// where it is.
 pub struct Window {
     pub id: u32,
     pub app: Box<dyn App>,
-    /// Title pill and body together.
     pub rect: Rect,
     pub minimized: bool,
-    /// The size before maximising.
-    pub restore: Option<Rect>,
-    /// Snapped to half or a quarter of the screen: where it was before.
+    /// Normal, maximised (the bar stays) or full screen (the bar hides).
+    pub mode: Mode,
+    /// Snapped to half the screen: the frame it had before.
     pub snapped: Option<Rect>,
     /// The virtual desktop it is on.
     pub space: usize,
-    /// The title button under the pointer.
+    /// The window button under the pointer.
     pub hover: Option<usize>,
 }
 
@@ -183,35 +221,65 @@ pub struct Window {
 pub enum Hit {
     Title,
     Minimize,
-    Maximize,
+    /// The full-screen button.
+    Full,
     Close,
-    Resize,
+    /// One of the eight resize handles.
+    Edge(Handle),
     Body(i32, i32),
+}
+
+/// A rectangle for the shell's geometry.
+pub fn to_r(r: Rect) -> R {
+    R::new(r.x, r.y, r.w, r.h)
+}
+
+pub fn from_r(r: R) -> Rect {
+    Rect::new(r.x, r.y, r.w, r.h)
+}
+
+/// The two panes of a window with a sidebar: big corners outside, small
+/// ones where they meet (`left`: the sidebar).
+pub fn pane(c: &mut Canvas, r: Rect, left: bool, right: bool) {
+    let col = ui::well();
+    c.fill_round(r, PANE_RAD, col);
+    // Square-ish corners on the inner side: cover them with a small radius.
+    let half = r.w / 2;
+    if !right {
+        c.fill_round(Rect::new(r.x + half, r.y, r.w - half, r.h), PANE_JOIN, col);
+    }
+    if !left {
+        c.fill_round(Rect::new(r.x, r.y, half, r.h), PANE_JOIN, col);
+    }
 }
 
 impl Window {
     pub fn new(id: u32, app: Box<dyn App>, x: i32, y: i32) -> Window {
         let (w, h) = app.size();
-        let rect = Rect::new(x, y, w + 2 * GAP, h + TITLE_H + GAP);
-        Window { id, app, rect, minimized: false, restore: None, snapped: None, space: 0, hover: None }
+        let (w, h) = Window::outer_size(w, h);
+        Window { id, app, rect: Rect::new(x, y, w, h), minimized: false, mode: Mode::Normal, snapped: None, space: 0, hover: None }
     }
 
-    /// On the screen when desktop `space` is shown.
+    /// Is it on desktop `space` and not minimised?
     pub fn shown(&self, space: usize) -> bool {
         !self.minimized && self.space == space
     }
 
-    /// The whole window for a content area of `w` x `h`.
+    /// The frame around a content area of `w` x `h`.
     pub fn outer_size(w: i32, h: i32) -> (i32, i32) {
         (w + 2 * GAP, h + TITLE_H + GAP)
     }
 
-    /// Maximised: filling the whole screen.
+    /// Full screen (the bar hides over it).
     pub fn full(&self) -> bool {
-        self.restore.is_some()
+        self.mode.is_full()
     }
 
-    /// The title row.
+    /// Maximised or full screen: it does not move or resize by hand.
+    pub fn zoomed(&self) -> bool {
+        !self.mode.free()
+    }
+
     pub fn title_rect(&self) -> Rect {
         Rect::new(self.rect.x, self.rect.y, self.rect.w, TITLE_H)
     }
@@ -220,41 +288,55 @@ impl Window {
         Rect::new(self.rect.x + GAP, self.rect.y + TITLE_H, self.rect.w - 2 * GAP, self.rect.h - TITLE_H - GAP)
     }
 
-    /// Minimise, maximise and close, at the right end of the title row.
+    /// The pill of window buttons at the right of the title row.
+    pub fn controls(&self) -> Rect {
+        let w = 3 * CTL_BTN + 2 * CTL_GAP + 2 * CTL_PAD_X;
+        let h = CTL_BTN + 2 * CTL_PAD_Y;
+        Rect::new(self.rect.right() - GAP - w, self.rect.y + (TITLE_H - h) / 2, w, h)
+    }
+
+    /// Minimise, full screen, close.
     pub fn buttons(&self) -> [Rect; 3] {
-        let t = self.title_rect();
-        let (s, step) = (KNOB, KNOB + KNOB_GAP);
-        let y = t.y + (t.h - s) / 2;
-        let x = t.right() - KNOB_MARGIN - s;
-        [Rect::new(x - 2 * step, y, s, s), Rect::new(x - step, y, s, s), Rect::new(x, y, s, s)]
+        let p = self.controls();
+        let b = |i: i32| Rect::new(p.x + CTL_PAD_X + i * (CTL_BTN + CTL_GAP), p.y + CTL_PAD_Y, CTL_BTN, CTL_BTN);
+        [b(0), b(1), b(2)]
     }
 
-    fn grip(&self) -> Rect {
-        let b = self.body();
-        Rect::new(b.right() - GRIP, b.bottom() - GRIP, GRIP + 4, GRIP + 4)
-    }
-
-    /// Everything the window paints, shadow included.
+    /// What it covers on the screen, its shadow included.
     pub fn bounds(&self) -> Rect {
-        ui::with_shadow(self.rect).union(&ui::with_shadow(self.title_rect()))
+        if self.full() {
+            self.rect
+        } else {
+            shadow_area(self.rect)
+        }
+    }
+
+    /// The resize handle under (`x`, `y`): only for a window that can be
+    /// resized and is neither maximised nor full screen.
+    pub fn handle_at(&self, x: i32, y: i32) -> Option<Handle> {
+        if !self.app.resizable() || self.zoomed() {
+            return None;
+        }
+        handle_at(to_r(self.rect), x, y)
     }
 
     pub fn hit(&self, x: i32, y: i32) -> Option<Hit> {
-        let [min, max, close] = self.buttons();
+        if let Some(h) = self.handle_at(x, y) {
+            return Some(Hit::Edge(h));
+        }
+        let [min, full, close] = self.buttons();
         if close.contains(x, y) {
             return Some(Hit::Close);
-        } else if max.contains(x, y) {
-            return Some(Hit::Maximize);
+        } else if full.contains(x, y) {
+            return Some(Hit::Full);
         } else if min.contains(x, y) {
             return Some(Hit::Minimize);
         } else if self.title_rect().contains(x, y) {
             return Some(Hit::Title);
         }
-        if self.app.resizable() && !self.full() && self.grip().contains(x, y) {
-            Some(Hit::Resize)
-        } else if self.body().contains(x, y) {
-            let b = self.body();
-            Some(Hit::Body(x - b.x, y - b.y))
+        let b = self.body();
+        if self.rect.contains(x, y) {
+            Some(Hit::Body((x - b.x).clamp(0, b.w - 1), (y - b.y).clamp(0, b.h - 1)))
         } else {
             None
         }
@@ -263,54 +345,58 @@ impl Window {
     pub fn draw(&mut self, c: &mut Canvas, blur: &Canvas, focused: bool, clip: Rect) {
         let body = self.body();
         let full = self.full();
-        if clip.overlaps(&ui::with_shadow(self.rect)) {
-            // The frame, with the title row (square on a full screen): an
-            // opaque panel of the theme.
-            let frame = self.rect;
-            let rad = if full { 0 } else { 26 };
+        let frame = self.rect;
+        let rad = if full { 0 } else { FRAME_RAD };
+        if clip.overlaps(&self.bounds()) {
+            // Light frosted glass: the blurred wallpaper under a pale tint,
+            // a faint warm gradient, a white line inside the edge.
             if !full {
-                ui::drop_shadow(c, frame, rad, 22, if focused { 95 } else { 60 });
+                c.shadow(frame, rad, 40, if focused { 120 } else { 80 });
+                c.shadow(frame, rad, 8, if focused { 70 } else { 40 });
             }
-            c.fill_round_grad(frame, rad, ui::panel_top(), ui::panel_bottom());
-            if !full {
-                c.stroke_round(frame, rad, 1, ui::line());
-            }
-            c.sheen_round(frame, rad, 1, ui::sheen());
+            c.blit_round(blur, frame, rad, FRAME_TINT);
+            c.fill_round_grad(frame, rad, FRAME_TOP, FRAME_BOTTOM);
+            c.stroke_round(frame, rad, 1, FRAME_EDGE);
             let t = self.title_rect();
-            let (lh, _) = text::metrics(Font::Body);
-            let first = self.buttons()[0];
-            let name = text::fit(Font::Body, &self.app.title(), first.x - t.x - 34);
-            let fg = if focused { ui::text() } else { ui::text_dim() };
-            text::draw(c, Font::Body, t.x + 20, t.y + (TITLE_H - lh) / 2 + 1, &name, fg);
-            ui::window_knobs(c, &self.buttons(), self.hover);
+            let (lh, _) = text::metrics(Font::Title15);
+            let pill = self.controls();
+            let name = text::fit(Font::Title15, &self.app.title(), pill.x - t.x - 34);
+            let fg = if focused { TITLE_INK } else { TITLE_INK_DIM };
+            text::draw(c, Font::Title15, t.x + 17, t.y + (TITLE_H - lh) / 2, &name, fg);
+            c.fill_round(pill, pill.h / 2, CTL_PILL);
+            c.stroke_round(pill, pill.h / 2, 1, CTL_PILL_EDGE);
+            let full_icon = if full { "unmax" } else { "max" };
+            for (i, (b, (icon, size))) in self.buttons().iter().zip([("chev-d", 16), (full_icon, 13), ("x", 15)]).enumerate() {
+                let hot = self.hover == Some(i);
+                let bg = match (i == 2, hot) {
+                    (true, false) => CTL_CLOSE,
+                    (true, true) => CTL_CLOSE_HOT,
+                    (false, false) => CTL_BTN_BG,
+                    (false, true) => CTL_BTN_HOT,
+                };
+                c.fill_circle(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, bg);
+                icons::centered(c, icon, size, b.x + b.w / 2, b.y + b.h / 2, ui::WHITE);
+            }
         }
-        if clip.overlaps(&ui::with_shadow(body)) {
-            let rad = 18;
+        if clip.overlaps(&body) {
             let side = self.app.sidebar();
             if side > 0 {
                 let sb = Rect::new(body.x, body.y, side, body.h);
                 let main = Rect::new(body.x + side + GAP, body.y, body.w - side - GAP, body.h);
-                ui::well_pane(c, sb, rad);
-                ui::well_pane(c, main, rad);
+                pane(c, sb, true, false);
+                pane(c, main, false, true);
             } else {
-                ui::well_pane(c, body, rad);
+                c.fill_round(body, PANE_RAD, ui::well());
             }
             let saved = c.clip();
             c.set_clip(saved.intersect(&body));
             self.app.draw(c, body, blur, focused);
-            if self.app.resizable() && !full {
-                // Three short diagonal strokes in the corner.
-                let (gx, gy) = (body.right() - 8, body.bottom() - 8);
-                for k in [4, 8, 12] {
-                    c.line(gx - k, gy, gx, gy - k, 1, ui::text_faint());
-                }
-            }
             c.set_clip(saved);
         }
     }
 
-    /// The window drawn on its own, with transparent surroundings (for
-    /// animations): the picture and where it goes on the screen.
+    /// The window drawn on its own (for the animations): the picture and
+    /// where it goes on the screen.
     pub fn snapshot(&mut self, blur: &Canvas, focused: bool) -> (Canvas, Rect) {
         let b = self.bounds();
         let local_blur = blur.crop(b);
@@ -323,24 +409,19 @@ impl Window {
         (layer, b)
     }
 
-    /// Maximises into `screen`, or goes back.
-    pub fn toggle_maximize(&mut self, screen: Rect) {
-        match self.restore.take() {
-            Some(r) => self.rect = r,
-            None => {
-                self.restore = Some(self.rect);
-                self.rect = screen;
-            }
-        }
-    }
-
-    /// The smallest size: what the app asked for, or less for resizable ones.
+    /// The smallest frame: 460 x 320 for a window that can be resized (or
+    /// its own size, if smaller), its size for one that cannot.
     pub fn min_size(&self) -> (i32, i32) {
-        let (w, h) = self.app.size();
+        let (w, h) = Window::outer_size(self.app.size().0, self.app.size().1);
         if self.app.resizable() {
-            Window::outer_size((w * 3 / 5).max(320), (h * 3 / 5).max(200))
+            (MIN_W.min(w), MIN_H.min(h))
         } else {
-            Window::outer_size(w, h)
+            (w, h)
         }
     }
+}
+
+/// What a framed window's shadow reaches.
+pub fn shadow_area(r: Rect) -> Rect {
+    r.grow(42).offset(0, 14)
 }

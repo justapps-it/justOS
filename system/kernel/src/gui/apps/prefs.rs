@@ -310,8 +310,6 @@ enum Ctl {
     /// The sound when the desktop appears.
     Chime,
     /// The dock small at rest, and its icons growing under the pointer.
-    DockCompact,
-    DockMagnify,
     /// The most frames a second.
     Fluidity,
     /// The keyboard layout.
@@ -813,10 +811,6 @@ impl Prefs {
             Section::Look => {
                 vec![
                     card(vec![row("Tema", "Finestre, menu e pannelli", Ctl::Themes)]),
-                    card(vec![
-                        row("Dock compatto", "Piccolo a riposo, grande sotto il puntatore", Ctl::DockCompact),
-                        row("Ingrandimento icone", "L'icona sotto il puntatore cresce", Ctl::DockMagnify),
-                    ]),
                     card(vec![row("Sfondo", "", Ctl::Wallpapers)]),
                 ]
             }
@@ -1054,7 +1048,7 @@ impl Prefs {
             Ctl::Forget(_) => (button_w("Chiedi di nuovo"), 34),
             Ctl::Back => (button_w("Indietro"), 34),
             Ctl::PermView(_) => (text::width(Font::Heading, "›"), bh),
-            Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify | Ctl::Mirror => (52, 30),
+            Ctl::Chime | Ctl::Perm(..) | Ctl::Mirror => (52, 30),
             Ctl::Swap => (button_w("Scambia"), 34),
             Ctl::BtPower => (52, 30),
             Ctl::BtScan => (button_w("Cerca"), 34),
@@ -1184,7 +1178,7 @@ impl Prefs {
                 let (f, b) = field_and_button(r, "Imposta");
                 vec![f, b]
             }
-            Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) | Ctl::DockCompact | Ctl::DockMagnify | Ctl::Back => vec![r],
+            Ctl::Setup | Ctl::Test | Ctl::Forget(_) | Ctl::Chime | Ctl::Perm(..) | Ctl::Back => vec![r],
             // The whole row opens the permission's page.
             Ctl::PermView(_) => vec![p.r],
             Ctl::Swap | Ctl::Mirror | Ctl::BtPower | Ctl::BtScan => vec![r],
@@ -1356,8 +1350,6 @@ impl Prefs {
                     ui::button(c, b, l, !*paired && k == 0, hot(k));
                 }
             }
-            Ctl::DockCompact => ui::toggle(c, r, settings::dock_compact()),
-            Ctl::DockMagnify => ui::toggle(c, r, settings::dock_magnify()),
             Ctl::Perm(a, j) => {
                 let on = self.privacy.get(*a).and_then(|g| g.perms.get(*j)).is_some_and(|(_, answer)| *answer == Some(Answer::Allow));
                 ui::toggle(c, r, on);
@@ -1638,8 +1630,6 @@ impl Prefs {
             }
             Ctl::Chime => settings::update(|s| s.startup_sound = !s.startup_sound),
             // The desktop sees the change at its next tick.
-            Ctl::DockCompact => settings::update(|s| s.dock_compact = !s.dock_compact),
-            Ctl::DockMagnify => settings::update(|s| s.dock_magnify = !s.dock_magnify),
             Ctl::Fluidity => {
                 let _ = crate::gui::set_fluidity(crate::gui::pace::CHOICES[k.min(crate::gui::pace::CHOICES.len() - 1)]);
             }

@@ -7,7 +7,7 @@ use crate::fs;
 use crate::sync::IrqLock;
 use alloc::format;
 use alloc::string::String;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 const FILE: &str = "sys:/system/settings";
 
@@ -26,6 +26,9 @@ pub struct Settings {
     /// The password that unlocks the computer, as "salt:hash" in hex
     /// (empty: no password).
     pub password: String,
+    /// The password is a PIN of this many digits (0: it is not): the lock
+    /// screen shows a keypad.
+    pub pin: u32,
     /// Lock the screen after this many minutes without input (0: never).
     pub lock_after: u32,
     /// Pixels per unit: 0 chooses by the screen, 1 or 2 as the user wants
@@ -35,10 +38,6 @@ pub struct Settings {
     pub widgets: bool,
     /// Dark or light windows, menus and panels.
     pub theme: Theme,
-    /// The dock small at rest, full size under the pointer.
-    pub dock_compact: bool,
-    /// The dock's icons grow under the pointer.
-    pub dock_magnify: bool,
     /// The apps kept in the dock, in order (None: the usual ones): app ids,
     /// "launcher", or "spawn:" and a program's file.
     pub dock: Option<alloc::vec::Vec<String>>,
@@ -68,12 +67,11 @@ impl Default for Settings {
             volume: 70,
             startup_sound: true,
             password: String::new(),
+            pin: 0,
             lock_after: 5,
             scale: 0,
             widgets: false,
             theme: Theme::Dark,
-            dock_compact: true,
-            dock_magnify: true,
             dock: None,
             fluidity: 0,
             device_name: String::new(),
@@ -86,22 +84,9 @@ impl Default for Settings {
 
 static CURRENT: IrqLock<Option<Settings>> = IrqLock::new(None);
 
-// What the desktop reads on every frame, without a copy of the settings:
-// the dock's two switches, and a count of the changes (it looks again at
-// the rest when it moves).
-static DOCK_COMPACT: AtomicBool = AtomicBool::new(true);
-static DOCK_MAGNIFY: AtomicBool = AtomicBool::new(true);
+// What the desktop reads on every frame, without a copy of the settings: a
+// count of the changes (it looks again at the rest when it moves).
 static CHANGES: AtomicU32 = AtomicU32::new(0);
-
-/// The dock is small at rest.
-pub fn dock_compact() -> bool {
-    DOCK_COMPACT.load(Ordering::Relaxed)
-}
-
-/// The dock's icons grow under the pointer.
-pub fn dock_magnify() -> bool {
-    DOCK_MAGNIFY.load(Ordering::Relaxed)
-}
 
 /// How many times the settings changed since the start.
 pub fn changes() -> u32 {
@@ -110,8 +95,6 @@ pub fn changes() -> u32 {
 
 /// What takes effect at once outside the settings.
 fn apply(s: &Settings) {
-    DOCK_COMPACT.store(s.dock_compact, Ordering::Relaxed);
-    DOCK_MAGNIFY.store(s.dock_magnify, Ordering::Relaxed);
     super::pace::set_choice(s.fluidity);
     crate::host::set(&s.device_name);
     CHANGES.fetch_add(1, Ordering::Relaxed);
@@ -134,12 +117,11 @@ fn load() -> Settings {
             "volume" => s.volume = v.parse::<u32>().unwrap_or(70).min(100),
             "startup-sound" => s.startup_sound = v != "off",
             "password" => s.password = String::from(v),
+            "pin" => s.pin = v.parse::<u32>().unwrap_or(0).min(8),
             "lock-after" => s.lock_after = v.parse().unwrap_or(5),
             "scale" => s.scale = v.parse::<u32>().unwrap_or(0).min(2),
             "widgets" => s.widgets = v == "on",
             "theme" => s.theme = Theme::from_name(v),
-            "dock-compact" => s.dock_compact = v != "off",
-            "dock-magnify" => s.dock_magnify = v != "off",
             "dock" => s.dock = Some(v.split(';').filter(|e| !e.is_empty()).map(String::from).collect()),
             "fluidity" => s.fluidity = v.parse().unwrap_or(0),
             "device-name" => s.device_name = String::from(v),
@@ -197,12 +179,6 @@ pub fn update(f: impl FnOnce(&mut Settings)) {
     }
     if s.widgets {
         text.push_str("widgets=on\n");
-    }
-    if !s.dock_compact {
-        text.push_str("dock-compact=off\n");
-    }
-    if !s.dock_magnify {
-        text.push_str("dock-magnify=off\n");
     }
     if let Some(dock) = &s.dock {
         text.push_str(&format!("dock={}\n", dock.join(";")));
@@ -268,10 +244,25 @@ pub fn password_hash(password: &str) -> String {
     format!("{salt}:{hash}")
 }
 
-/// Sets the password that unlocks the computer (empty removes it).
+/// Sets the password that unlocks the computer (empty removes it). Four
+/// to eight digits make a PIN: the lock screen then shows a keypad.
 pub fn set_password(password: &str) {
     let stored = password_hash(password);
-    update(|s| s.password = stored);
+    let pin = pin_len(password);
+    update(|s| {
+        s.password = stored;
+        s.pin = pin;
+    });
+}
+
+/// The digits of a password that is a PIN (four to eight digits), else 0.
+pub fn pin_len(password: &str) -> u32 {
+    let n = password.len();
+    if (4..=8).contains(&n) && password.bytes().all(|b| b.is_ascii_digit()) {
+        n as u32
+    } else {
+        0
+    }
 }
 
 /// A password is set.

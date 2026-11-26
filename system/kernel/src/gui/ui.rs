@@ -239,7 +239,6 @@ pub const TILE_SHEEN: u32 = 0x47FF_FFFF;
 pub const WHITE: u32 = 0xFFFF_FFFF;
 pub const WHITE_DIM: u32 = 0xFFC9_C6CE;
 pub const WHITE_FAINT: u32 = 0xFF94_919A;
-pub const INK: u32 = 0xFF1B_1A1F;
 pub const INK_DIM: u32 = 0xFF4A_4850;
 /// Dark glass over the wallpaper (the overview's labels).
 pub const GLASS_STRONG: u32 = 0xE02C_2B31;
@@ -321,10 +320,6 @@ pub fn light_glass(c: &mut Canvas, _blur: &Canvas, r: Rect, rad: i32, shadow: bo
 // symbol can have cells of 2.5 or 3.4 units and still look the same at any
 // scale.
 
-/// Minimise: a chevron pointing down.
-pub const GLYPH_MIN: [&str; 5] = [".....", "#...#", ".#.#.", "..#..", "....."];
-/// Full screen: two opposite corners.
-pub const GLYPH_FULL: [&str; 5] = ["###..", "#....", "#...#", "....#", "..###"];
 /// Close: a cross.
 pub const GLYPH_CLOSE: [&str; 5] = ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"];
 
@@ -401,18 +396,6 @@ pub fn glyph(c: &mut Canvas, name: &str, size: i32, x: i32, y: i32, color: u32) 
     super::res::draw_icon_tinted(c, name, size, x, y, color);
 }
 
-/// The window buttons: three tiles, minimise and full screen grey, close
-/// orange, each with its soft-pixel symbol (`hover`: the one under the
-/// pointer, a little lighter).
-pub fn window_knobs(c: &mut Canvas, buttons: &[Rect; 3], hover: Option<usize>) {
-    for (i, (b, glyph)) in buttons.iter().zip([&GLYPH_MIN, &GLYPH_FULL, &GLYPH_CLOSE]).enumerate() {
-        let (grad, fg) = if i == 2 { (ORANGE_GRAD, WHITE) } else { (knob_grad(), knob_glyph()) };
-        let grad = if hover == Some(i) { lighten_grad(grad, 40) } else { grad };
-        tile(c, *b, 8, grad);
-        // Five cells of 3/26 of the tile: 3 units on a 26-unit button.
-        soft_pixels_in(c, glyph, *b, b.w * 3000 / 26, fg);
-    }
-}
 
 /// The area a panel's shadow reaches.
 pub fn with_shadow(r: Rect) -> Rect {
@@ -935,46 +918,7 @@ pub fn scale_rect(r: Rect, permille: i32) -> Rect {
     Rect::new(r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h)
 }
 
-/// A value that glides towards a target (hover highlights, the dock's
-/// magnification): call [`step`](Self::step) every frame.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Glide {
-    pub value: i32,
-    pub target: i32,
-    last: u64,
-}
 
-impl Glide {
-    pub fn new(v: i32) -> Glide {
-        Glide { value: v, target: v, last: 0 }
-    }
-
-    /// Moves a share of the way to the target (about 90% in 150 ms);
-    /// returns whether it is still moving.
-    pub fn step(&mut self) -> bool {
-        let now = crate::time::uptime_ms();
-        let dt = if self.last == 0 { 16 } else { now.saturating_sub(self.last).min(100) } as i64;
-        self.last = now;
-        if self.value == self.target {
-            self.last = 0;
-            return false;
-        }
-        let diff = (self.target - self.value) as i64;
-        let mut d = diff * (dt * 15).min(1000) / 1000;
-        if d == 0 {
-            d = diff.signum();
-        }
-        self.value += d as i32;
-        if (self.target - self.value).abs() <= 2 {
-            self.value = self.target;
-        }
-        true
-    }
-
-    pub fn moving(&self) -> bool {
-        self.value != self.target
-    }
-}
 
 // ----------------------------------------------------------------------------
 // Clipboard

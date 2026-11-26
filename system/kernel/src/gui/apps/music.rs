@@ -9,7 +9,7 @@ use crate::gui::gfx::{Canvas, Rect};
 use crate::gui::res;
 use crate::gui::text::{self, Font};
 use crate::gui::ui;
-use crate::gui::wm::{Action, App, Live};
+use crate::gui::wm::{Action, App, Live, Media};
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -37,6 +37,11 @@ pub struct Music {
     dragging: Option<&'static str>,
     note: String,
     last_shown: u64,
+    /// The bar's player: the next song at random, the same song again.
+    shuffle: bool,
+    repeat: bool,
+    /// For the random order (no allocation of a generator).
+    seed: u64,
 }
 
 fn mmss(s: u64) -> String {
@@ -69,7 +74,7 @@ impl Music {
         };
         add("sys:/home/Musica", "La mia musica");
         add("sys:/system/sounds", "Suoni di justOS");
-        Music { songs, current: None, paused_at: None, scroll: 0, hover: None, dragging: None, note: String::new(), last_shown: u64::MAX }
+        Music { songs, current: None, paused_at: None, scroll: 0, hover: None, dragging: None, note: String::new(), last_shown: u64::MAX, shuffle: false, repeat: false, seed: crate::time::uptime_ms() | 1 }
     }
 
     pub fn with_file(path: &str) -> Music {
@@ -168,6 +173,15 @@ impl Music {
                     return;
                 }
             }
+        }
+        if by > 0 && self.shuffle && n > 1 {
+            // xorshift: a different song, any of the others.
+            self.seed ^= self.seed << 13;
+            self.seed ^= self.seed >> 7;
+            self.seed ^= self.seed << 17;
+            let step = 1 + (self.seed % (n as u64 - 1)) as i32;
+            self.play((i + step).rem_euclid(n) as usize, 0);
+            return;
         }
         self.play((i + by).rem_euclid(n) as usize, 0);
     }
@@ -375,8 +389,13 @@ impl App for Music {
     fn tick(&mut self) -> bool {
         // The next song when one ends.
         if let Some((pos, len, playing, _)) = self.state() {
-            if !playing && self.paused_at.is_none() && pos >= len && len > 0 && self.songs.len() > 1 {
-                self.skip(1);
+            if !playing && self.paused_at.is_none() && pos >= len && len > 0 && (self.songs.len() > 1 || self.repeat) {
+                if self.repeat {
+                    let i = self.current.as_ref().map_or(0, |c| c.0);
+                    self.play(i, 0);
+                } else {
+                    self.skip(1);
+                }
                 return true;
             }
             let shown = pos / 4000;
@@ -394,10 +413,41 @@ impl App for Music {
         }
     }
 
-    /// While a song plays: its title and the time played.
+    /// The song loaded (playing or paused), for the bar's player.
     fn activity(&self) -> Option<Live> {
-        let (pos, _, playing, rate) = self.state()?;
+        let (pos, len, playing, rate) = self.state()?;
         let (i, _, _) = self.current.as_ref()?;
-        playing.then(|| Live::Music { title: self.songs[*i].title.clone(), elapsed: mmss(pos / rate.max(1) as u64) })
+        let song = &self.songs[*i];
+        let rate = rate.max(1) as u64;
+        Some(Live::Music {
+            title: song.title.clone(),
+            album: song.album.clone(),
+            pos: (pos / rate) as u32,
+            len: (len / rate) as u32,
+            playing,
+            shuffle: self.shuffle,
+            repeat: self.repeat,
+        })
+    }
+
+    fn media(&mut self, m: Media) -> bool {
+        match m {
+            Media::Toggle => self.toggle(),
+            Media::Next => self.skip(1),
+            Media::Prev => self.skip(-1),
+            Media::Shuffle => self.shuffle = !self.shuffle,
+            Media::Repeat => self.repeat = !self.repeat,
+            Media::Seek(v) => {
+                let Some((_, len, playing, _)) = self.state() else { return false };
+                let at = len * v.min(1000) as u64 / 1000;
+                let i = self.current.as_ref().map_or(0, |c| c.0);
+                if playing {
+                    self.play(i, at);
+                } else {
+                    self.paused_at = Some(at);
+                }
+            }
+        }
+        true
     }
 }

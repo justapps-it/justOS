@@ -23,6 +23,7 @@ justimage.workspace = true
 justaml.workspace = true
 justdeb.workspace = true
 justwifi.workspace = true
+justshell.workspace = true
 
 [lints]
 workspace = true
