@@ -117,7 +117,7 @@ wl: connected
 wl: globals compositor=1 sub=1 shm=1 seat=1 output=1 wm=1 deco=1 kde=1 data=1
 wl: shm argb=1 xrgb=1
 wl: output 1024x768 scale=1 done=1
-wl: bounds 1008x644
+wl: bounds 1006x628
 wl: configured 0x0 decoration=2
 wl: keymap ok format=1
 window "Prova Wayland" 300x200
@@ -130,7 +130,7 @@ wl: popup at 201,100 80x50
 wl: popup done
 wl: typed Ciaoè
 wl: ctrl+c
-wl: resized to 1008x716
+wl: resized to 1006x699
 wl: resized to 300x200
 wl: closed by the desktop
 wl: bye
