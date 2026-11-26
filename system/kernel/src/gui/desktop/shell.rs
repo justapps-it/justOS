@@ -224,6 +224,9 @@ pub(super) struct Shell {
     /// Where the bar (and its head) was painted since its area was last
     /// damaged.
     painted: Cell<Rect>,
+    /// Something moved on the last frame: one more, to paint where it
+    /// stopped (a slow frame may have skipped the end).
+    busy: bool,
     queue: VecDeque<Note>,
     note: Option<Note>,
     level: Level,
@@ -270,6 +273,7 @@ impl Shell {
             lp: Tween::at(0.0, 280, EASE),
             black: Tween::at(0.0, 500, LINEAR),
             painted: Cell::new(Rect::EMPTY),
+            busy: false,
             queue: VecDeque::new(),
             note: None,
             level: Level::Volume,
@@ -1485,6 +1489,11 @@ impl Desktop {
 
     pub(super) fn shell_frame(&mut self, l: &mut Looper) {
         let now = ms();
+        let busy = self.shell_moving();
+        if self.sh.busy && !busy {
+            l.damage(self.screen());
+        }
+        self.sh.busy = busy;
         if self.sh.bar.moving(now) || matches!(self.sh.bar.state, BarState::Spin | BarState::Boot | BarState::Notify) {
             self.damage_bar(l);
         }
@@ -1506,6 +1515,10 @@ impl Desktop {
     }
 
     pub(super) fn shell_animating(&self) -> bool {
+        self.sh.busy || self.shell_moving()
+    }
+
+    fn shell_moving(&self) -> bool {
         let now = ms();
         let s = self.sh.bar.state;
         self.sh.bar.moving(now)
@@ -1610,9 +1623,10 @@ impl Desktop {
         let clock = format!("{}:{:02}", d.hour, d.min);
         let top = m.y + m.h * 7 / 100;
         text::draw_centered(c, Font::LockClock, m.x + m.w / 2, top, &clock, WHITE);
-        let (ch, _) = text::metrics(Font::LockClock);
+        // The date right under the digits' baseline.
+        let (_, ascent) = text::metrics(Font::LockClock);
         let date = format!("{} {} {}", WEEKDAYS[d.weekday as usize % 7], d.day, MONTHS[(d.month as usize + 11) % 12]);
-        text::draw_centered(c, Font::Text20, m.x + m.w / 2, top + ch + 2, &date, 0xD9FF_FFFF);
+        text::draw_centered(c, Font::Text20, m.x + m.w / 2, top + ascent + 10, &date, 0xD9FF_FFFF);
     }
 
     /// The bar, its head over the control centre, and what they show.
@@ -1966,7 +1980,7 @@ impl Desktop {
         };
         let quiet_sub = String::from(if self.quiet { "Attivo" } else { "Disattivato" });
         let tiles = [
-            (Part::Wifi, Rect::new(12, 12, 236, 92), [16, 8, 8, 8], "wifi", "Wi‑Fi", wifi_sub, wifi_on, Some(Part::WifiMore)),
+            (Part::Wifi, Rect::new(12, 12, 236, 92), [16, 8, 8, 8], "wifi", "Wi-Fi", wifi_sub, wifi_on, Some(Part::WifiMore)),
             (Part::Bt, Rect::new(12, 112, 236, 92), [8, 8, 8, 8], "bt", "Bluetooth", bt_sub, bt_on, Some(Part::BtMore)),
             (Part::Quiet, Rect::new(12, 212, 236, 92), [8, 8, 8, 16], "moon", "Non disturbare", quiet_sub, self.quiet, None),
         ];
@@ -2088,7 +2102,7 @@ impl Desktop {
         c.fill_circle(back.x + 18, back.y + 18, 18, if hot(Part::Back) { 0x29FF_FFFF } else { FILL_H });
         icons::centered(c, "chev-l", 18, back.x + 18, back.y + 18, WHITE);
         let (hh, _) = text::metrics(Font::Strong18);
-        text::draw(c, Font::Strong18, back.right() + 12, back.y + (36 - hh) / 2, if wifi { "Wi‑Fi" } else { "Bluetooth" }, WHITE);
+        text::draw(c, Font::Strong18, back.right() + 12, back.y + (36 - hh) / 2, if wifi { "Wi-Fi" } else { "Bluetooth" }, WHITE);
         let on = if wifi { Self::wifi_connected() } else { crate::bt::adapter().is_some_and(|b| b.2) };
         let present = if wifi { crate::net::wifi::present() } else { crate::bt::present() };
         if present {
@@ -2149,7 +2163,7 @@ impl Desktop {
         if rows.is_empty() {
             let msg = if !present {
                 if wifi {
-                    "Nessun adattatore Wi‑Fi"
+                    "Nessun adattatore Wi-Fi"
                 } else {
                     "Nessun adattatore Bluetooth"
                 }
@@ -2181,7 +2195,7 @@ impl Desktop {
         let more = at(o, Rect::new(12, 384 - 12 - 48, 416, 48));
         c.fill_round_corners(more, [6, 6, 14, 14], if hot(Part::More) { FILL_H } else { FILL });
         let (bh, _) = text::metrics(Font::Body);
-        text::draw(c, Font::Body, more.x + 16, more.y + (48 - bh) / 2, if wifi { "Impostazioni Wi‑Fi…" } else { "Impostazioni Bluetooth…" }, WHITE);
+        text::draw(c, Font::Body, more.x + 16, more.y + (48 - bh) / 2, if wifi { "Impostazioni Wi-Fi…" } else { "Impostazioni Bluetooth…" }, WHITE);
         icons::centered(c, "chev-r", 16, more.right() - 16 - 8, more.y + 24, T2);
     }
 

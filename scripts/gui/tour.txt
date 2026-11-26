@@ -1,8 +1,9 @@
 # A tour of the interface for scripts/gui-shots.py (make shots), on a fresh
 # image at 1024x768: the setup (ten steps, by keys, no password), then the desktop, its apps and the store.
-# Dock icons at rest: x = 178 + 62 * i (File, Applicazioni, Editor di testo,
-# Note, Calendario, Foto, Musica, Calcolatrice, Negozio, Impostazioni),
-# Cestino at 817; y = 715. The justOS mark is at 108, the status at 901.
+# The bar's icons at rest: x = 273 + 50 * i (File, Editor di testo, Note,
+# Calendario, Foto, Musica, Calcolatrice, Negozio, Impostazioni, Cestino);
+# y = 706. The justOS mark is at 207 (the launchpad; its menu with the right
+# button), the status at 800 (the control centre).
 wait 2
 shot 01-splash
 wait 8
@@ -38,13 +39,13 @@ shot 02j-fine
 key ret
 wait 4
 shot 07-scrivania
-click 178 715
+click 273 706
 wait 3
 shot 08-file
 key f11
 wait 1.5
 shot 08b-schermo-intero
-move 512 2
+move 512 767
 wait 1
 shot 08c-controlli
 move 512 400
@@ -52,46 +53,46 @@ key f11
 wait 1
 key ctrl-q
 wait 1
-click 240 715
+click 207 706
 wait 2
 shot 09-applicazioni
 key esc
 wait 1
-click 302 715
+click 323 706
 wait 2
 type Una lista di cose da fare.
 wait 0.5
 shot 10-editor
 key ctrl-q
 wait 1.5
-click 364 715
+click 373 706
 wait 2
 shot 11-note
 key ctrl-q
 wait 1
-click 426 715
+click 424 706
 wait 2
 shot 12-calendario
 key ctrl-q
 wait 1
-click 488 715
+click 474 706
 wait 4
 shot 13-foto
 key ctrl-q
 wait 1
-click 550 715
+click 524 706
 wait 2
 shot 14-musica
 key ctrl-q
 wait 1
-click 612 715
+click 574 706
 wait 2
 type 12*7=
 wait 0.5
 shot 15-calcolatrice
 key ctrl-q
 wait 1
-click 674 715
+click 624 706
 wait 3
 shot 16-negozio
 click 610 426
@@ -108,12 +109,12 @@ key ctrl-q
 wait 2
 key ctrl-q
 wait 1
-click 901 715
+click 800 706
 wait 1
 shot 19-controllo
 key esc
 wait 1
-click 108 715
+right 207 706
 wait 1
 shot 19b-sistema
 key esc
