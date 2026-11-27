@@ -94,6 +94,11 @@ onestà cosa funziona e cosa no.
 <td><img src="docs/screenshots/schermo-intero.png" alt="Una finestra a schermo intero con la barra che risale dal bordo in basso" width="100%"><br><sub>Schermo intero: la barra risale dal bordo.</sub></td>
 <td><img src="docs/screenshots/bluetooth.png" alt="La pagina Bluetooth del centro di controllo" width="100%"><br><sub>La pagina Bluetooth.</sub></td>
 </tr>
+<tr>
+<td><img src="docs/screenshots/programmi-windows.png" alt="La barra diventata l'avanzamento della preparazione dei programmi Windows" width="100%"><br><sub>Il primo programma Windows: la barra prepara Wine.</sub></td>
+<td></td>
+<td></td>
+</tr>
 </table>
 
 ## Provalo
