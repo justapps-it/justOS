@@ -2,6 +2,17 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ![La scrivania di justOS](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/scrivania.png)
 
+## Novità della 0.12.0
+
+- **La barra dinamica**: in basso al centro c'è una sola barra che cambia forma. È il dock con le app e lo stato, e con un'animazione diventa il **centro di controllo** (Wi-Fi e Bluetooth con le loro pagine, Non disturbare, volume, luminosità, musica, Blocca, Riavvia, Spegni), l'indicatore del **volume** e della luminosità, le **notifiche**, il **player musicale**, la conferma di spegnimento e la ricerca del **launchpad**. Il logo apre il launchpad; il clic destro sul logo apre il menu di sistema.
+- **Nuova schermata di blocco**: un tastierino se la password è un PIN di 4–8 cifre, altrimenti il campo della password.
+- **Finestre nuove**: cornice chiara smerigliata, pulsanti riduci, schermo intero e chiudi in alto a destra, ridimensionamento da bordi e angoli, riduzione «genie» verso l'icona nel dock. Doppio clic sulla barra del titolo per ingrandire; con lo **schermo intero** la barra si nasconde e torna portando il mouse in basso o premendo da solo il tasto Windows.
+- **Avvio delle app**: mentre un'app si apre la sua icona saltella nel dock, senza notifiche. Se prima va preparato l'ambiente per i programmi Windows, la barra si trasforma e mostra l'avanzamento, il tempo che manca e Annulla (o Riprova se qualcosa va storto).
+- **Nuovo sfondo predefinito**: «Enrosadira», le Dolomiti al tramonto.
+- Spariscono il vecchio dock, l'isola, il vecchio centro di controllo e i pannelli; con loro le impostazioni «Dock compatto» e «Ingrandimento icone».
+
+![La barra dinamica diventa il centro di controllo](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/centro-controllo.png)
+
 ## Novità della 0.11.0
 
 - **JustOS Connect**: il telefono Android entra nel sistema. Scarica `justos-connect.apk` qui sotto (Android 8 o più recente), aprila sulla stessa rete del computer, tocca il tuo PC e scrivi il codice di sei cifre che compare nella finestra **JustOS Connect**. Da quel momento:
