@@ -2,6 +2,26 @@ justOS: un sistema operativo per PC x86-64 scritto da zero in Rust, su cui giran
 
 ![La scrivania di justOS](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/scrivania.png)
 
+## Novità della 0.13.0
+
+- **Il Negozio ha programmi veri**: LibreOffice Writer, GIMP, Inkscape, Thunderbird, il Visualizzatore di documenti, Gnumeric, Xournal++, Mousepad, Geany, FileZilla, Remmina, Ristretto e il Solitario arrivano dall'archivio firmato di Debian, con tutto quello che serve. Il Negozio mostra quanto pesano e l'avanzamento in percentuale; finita l'installazione il programma è nel launcher con il suo nome e la sua icona. **Rimuovi** toglie il programma e i pacchetti che erano arrivati con lui. LibreOffice e Thunderbird sono in italiano.
+- **Molta meno memoria**:
+  - la scrivania appena accesa usa circa 60 MiB;
+  - con una dozzina di programmi aperti e chiusi resta sotto i 250 MiB;
+  - la cache dei dischi si restituisce da sola quando la memoria serve ai programmi.
+- **Firefox più leggero**: niente processi preparati in anticipo, un processo per sito, le estensioni nel processo principale, le schede scaricate quando la memoria scarseggia. Niente telemetria e niente storie sponsorizzate nella nuova scheda.
+- **Wine più leggero e più veloce da preparare**: le DLL dei programmi Windows sono alleggerite, e la preparazione occupa 335 MiB invece di 1,4 GiB e richiede circa un minuto e un quarto invece di un minuto e mezzo.
+- **Programmi Linux più compatibili**:
+  - memoria condivisa e semafori System V, che molti programmi audio e Qt usano;
+  - gli script d'installazione dei pacchetti Debian funzionano (debconf, ucf, gli aggiornamenti delle cache di icone, font e schemi);
+  - i programmi Qt disegnano direttamente sullo schermo di justOS;
+  - i giochi in /usr/games si trovano;
+  - c'è /proc/version.
+- Nel Terminale `uninstall <nome>` rimuove anche i pacchetti Debian, e `install <nome>` mostra la percentuale.
+- Non ancora: VLC (non parte come amministratore, e per ora i programmi Linux lo sono) e Audacity (si chiude dopo la schermata d'avvio).
+
+![LibreOffice installato dal Negozio](https://raw.githubusercontent.com/justapps-it/justOS/main/docs/screenshots/libreoffice.png)
+
 ## Novità della 0.12.0
 
 - **La barra dinamica**: in basso al centro c'è una sola barra che cambia forma. È il dock con le app e lo stato, e con un'animazione diventa il **centro di controllo** (Wi-Fi e Bluetooth con le loro pagine, Non disturbare, volume, luminosità, musica, Blocca, Riavvia, Spegni), l'indicatore del **volume** e della luminosità, le **notifiche**, il **player musicale**, la conferma di spegnimento e la ricerca del **launchpad**. Il logo apre il launchpad; il clic destro sul logo apre il menu di sistema.
