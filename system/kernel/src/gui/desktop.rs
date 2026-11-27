@@ -1363,6 +1363,7 @@ impl Desktop {
             apps::Opener::Start(s) => self.start(l, s),
             apps::Opener::Run(cmd) => self.run(l, &cmd),
             apps::Opener::Tell(title, text, icon) => self.notify(l, title, text, icon),
+            apps::Opener::Prep => self.show_prep(l),
             apps::Opener::Install(file) => {
                 let name = String::from(file.rsplit('/').next().unwrap_or(&file));
                 self.notify(l, name, String::from("Installazione in corso…"), String::from("store"));
@@ -2770,6 +2771,8 @@ impl View for Desktop {
         !self.fx.is_empty()
             || self.popup.as_ref().is_some_and(|p| !p.settled)
             || self.bounce.is_some()
+            // Starting programs hop in the dock.
+            || (!self.starting.is_empty() && !self.sh.bar.hidden())
             || self.shell_animating()
             || self.windows.iter().any(|w| w.shown(self.space) && w.app.animating())
             || self.overview.as_ref().is_some_and(|o| !o.settled || o.closing || o.held.is_some())

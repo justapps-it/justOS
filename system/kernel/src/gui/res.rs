@@ -184,7 +184,8 @@ pub fn make_icon(name: &str, color: u32, platform: crate::store::Platform) -> Ve
 
 /// The pixel-art Dolomites first (the default), then the photos
 /// (Unsplash, see CREDITS.txt next to them), then the painted ones.
-pub const WALLPAPERS: [(&str, &str); 8] = [
+pub const WALLPAPERS: [(&str, &str); 9] = [
+    ("enrosadira", "Enrosadira"),
     ("pixel", "Pixel"),
     ("cadini", "Cadini"),
     ("braies", "Braies"),

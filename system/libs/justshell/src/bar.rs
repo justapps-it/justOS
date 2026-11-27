@@ -42,6 +42,8 @@ pub enum BarState {
     Boot,
     Off,
     Charge,
+    /// Wine's C: drive being made before a Windows program starts.
+    Prep,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -70,6 +72,7 @@ impl BarState {
             Boot => (150.0, 96.0, 48.0),
             Off => (14.0, 14.0, 7.0),
             Charge => (330.0, 68.0, 34.0),
+            Prep => (520.0, 104.0, 30.0),
         };
         Shape { w, h, r }
     }
@@ -109,7 +112,7 @@ impl BarState {
     pub fn back(self) -> Option<BarState> {
         match self {
             Self::CcWifi | Self::CcBt => Some(Self::Control),
-            Self::Control | Self::Music | Self::Power | Self::Hud | Self::Notify | Self::Silent | Self::Charge => Some(Self::Idle),
+            Self::Control | Self::Music | Self::Power | Self::Hud | Self::Notify | Self::Silent | Self::Charge | Self::Prep => Some(Self::Idle),
             _ => None,
         }
     }
@@ -367,7 +370,7 @@ mod tests {
     use crate::fabs;
     use BarState::*;
 
-    const ALL: [BarState; 15] = [Idle, Launch, Lock, Control, CcWifi, CcBt, Hud, Notify, Silent, Music, Power, Spin, Boot, Off, Charge];
+    const ALL: [BarState; 16] = [Idle, Launch, Lock, Control, CcWifi, CcBt, Hud, Notify, Silent, Music, Power, Spin, Boot, Off, Charge, Prep];
 
     #[test]
     fn shapes_match_the_table() {

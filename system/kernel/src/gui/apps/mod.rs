@@ -291,6 +291,8 @@ pub enum Opener {
     Install(String),
     /// Nothing on justOS opens it, and why: title, text, icon.
     Tell(String, String, String),
+    /// Wine is being prepared first (the dynamic bar shows it).
+    Prep,
     None,
 }
 
@@ -522,15 +524,11 @@ fn wine(path: &str, ext: &str) -> Option<Opener> {
         "lnk" => (alloc::format!("start /wait /unix {}", quote(&unix)), false),
         _ => (quote(&unix), !windowed_exe(path)),
     };
-    // Wine's C: drive is made (or brought up to date) first, in a window of
-    // our own; the program waits for it and starts when it is ready.
+    // Wine's C: drive is made (or brought up to date) first, shown by the
+    // dynamic bar; the program waits for it and starts when it is ready.
     if winprep::needed().is_some() {
-        let name = String::from(file);
-        return Some(if winprep::request(path) {
-            Opener::App(Box::new(winprep::WinPrep::new()))
-        } else {
-            Opener::Tell(name, String::from("Si apre appena Windows è pronto."), String::from("file-exe"))
-        });
+        winprep::request(path);
+        return Some(Opener::Prep);
     }
     if ext == "msi" {
         return Some(install_msi(path, &dos, p.parent().to_string(), file));

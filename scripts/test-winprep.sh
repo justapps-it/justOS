@@ -1,7 +1,7 @@
 #!/bin/bash
 # By hand, not in the suites (it needs the 5 GiB image with Wine and takes
 # about 5 minutes under emulation): the first Windows program opened gets
-# justOS's preparation window and never Wine's own dialog.
+# the dynamic bar's preparation and never Wine's own dialog.
 #
 # Usage: scripts/test-winprep.sh [image]     (default build/justos.img; the
 # image is copied sparsely to build/winprep-test.img and left unchanged)
@@ -21,27 +21,30 @@ export TMPDIR=$PWD/build/tmp
 cp --sparse=always "$IMG" build/winprep-test.img
 $J fs build/winprep-test.img put $W/x86_64-windows/notepad.exe /home/provawin.exe >/dev/null
 cat > "$OUT/tour.txt" <<'EOF'
-wait 10
+wait 12
 key ret
-wait 1
+wait 1.8
 key ret
-wait 1
+wait 1.8
 key ret
-wait 3
+wait 1.8
 key ret
-wait 1
+wait 1.8
+key ret
+wait 1.8
 type Arc
 key ret
-wait 1
+wait 1.8
 key ret
-wait 1
+wait 1.8
 key ret
-wait 1
+wait 1.8
 key ret
-wait 1
+wait 1.8
 key ret
-wait 1.5
+wait 1.8
 key ret
+wait 1.8
 wait 55
 key ctrl-spc
 wait 1.5
@@ -50,7 +53,9 @@ wait 6
 key ret
 wait 5
 shot preparing-1
-wait 40
+wait 2
+shot preparing-1b
+wait 38
 shot preparing-2
 wait 40
 shot preparing-3
@@ -64,6 +69,6 @@ fail=0
 check() { if ! echo "$LOG" | grep -q "$1"; then echo "FAIL: $2"; fail=1; else echo "ok:   $2"; fi; }
 check "winprep: making the prefix" "the preparation started"
 check "winprep: ready after" "the preparation finished"
-check 'wayland: window "Untitled - Notepad"' "the program's window came"
+check 'wayland: window ".*\(Notepad\|Blocco Note\)' "the program's window came"
 if echo "$LOG" | grep -q 'wayland: window "Wine"'; then echo "FAIL: a window named Wine was created"; fail=1; else echo "ok:   no window named Wine"; fi
 exit $fail

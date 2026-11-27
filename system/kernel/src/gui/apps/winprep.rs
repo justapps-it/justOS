@@ -1,8 +1,9 @@
-//! Getting Wine's C: drive ready, with a window of justOS's own.
+//! Getting Wine's C: drive ready, shown by the dynamic bar.
 //!
 //! The first Windows program opened makes Wine fill its prefix (`$HOME/.wine`),
 //! which takes a minute or more, and Wine would tell it with a grey dialog
-//! of its own. The owner is to see justOS instead: a window with a bar.
+//! of its own. The owner is to see justOS instead: the bar turns into the
+//! preparation (see `view`).
 //! So the preparation is a step of its own, before the program starts:
 //! `wineboot --init` runs with no display to show anything on (Wine falls
 //! back to its null driver: the dialog is made and never mapped) and with no
@@ -20,12 +21,7 @@
 //! Wine's own files. It never goes back; the last tenth is for Wine's server
 //! settling.
 
-use crate::dev::input::{Key, KeyEvent};
 use crate::fs;
-use crate::gui::gfx::{Canvas, Rect};
-use crate::gui::text::{self, Font};
-use crate::gui::ui;
-use crate::gui::wm::{Action, App};
 use crate::sync::IrqLock;
 use alloc::format;
 use alloc::string::String;
@@ -350,203 +346,58 @@ fn retry() {
 }
 
 // ----------------------------------------------------------------------------
-// The window
+// What the bar shows
 
-pub struct WinPrep {
-    /// The bar as drawn (0..=1000), gliding to the target; never backwards.
-    shown: u32,
-    last: u64,
-    hover: Option<Rect>,
+/// The preparation as the dynamic bar shows it.
+pub struct View {
+    pub update: bool,
+    pub failed: bool,
+    pub cancelling: bool,
+    pub settling: bool,
+    pub why: String,
+    /// The first program waiting, and how many more.
+    pub name: String,
+    pub more: usize,
+    /// Where the work is (0..=1000) and when it began.
+    pub target: u32,
+    pub began: u64,
 }
 
-impl WinPrep {
-    pub fn new() -> WinPrep {
-        WinPrep { shown: 0, last: crate::time::uptime_ms(), hover: None }
+/// None when nothing is being prepared.
+pub fn view() -> Option<View> {
+    let st = STATE.lock();
+    if st.phase == Phase::Idle {
+        return None;
     }
-
-    fn buttons(area: Rect, failed: bool) -> Vec<Rect> {
-        let y = area.bottom() - 58;
-        if failed {
-            alloc::vec![Rect::new(area.right() - 300, y, 130, 38), Rect::new(area.right() - 160, y, 132, 38)]
-        } else {
-            alloc::vec![Rect::new(area.right() - 160, y, 132, 38)]
-        }
-    }
+    let name = st.queue.first().map(|p| String::from(p.rsplit('/').next().unwrap_or(p))).unwrap_or_default();
+    Some(View {
+        update: st.update,
+        failed: st.phase == Phase::Failed,
+        cancelling: st.phase == Phase::Cancelling,
+        settling: st.settling,
+        why: st.why.clone(),
+        name,
+        more: st.queue.len().saturating_sub(1),
+        target: st.target,
+        began: st.began,
+    })
 }
 
-impl Default for WinPrep {
-    fn default() -> Self {
-        Self::new()
-    }
+/// "Annulla" (or "Chiudi" after a failure).
+pub fn stop() {
+    cancel();
+}
+
+/// "Riprova".
+pub fn again() {
+    retry();
 }
 
 /// "circa 2 minuti" for a time in seconds.
-fn how_long(secs: u64) -> String {
+pub fn how_long(secs: u64) -> String {
     match secs {
         0..=44 => String::from("meno di un minuto"),
         45..=89 => String::from("circa 1 minuto"),
         s => format!("circa {} minuti", (s + 30) / 60),
-    }
-}
-
-impl App for WinPrep {
-    fn title(&self) -> String {
-        String::from("Programmi Windows")
-    }
-
-    fn icon(&self) -> &str {
-        "file-exe"
-    }
-
-    fn kind(&self) -> &'static str {
-        "winprep"
-    }
-
-    fn size(&self) -> (i32, i32) {
-        (500, 300)
-    }
-
-    fn animating(&self) -> bool {
-        STATE.lock().phase == Phase::Running
-    }
-
-    fn frame(&mut self) -> bool {
-        let now = crate::time::uptime_ms();
-        let dt = now.saturating_sub(self.last).min(500);
-        self.last = now;
-        let target = STATE.lock().target;
-        if target > self.shown {
-            // Eases towards the target; never backwards.
-            let step = ((target - self.shown) as u64 * dt / (dt + 450)).max(u64::from(dt > 0)) as u32;
-            self.shown = (self.shown + step).min(target);
-            return true;
-        }
-        false
-    }
-
-    fn tick(&mut self) -> bool {
-        // The elapsed time line changes about once a second.
-        STATE.lock().phase == Phase::Running
-    }
-
-    fn draw(&mut self, c: &mut Canvas, area: Rect, _blur: &Canvas, _focused: bool) {
-        let (phase, update, queue, why, began, settling) = {
-            let st = STATE.lock();
-            (st.phase, st.update, st.queue.clone(), st.why.clone(), st.began, st.settling)
-        };
-        let failed = phase == Phase::Failed;
-        // The Windows logo in an orange tile.
-        let tile = Rect::new(area.x + 28, area.y + 28, 60, 60);
-        let (top, bottom) = if failed { (0xFF55_5260, 0xFF3A_3844) } else { ui::ORANGE_GRAD };
-        c.fill_round_grad(tile, 18, top, bottom);
-        c.sheen_round(tile, 18, 1, ui::TILE_SHEEN);
-        for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-            let s = 12;
-            c.fill_round(Rect::new(tile.x + 17 + i * (s + 3), tile.y + 17 + j * (s + 3), s, s), 3, ui::WHITE);
-        }
-        let x = area.x + 108;
-        let w = area.w - 108 - 28;
-        let heading = match (failed, update) {
-            (true, _) => "Non sono riuscito a preparare l'ambiente Windows",
-            (false, true) => "Aggiorno l'ambiente per i programmi Windows",
-            (false, false) => "Preparo l'ambiente per i programmi Windows",
-        };
-        let mut y = area.y + 26;
-        for line in text::wrap(Font::Heading, heading, w) {
-            text::draw(c, Font::Heading, x, y, &line, ui::text());
-            y += 28;
-        }
-        y += 4;
-        let name = queue.first().map(|p| String::from(p.rsplit('/').next().unwrap_or(p))).unwrap_or_default();
-        let detail = if failed {
-            format!("Può riprovare. ({why})")
-        } else if update {
-            format!("Succede dopo un aggiornamento. Poi «{name}» si apre da solo.")
-        } else {
-            format!("Succede solo la prima volta. Poi «{name}» si apre da solo.")
-        };
-        for line in text::wrap(Font::Small, &detail, w) {
-            text::draw(c, Font::Small, x, y, &line, ui::text_dim());
-            y += 20;
-        }
-        if !failed {
-            if queue.len() > 1 {
-                text::draw(c, Font::Small, x, y, &format!("In coda ci sono altri {} programmi.", queue.len() - 1), ui::text_faint());
-            }
-            // The bar and what is under it.
-            let bar = Rect::new(area.x + 28, area.bottom() - 112, area.w - 56, 14);
-            c.fill_round(bar, 7, ui::cell());
-            let fill = (bar.w as i64 * self.shown.min(1000) as i64 / 1000) as i32;
-            if fill > 0 {
-                let r = Rect::new(bar.x, bar.y, fill.max(14), bar.h);
-                c.fill_round_grad(r, 7, ui::ORANGE_GRAD.0, ui::ORANGE_GRAD.1);
-                c.sheen_round(r, 7, 1, ui::TILE_SHEEN);
-            }
-            let percent = self.shown / 10;
-            text::draw(c, Font::Strong, bar.x, bar.bottom() + 10, &format!("{percent}%"), ui::text());
-            let elapsed = crate::time::uptime_ms().saturating_sub(began) / 1000;
-            let note = if phase == Phase::Cancelling {
-                String::from("Annullo…")
-            } else if settling {
-                String::from("Ultimi ritocchi…")
-            } else if elapsed >= 12 && self.shown >= 40 {
-                // The rate so far gives the time left.
-                let left = elapsed * (1000 - u64::from(self.shown)) / u64::from(self.shown);
-                format!("{} rimasti", how_long(left))
-            } else {
-                String::from("Calcolo il tempo che manca…")
-            };
-            text::draw_right(c, Font::Small, bar.right(), bar.bottom() + 13, &note, ui::text_dim());
-        }
-        if phase != Phase::Cancelling {
-            let b = Self::buttons(area, failed);
-            if failed {
-                ui::button(c, b[0], "Riprova", true, self.hover == Some(b[0]));
-                ui::button(c, b[1], "Chiudi", false, self.hover == Some(b[1]));
-            } else {
-                ui::button(c, b[0], "Annulla", false, self.hover == Some(b[0]));
-            }
-        }
-    }
-
-    fn press(&mut self, x: i32, y: i32, _double: bool, area: Rect) -> Action {
-        let (ax, ay) = (area.x + x, area.y + y);
-        let (phase, _) = (STATE.lock().phase, ());
-        if phase == Phase::Cancelling {
-            return Action::None;
-        }
-        let failed = phase == Phase::Failed;
-        let b = Self::buttons(area, failed);
-        match b.iter().position(|r| r.contains(ax, ay)) {
-            Some(0) if failed => retry(),
-            Some(_) => cancel(),
-            None => return Action::None,
-        }
-        Action::Redraw
-    }
-
-    fn hover(&mut self, at: Option<(i32, i32)>, area: Rect) -> bool {
-        let failed = STATE.lock().phase == Phase::Failed;
-        let at = at.map(|(x, y)| (area.x + x, area.y + y));
-        let h = at.and_then(|(x, y)| Self::buttons(area, failed).into_iter().find(|r| r.contains(x, y)));
-        let changed = h != self.hover;
-        self.hover = h;
-        changed
-    }
-
-    fn key(&mut self, ev: KeyEvent) -> Action {
-        if ev.key == Key::Escape && STATE.lock().phase == Phase::Running {
-            cancel();
-            return Action::Redraw;
-        }
-        Action::None
-    }
-
-    fn close(&mut self) {
-        cancel();
-    }
-
-    fn alive(&self) -> bool {
-        STATE.lock().phase != Phase::Idle
     }
 }

@@ -261,6 +261,11 @@ pub(super) struct Shell {
     joining: Option<(String, u64)>,
     /// Powering off or restarting, since when.
     pub ending: Option<(Ending, u64)>,
+    /// Wine's preparation: put away by the user, last seen failed, and
+    /// its bar as drawn (gliding to the target) with when.
+    prep_hidden: bool,
+    prep_failed: bool,
+    prep_shown: Cell<(u32, u64)>,
 }
 
 impl Shell {
@@ -300,6 +305,9 @@ impl Shell {
             devs: Vec::new(),
             lists_at: 0,
             joining: None,
+            prep_hidden: false,
+            prep_failed: false,
+            prep_shown: Cell::new((0, 0)),
             ending: None,
         }
     }
@@ -496,6 +504,11 @@ impl Desktop {
             BarState::Power => {
                 v.push((Part::Cancel, Rect::new(24, 110, 181, 50)));
                 v.push((Part::Confirm, Rect::new(215, 110, 181, 50)));
+            }
+            BarState::Prep => {
+                for (p, r) in Self::prep_buttons(crate::gui::apps::winprep::view().is_some_and(|v| v.failed)) {
+                    v.push((p, r));
+                }
             }
             _ => {}
         }
@@ -1065,6 +1078,12 @@ impl Desktop {
                 self.go(l, BarState::Idle);
                 true
             }
+            BarState::Prep => {
+                // Put away: the click goes on to what is under it.
+                self.sh.prep_hidden = true;
+                self.go(l, BarState::Idle);
+                false
+            }
             BarState::Lock | BarState::Spin | BarState::Boot | BarState::Off => true,
             _ => false,
         }
@@ -1184,6 +1203,8 @@ impl Desktop {
                 self.drag = Some(Drag::Seek);
                 self.slide(l, x, y);
             }
+            Part::Cancel if self.sh.bar.state == BarState::Prep => crate::gui::apps::winprep::stop(),
+            Part::Confirm if self.sh.bar.state == BarState::Prep => crate::gui::apps::winprep::again(),
             Part::Cancel => self.go(l, BarState::Control),
             Part::Confirm => self.start_ending(l, Ending::PowerOff),
             Part::Cell(i) => self.lp_open(l, i),
@@ -1221,6 +1242,9 @@ impl Desktop {
         }
         if k.key == Key::Escape {
             if s != BarState::Idle && s != BarState::Lock {
+                if s == BarState::Prep {
+                    self.sh.prep_hidden = true;
+                }
                 let back = s.back().unwrap_or(BarState::Idle);
                 self.go(l, back);
                 return true;
@@ -1471,6 +1495,7 @@ impl Desktop {
         if self.sh.fs.tick(now, idle) {
             self.sync_hidden(l);
         }
+        self.prep_step(l);
         self.pin_timers(l);
         self.ending_step(l);
     }
@@ -1494,7 +1519,7 @@ impl Desktop {
             l.damage(self.screen());
         }
         self.sh.busy = busy;
-        if self.sh.bar.moving(now) || matches!(self.sh.bar.state, BarState::Spin | BarState::Boot | BarState::Notify) {
+        if self.sh.bar.moving(now) || matches!(self.sh.bar.state, BarState::Spin | BarState::Boot | BarState::Notify | BarState::Prep) {
             self.damage_bar(l);
         }
         if self.sh.ok_at != 0 || self.sh.wrong_at != 0 {
@@ -1525,7 +1550,7 @@ impl Desktop {
             || self.sh.dim.moving(now)
             || self.sh.lp.moving(now)
             || self.sh.black.moving(now)
-            || matches!(s, BarState::Spin | BarState::Boot | BarState::Notify)
+            || matches!(s, BarState::Spin | BarState::Boot | BarState::Notify | BarState::Prep)
             || self.sh.ok_at != 0
             || self.sh.wrong_at != 0
             || self.sh.ending.is_some()
@@ -1686,6 +1711,11 @@ impl Desktop {
         }
         let mut layer = Canvas::new_layer_at(vw, vh, c.scale());
         self.draw_view(&mut layer, f.state, (0, 0));
+        // A view comes in and goes out of focus (6 px of blur when hidden).
+        let blur = ((1.0 - f.alpha) * 6.0) as i32;
+        if blur >= 1 {
+            layer.blur(blur);
+        }
         let dst = Rect::new(round(ox), round(oy), round(vw as f32 * k), round(vh as f32 * k));
         c.draw_scaled(&layer, dst, a);
     }
@@ -1765,6 +1795,7 @@ impl Desktop {
             }
             BarState::Off => {}
             BarState::Charge => self.draw_charge(c, o),
+            BarState::Prep => self.draw_prep(c, o),
         }
     }
 
@@ -2308,6 +2339,120 @@ impl Desktop {
             };
             c.fill_round_corners(r, corners, bg);
             text::draw_centered(c, Font::Strong15, r.x + r.w / 2, r.y + (50 - bh) / 2, label, WHITE);
+        }
+    }
+
+    /// A Windows program was opened and Wine must be prepared first: the
+    /// bar turns into the preparation.
+    pub(super) fn show_prep(&mut self, l: &mut Looper) {
+        self.sh.prep_hidden = false;
+        if self.sh.bar.state != BarState::Prep {
+            self.sh.prep_shown.set((0, ms()));
+        }
+        if !self.sh.locked && self.sh.ending.is_none() {
+            self.go(l, BarState::Prep);
+        }
+    }
+
+    /// The bar follows the preparation: back to the dock when it ends,
+    /// shown again when it fails.
+    fn prep_step(&mut self, l: &mut Looper) {
+        let v = crate::gui::apps::winprep::view();
+        let failed = v.as_ref().is_some_and(|v| v.failed);
+        if failed && !self.sh.prep_failed {
+            self.sh.prep_hidden = false;
+        }
+        self.sh.prep_failed = failed;
+        let s = self.sh.bar.state;
+        match v {
+            None if s == BarState::Prep => {
+                self.sh.prep_hidden = false;
+                self.go(l, BarState::Idle);
+            }
+            Some(_) if s == BarState::Idle && !self.sh.prep_hidden && !self.sh.locked => self.go(l, BarState::Prep),
+            _ => {}
+        }
+    }
+
+    /// The preparation's buttons: Annulla; after a failure Chiudi and
+    /// Riprova.
+    fn prep_buttons(failed: bool) -> Vec<(Part, Rect)> {
+        if failed {
+            alloc::vec![(Part::Cancel, Rect::new(520 - 22 - 212, 60, 100, 30)), (Part::Confirm, Rect::new(520 - 22 - 100, 60, 100, 30))]
+        } else {
+            alloc::vec![(Part::Cancel, Rect::new(520 - 22 - 100, 20, 100, 32))]
+        }
+    }
+
+    fn draw_prep(&self, c: &mut Canvas, o: (i32, i32)) {
+        let Some(v) = crate::gui::apps::winprep::view() else { return };
+        // The Windows logo in an orange tile.
+        let tile = Rect::new(o.0 + 22, o.1 + 22, 60, 60);
+        let (top, bottom) = if v.failed { (0xFF55_5260, 0xFF3A_3844) } else { ui::ORANGE_GRAD };
+        c.fill_round_grad(tile, 18, top, bottom);
+        c.sheen_round(tile, 18, 1, ui::TILE_SHEEN);
+        for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            c.fill_round(Rect::new(tile.x + 17 + i * 15, tile.y + 17 + j * 15, 12, 12), 3, WHITE);
+        }
+        let x = o.0 + 98;
+        let buttons = Self::prep_buttons(v.failed);
+        let room = if v.failed { 520 - 98 - 22 } else { 520 - 98 - 22 - 112 };
+        let heading = match (v.failed, v.update) {
+            (true, _) => "Windows non è pronto",
+            (false, true) => "Aggiorno i programmi Windows",
+            (false, false) => "Preparo i programmi Windows",
+        };
+        text::draw(c, Font::Strong16, x, o.1 + 20, &text::fit(Font::Strong16, heading, room), WHITE);
+        let who = if v.more > 0 { format!("«{}» e altri {}", v.name, v.more) } else { format!("«{}»", v.name) };
+        if v.failed {
+            text::draw(c, Font::Small, x, o.1 + 42, &text::fit(Font::Small, &format!("Puoi riprovare ({})", v.why), 520 - 98 - 22), T2);
+        } else {
+            text::draw(c, Font::Small, x, o.1 + 42, &text::fit(Font::Small, &format!("{who} si apre da solo"), room), T2);
+            // The bar glides to the target, never backwards.
+            let now = ms();
+            let (mut shown, last) = self.sh.prep_shown.get();
+            if v.target < shown && v.target < 50 {
+                shown = v.target;
+            }
+            let dt = now.saturating_sub(last).min(500);
+            if v.target > shown {
+                let step = ((v.target - shown) as u64 * dt / (dt + 450)).max(u64::from(dt > 0)) as u32;
+                shown = (shown + step).min(v.target);
+            }
+            self.sh.prep_shown.set((shown, now));
+            let track = Rect::new(x, o.1 + 72, 520 - 98 - 22, 6);
+            c.fill_round(track, 3, 0x29FF_FFFF);
+            let fw = (track.w as i64 * shown.min(1000) as i64 / 1000) as i32;
+            if fw > 0 {
+                c.fill_round_grad(Rect::new(track.x, track.y, fw.max(6), 6), 3, ui::ORANGE_GRAD.0, ui::ORANGE_GRAD.1);
+            }
+            let elapsed = now.saturating_sub(v.began) / 1000;
+            let note = if v.cancelling {
+                String::from("Annullo…")
+            } else if v.settling {
+                String::from("Ultimi ritocchi…")
+            } else if elapsed >= 12 && shown >= 40 {
+                let left = elapsed * (1000 - u64::from(shown.min(999))) / u64::from(shown);
+                format!("{} rimasti", crate::gui::apps::winprep::how_long(left))
+            } else {
+                String::from("Calcolo il tempo che manca…")
+            };
+            text::draw(c, Font::Small, x, o.1 + 82, &format!("{}%", shown / 10), T3);
+            text::draw_right(c, Font::Small, track.right(), o.1 + 82, &note, T3);
+        }
+        if v.cancelling {
+            return;
+        }
+        let (bh, _) = text::metrics(Font::Strong15);
+        for (p, r) in buttons {
+            let r = at(o, r);
+            let hot = self.sh.hover == Some(p);
+            let (bg, label) = match p {
+                Part::Confirm => (if hot { ui::lighten(ui::ORANGE, 25) } else { ui::ORANGE }, "Riprova"),
+                _ => (if hot { 0x29FF_FFFF } else { FILL_H }, if v.failed { "Chiudi" } else { "Annulla" }),
+            };
+            c.fill_round(r, r.h / 2, bg);
+            text::draw_centered(c, Font::Strong15, r.x + r.w / 2, r.y + (r.h - bh) / 2, label, WHITE);
         }
     }
 

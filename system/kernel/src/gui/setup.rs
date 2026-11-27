@@ -241,7 +241,8 @@ impl Setup {
             }
             WALL => {
                 for i in 0..res::WALLPAPERS.len() as i32 {
-                    v.push(Rect::new(cx - 263 + (i % 4) * 134, top + 4 + (i / 4) * 116, 124, 78));
+                    // Five in a row: two rows hold the nine.
+                    v.push(Rect::new(cx - 270 + (i % 5) * 110, top + 4 + (i / 5) * 104, 100, 64));
                 }
             }
             _ => {}
@@ -458,8 +459,8 @@ impl Setup {
                 match k.key {
                     Key::Left if self.wall > 0 => self.set_wallpaper(self.wall - 1),
                     Key::Right if self.wall + 1 < n => self.set_wallpaper(self.wall + 1),
-                    Key::Up if self.wall >= 4 => self.set_wallpaper(self.wall - 4),
-                    Key::Down if self.wall + 4 < n => self.set_wallpaper(self.wall + 4),
+                    Key::Up if self.wall >= 5 => self.set_wallpaper(self.wall - 5),
+                    Key::Down if self.wall + 5 < n => self.set_wallpaper(self.wall + 5),
                     _ => {}
                 }
             }
@@ -912,7 +913,7 @@ pub fn run(d: &mut Display) {
     let s = settings::get();
     let wall = res::WALLPAPERS.iter().position(|(n, _)| *n == s.wallpaper).unwrap_or(0);
     let (sharp, blur) = res::wallpaper(res::WALLPAPERS[wall].0, w, h);
-    let thumbs = res::WALLPAPERS.iter().map(|(n, _)| res::wallpaper_thumb(n, 124, 78)).collect();
+    let thumbs = res::WALLPAPERS.iter().map(|(n, _)| res::wallpaper_thumb(n, 100, 64)).collect();
     let mut setup = Setup {
         step: 0,
         trans: None,
