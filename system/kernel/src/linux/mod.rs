@@ -528,11 +528,13 @@ fn default_env(own: &[String]) -> Vec<String> {
     let (cols, rows) = crate::console::size();
     let extra = extra_env();
     let set = |v: &String| extra.iter().any(|e| e.split_once('=').map(|(n, _)| n) == v.split_once('=').map(|(n, _)| n));
-    ["PATH=/apps:/usr/local/bin:/usr/bin:/bin", "HOME=/home", "USER=root", lang(), "TERM=xterm", "SHELL=/bin/sh"]
+    ["PATH=/apps:/usr/local/bin:/usr/bin:/bin:/usr/games", "HOME=/home", "USER=root", lang(), "TERM=xterm", "SHELL=/bin/sh"]
         .iter()
         .map(|s| s.to_string())
         .chain([alloc::format!("COLUMNS={cols}"), alloc::format!("LINES={rows}")])
         .chain([alloc::format!("XDG_RUNTIME_DIR={}", wayland::RUNTIME_DIR), alloc::format!("WAYLAND_DISPLAY={}", wayland::DISPLAY)])
+        // Qt programs (VLC) draw through Wayland too: there is no X server.
+        .chain([String::from("QT_QPA_PLATFORM=wayland"), String::from("XDG_SESSION_TYPE=wayland")])
         // Sound: the kernel's PulseAudio server (libpulse would otherwise
         // look in the runtime folder, then try to start a server).
         .chain([alloc::format!("PULSE_SERVER=unix:{}", pulse::SOCKET)])
@@ -1011,6 +1013,14 @@ fn dispatch(n: u64, a: [u64; 6]) -> i64 {
         28 => mm::sys_madvise(a[0], a[1], a[2]),
         285 => shm::sys_fallocate(fd0, a[1], a[2], a[3]),
         319 => shm::sys_memfd_create(a[0], a[1] as u32),
+        29 => shm::sys_shmget(a[0] as i32, a[1], a[2] as u32),
+        64 => shm::sys_semget(a[0] as i32, a[1] as i32, a[2] as u32),
+        65 => shm::sys_semop(a[0] as i32, a[1], a[2], 0),
+        220 => shm::sys_semop(a[0] as i32, a[1], a[2], a[3]),
+        66 => shm::sys_semctl(a[0] as i32, a[1] as i32, a[2] as u32, a[3]),
+        30 => shm::sys_shmat(a[0] as i32, a[1], a[2] as u32),
+        31 => shm::sys_shmctl(a[0] as i32, a[1] as u32, a[2]),
+        67 => shm::sys_shmdt(a[0]),
         32 => fd::sys_dup(fd0),
         33 => fd::sys_dup3(fd0, a[1] as i32, u32::MAX),
         35 => sys_nanosleep(a[0]),
@@ -1181,6 +1191,9 @@ fn sys_prctl(option: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
         PR_SET_NAME => match user::user_cstr(a2, 15) {
             Ok(name) => {
                 task::set_name(task::current_tid(), &name);
+                // The first thread's name is the process's, as in Linux:
+                // Wine names its processes after the Windows program.
+                user::rename_if_first(task::current_tid(), &name);
                 0
             }
             Err(_) => -err::EFAULT,

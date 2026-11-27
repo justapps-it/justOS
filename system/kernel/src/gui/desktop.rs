@@ -2417,8 +2417,7 @@ impl Desktop {
             let g = ws[2];
             let (fg, dim) = pane(c, g);
             ui::caps(c, g.x + 20, g.y + 20, "Sistema", dim);
-            let (free, total) = crate::mem::frame::stats();
-            let used = total.saturating_sub(free);
+            let (used, _, total) = crate::mem::usage();
             let bar = Rect::new(g.x + 20, g.y + 50, g.w - 40, 8);
             c.fill_round(bar, 4, ui::cell());
             let fw = (bar.w as u64 * used).checked_div(total).unwrap_or(0) as i32;

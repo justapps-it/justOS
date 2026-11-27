@@ -51,9 +51,10 @@ onestà cosa funziona e cosa no.
 |---|---|
 | **Avvio** | JustBoot: loader scritti da zero per BIOS (MBR e secondo stadio in assembly) e per UEFI (applicazione EFI in Rust). La stessa immagine parte da chiavetta USB, disco o CD live. |
 | **Desktop** | Una barra dinamica in basso al centro che fa da dock, launchpad con ricerca globale anche dentro i file (Ctrl+Spazio), centro di controllo con le pagine Wi-Fi e Bluetooth, blocco con PIN, volume e luminosità, notifiche, lettore musicale e spegnimento; finestre con cornice chiara, otto maniglie, riduzione a genio e schermo intero con la barra nascosta; centro notifiche, desktop virtuali, snap, tema scuro e chiaro, HiDPI a 2×, più monitor. |
-| **App** | File (con le anteprime delle immagini), Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi. |
+| **App** | File (con le anteprime delle immagini), Editor di testo, Note, Promemoria, Calendario, Orologio, Calcolatrice, Foto, Musica, Terminale, Monitor attività, Impostazioni, Info sistema, Cestino e un Negozio con giochi e programmi veri: LibreOffice Writer, GIMP, Inkscape, Thunderbird, Gnumeric, Xournal++, FileZilla, Remmina e altri, dall'archivio di Debian, installati e rimossi con un clic. |
 | **Programmi Linux** | Eseguibili ELF statici e dinamici con la glibc di Debian, GTK 3, finestre Wayland, in italiano. **Firefox ESR è il browser di serie**, con l'audio e il dizionario italiano, e si presenta ai siti come Firefox per Windows, così propongono i programmi Windows da scaricare. I programmi con un file `.desktop` compaiono in Applicazioni. Un pacchetto `.deb` si installa con un doppio clic insieme alle dipendenze che gli mancano, scaricate dall'archivio di Debian e controllate con la sua firma; `deb get <nome>` installa per nome. |
 | **Programmi Windows** | Un doppio clic su un `.exe`, `.msi` o `.bat` lo avvia con Wine 10, a 64 e a 32 bit, con finestre di justOS e l'audio. |
+| **Memoria** | Pensato per i computer con poca RAM: la scrivania appena accesa usa circa 60 MiB, la cache dei dischi si restituisce quando i programmi ne hanno bisogno, Firefox è configurato per consumare meno e Wine si prepara in 335 MiB. |
 | **Hardware** | Driver a pacchetti (`.jdp`) che il kernel carica in base all'hardware trovato: dischi IDE, SATA, NVMe e virtio, USB, schede di rete Intel, Realtek, AMD e virtio, audio HD Audio e AC'97, lettori SD, ACPI con interprete AML per batteria, temperature e sospensione (in RAM, o s2idle sui portatili senza S3). |
 | **Telefono** | JustOS Connect: l'app Android abbina il telefono con un codice di sei cifre e poi manda e riceve file, mostra lo schermo del computer e lo comanda col tocco, fa da trackpad e da tastiera, porta sul desktop notifiche, batteria e appunti; dal computer si fa squillare il telefono. Tutto cifrato, sulla rete di casa. |
 | **Aggiornamenti** | A/B come su un telefono: la versione nuova va nell'altro slot di sistema e parte in prova; se non va, si torna a quella di prima. Le app del Negozio si aggiornano da un indice firmato. |
@@ -70,7 +71,7 @@ onestà cosa funziona e cosa no.
 <td width="33%"><img src="docs/screenshots/primo-avvio-sfondo.png" alt="Primo avvio: scelta dello sfondo" width="100%"><br><sub>Primo avvio: lo sfondo.</sub></td>
 </tr>
 <tr>
-<td><img src="docs/screenshots/negozio.png" alt="Il Negozio con le app in evidenza" width="100%"><br><sub>Il Negozio.</sub></td>
+<td><img src="docs/screenshots/gimp.png" alt="GIMP installato dal Negozio" width="100%"><br><sub>GIMP, installato dal Negozio.</sub></td>
 <td><img src="docs/screenshots/note.png" alt="L'app Note con una notifica" width="100%"><br><sub>Note, con una notifica.</sub></td>
 <td><img src="docs/screenshots/firefox.png" alt="Firefox ESR in una finestra di justOS" width="100%"><br><sub>Firefox ESR.</sub></td>
 </tr>

@@ -15,6 +15,14 @@
 //! An installed program is `sys:/apps/<command>` (Linux), `<command>.exe`
 //! (Windows) or `<id>.app` (justOS), with `<id>.info` (`key=value` lines) and
 //! `<id>.qoi` (its icon) next to it.
+//!
+//! The catalog's programs with a window (GIMP, LibreOffice, Inkscape…) come
+//! from Debian's archive instead (`"deb"`: its packages): installing one is
+//! `deb get` ([`crate::gui::debinst`]: the signed index, the packages it
+//! needs, dpkg), and only its `<id>.info` is in `sys:/apps`, naming the
+//! program its `.desktop` file starts, its icon and the packages that came
+//! with it (removing it takes those away too, when nothing else needs
+//! them).
 
 use crate::fs::{self, Error, Path};
 use crate::net::http;
@@ -97,6 +105,12 @@ pub struct PackageInfo {
     /// What it says it will ask for (`permissions=files:Immagini, camera`),
     /// shown on its page; an update that adds one waits for the user.
     pub permissions: Vec<String>,
+    /// Debian's packages it was installed as (apart by spaces), and those
+    /// that came with them.
+    pub deb: String,
+    pub extra: String,
+    /// Its icon ("@<file>"), when it has one elsewhere than `<id>.qoi`.
+    pub icon: String,
 }
 
 pub fn parse_info(text: &str, id: &str) -> PackageInfo {
@@ -120,6 +134,9 @@ pub fn parse_info(text: &str, id: &str) -> PackageInfo {
             "open" => p.open = v,
             "app_id" if crate::sandbox::valid_id(&v) => p.app_id = v.to_ascii_lowercase(),
             "permissions" => p.permissions = v.split(',').map(str::trim).filter(|s| crate::sandbox::known(s)).map(String::from).collect(),
+            "deb" => p.deb = v,
+            "extra" => p.extra = v,
+            "icon" => p.icon = v,
             _ => {}
         }
     }
@@ -178,9 +195,14 @@ pub fn program_path(p: &PackageInfo) -> String {
     }
 }
 
-/// The installed package `id`, if it is.
+/// The installed package `id`, if it is (a Debian one only while its
+/// program is there: `deb remove` in the shell may have taken it away).
 pub fn installed(id: &str) -> Option<PackageInfo> {
-    read_info(&format!("{APPS}/{id}.info"), id)
+    let p = read_info(&format!("{APPS}/{id}.info"), id)?;
+    if !p.deb.is_empty() && !path(&p.program).is_ok_and(|f| fs::exists(&f)) {
+        return None;
+    }
+    Some(p)
 }
 
 /// Every installed package.
@@ -191,6 +213,9 @@ pub fn installed_all() -> Vec<PackageInfo> {
 
 /// The icon of a package: "@<file>" if it has a picture of its own.
 pub fn icon(id: &str) -> Option<String> {
+    if let Some(p) = installed(id).filter(|p| !p.icon.is_empty()) {
+        return Some(p.icon);
+    }
     let file = format!("{APPS}/{id}.qoi");
     if path(&file).is_ok_and(|p| fs::exists(&p)) {
         return Some(format!("@{file}"));
@@ -213,7 +238,11 @@ pub fn install(id: &str) -> Result<PackageInfo, Error> {
 }
 
 pub fn remove(id: &str) -> Result<(), Error> {
-    let p = installed(id).ok_or(Error::NotFound)?;
+    let p = read_info(&format!("{APPS}/{id}.info"), id).ok_or(Error::NotFound)?;
+    if !p.deb.is_empty() {
+        let _ = fs::remove(&path(&format!("{APPS}/{id}.info"))?);
+        return Ok(());
+    }
     for f in [program_path(&p), format!("{APPS}/{id}.info"), format!("{APPS}/{id}.qoi")] {
         if let Ok(f) = path(&f) {
             if fs::exists(&f) {
@@ -253,6 +282,13 @@ pub struct CatalogApp {
     pub color: u32,
     pub tags: Vec<String>,
     pub featured: bool,
+    /// Debian's packages to install (apart by spaces; the first is the
+    /// program), instead of a download from GitHub.
+    pub deb: String,
+    /// Its `.desktop` file, which says the program and its icon.
+    pub desktop: String,
+    /// About how much it takes once installed ("350 MB"), for its page.
+    pub size: String,
 }
 
 static CATALOG: IrqLock<Option<Vec<CatalogApp>>> = IrqLock::new(None);
@@ -280,6 +316,9 @@ fn parse_catalog(v: &Value) -> Vec<CatalogApp> {
                 color: parse_color(a.get("color").str()),
                 tags: a.get("tags").as_array().iter().filter_map(|t| t.as_str().map(String::from)).collect(),
                 featured: a.get("featured").as_bool().unwrap_or(false),
+                deb: a.get("deb").str().to_string(),
+                desktop: a.get("desktop").str().to_string(),
+                size: a.get("size").str().to_string(),
                 command,
                 id,
             })
@@ -452,6 +491,10 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
 pub struct Job {
     pub done: u64,
     pub total: Option<u64>,
+    /// `done` of `total` are thousandths, not bytes.
+    pub permille: bool,
+    /// Taking the program away, not installing it.
+    pub removing: bool,
     pub phase: &'static str,
     /// Set when it is over: Ok, or why it failed.
     pub result: Option<Result<(), String>>,
@@ -492,6 +535,9 @@ pub fn start_install(app: CatalogApp) {
 }
 
 fn install_remote(app: &CatalogApp) -> Result<(), String> {
+    if !app.deb.is_empty() {
+        return install_deb(app);
+    }
     let id = app.id.clone();
     let mut report = |done: u64, total: Option<u64>| {
         if let Some(j) = JOBS.lock().get_mut(&id) {
@@ -584,6 +630,116 @@ pub fn catalog_app_for(p: &PackageInfo) -> Option<CatalogApp> {
         color: p.color,
         ..Default::default()
     })
+}
+
+/// How far a Debian installation is: `done` thousandths in phase `phase`.
+fn report_permille(id: &str, phase: &'static str, done: u64) {
+    if let Some(j) = JOBS.lock().get_mut(id) {
+        j.phase = phase;
+        j.done = done.min(1000);
+        j.total = Some(1000);
+        j.permille = true;
+    }
+}
+
+/// The names of the installed Debian packages.
+fn deb_names() -> Vec<String> {
+    crate::apt::installed().into_iter().map(|p| p.name).collect()
+}
+
+/// Installs a program of Debian's archive with what it needs, as `deb get`
+/// does, then writes its `info`: the program its `.desktop` file starts.
+fn install_deb(app: &CatalogApp) -> Result<(), String> {
+    use crate::gui::debinst;
+    let id = app.id.as_str();
+    let before = deb_names();
+    let names: Vec<&str> = app.deb.split_whitespace().collect();
+    let parts = names.len().max(1) as u64;
+    for (i, name) in names.iter().enumerate() {
+        if before.iter().any(|b| b == name) {
+            continue;
+        }
+        let base = i as u64 * 1000 / parts;
+        report_permille(id, "Preparo", base);
+        let prepared = debinst::prepare_name(name, &mut |s| {
+            if let crate::apt::Step::Index(_, got, total) = s {
+                report_permille(id, "Scarico l'indice", base + got * 150 / total.max(1) / parts);
+            }
+        })?;
+        debinst::install_prepared(&prepared, &mut |done, _| {
+            let phase = if done < 400 && prepared.downloads() { "Scarico" } else { "Installo" };
+            report_permille(id, phase, base + (150 + u64::from(done) * 850 / 1000) / parts);
+        })
+        .map_err(|(why, _)| why)?;
+    }
+    let (program, icon) = debinst::desktop_program(&app.desktop).ok_or_else(|| format!("{} non ha una finestra da aprire", app.name))?;
+    let extra: Vec<String> = deb_names().into_iter().filter(|n| !before.contains(n) && !names.contains(&n.as_str())).collect();
+    let version = crate::apt::installed().into_iter().find(|p| Some(p.name.as_str()) == names.first().copied()).map(|p| p.version).unwrap_or_default();
+    let icon = if icon.starts_with('@') { icon } else { String::new() };
+    let info = format!(
+        "name={}\ncategory={}\nabout={}\nversion={}\ndeveloper={}\ntype=linux\ngui=yes\nprogram={program}\ncolor={:06x}\nsource=https://packages.debian.org/trixie/{}\ndeb={}\nextra={}\nicon={icon}\n",
+        app.name,
+        app.category,
+        app.about,
+        version,
+        app.developer,
+        app.color & 0xFF_FFFF,
+        names.first().copied().unwrap_or(""),
+        app.deb,
+        extra.join(" "),
+    );
+    fs::write_file(&path(&format!("{APPS}/{id}.info")).map_err(|e| e.to_string())?, info.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Takes a program of Debian's archive away in the background, with the
+/// packages that came with it and that nothing else needs any more.
+pub fn start_remove(id: &str) {
+    let Some(p) = read_info(&format!("{APPS}/{id}.info"), id) else { return };
+    JOBS.lock().insert(id.to_string(), Job { phase: "Rimuovo", removing: true, total: Some(1000), permille: true, ..Default::default() });
+    let id = id.to_string();
+    let id_copy = id.clone();
+    let spawned = crate::task::spawn("store", move || {
+        let r = remove_deb(&id, &p);
+        if let Err(e) = &r {
+            crate::warn!("store", "{id}: {e}");
+        }
+        if let Some(j) = JOBS.lock().get_mut(&id) {
+            j.result = Some(r);
+        }
+    });
+    if spawned.is_none() {
+        clear_job(&id_copy);
+    }
+}
+
+fn remove_deb(id: &str, p: &PackageInfo) -> Result<(), String> {
+    use crate::gui::debinst;
+    let mut names: Vec<&str> = p.deb.split_whitespace().collect();
+    names.extend(p.extra.split_whitespace());
+    let total = names.len().max(1) as u64;
+    // The program first; what came with it after, the newest first, each
+    // only if no other installed package still needs it (dpkg refuses
+    // then: it stays).
+    let main = names.first().copied().unwrap_or("");
+    let mut left: Vec<&str> = names.clone();
+    for _round in 0..3 {
+        let mut gone = Vec::new();
+        for name in left.iter().rev() {
+            if debinst::remove(name).is_ok() {
+                gone.push(*name);
+            }
+            report_permille(id, "Rimuovo", ((names.len() - left.len() + gone.len()) as u64 * 1000 / total).min(990));
+        }
+        left.retain(|n| !gone.contains(n));
+        if gone.is_empty() || left.is_empty() {
+            break;
+        }
+    }
+    if deb_names().iter().any(|n| n == main) {
+        return Err(format!("dpkg non ha tolto «{main}»"));
+    }
+    remove(id).map_err(|e| e.to_string())
 }
 
 /// Writes an installed program with its `info` and icon into `sys:/apps`.

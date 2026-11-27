@@ -203,6 +203,23 @@ def ar_members(data):
     return out
 
 
+def control_file(deb, want):
+    """The file `want` of a package's control part (its debconf templates),
+    or None."""
+    for name, blob in ar_members(open(deb, "rb").read()).items():
+        if not name.startswith("control.tar"):
+            continue
+        if name.endswith(".xz"):
+            blob = lzma.decompress(blob)
+        elif name.endswith(".zst"):
+            blob = subprocess.run(["zstd", "-dc"], input=blob, capture_output=True, check=True).stdout
+        with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
+            for m in tar.getmembers():
+                if m.isfile() and m.name.lstrip("./") == want:
+                    return tar.extractfile(m).read()
+    return None
+
+
 def data_tar(deb):
     m = ar_members(open(deb, "rb").read())
     for name, blob in m.items():
@@ -292,6 +309,8 @@ def unpack(deb, out, keep_docs, names, listing=None, languages=()):
             if m.isdir():
                 os.makedirs(dest, exist_ok=True)
                 continue
+            if os.path.isdir(dest) and not os.path.islink(dest):
+                continue  # a link of the merged /usr (bin -> usr/bin): the tree is merged already
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             if os.path.lexists(dest):
                 os.remove(dest)
@@ -584,7 +603,23 @@ def main():
     caches(a.out)
     drop_long_names(a.out)
     if "dpkg" in chosen:
-        dpkg_database(a.out, chosen, pkgs, lists)
+        # The locales compiled above are what the `locales` package is for:
+        # dpkg counts it as installed (without its 13 MiB of definitions),
+        # so that packages asking for it (LibreOffice's Italian) install.
+        registered = list(chosen)
+        if locales and "locales" in pkgs and "locales" not in registered:
+            registered.append("locales")
+            lists["locales"] = []
+        dpkg_database(a.out, registered, pkgs, lists)
+        # Debconf templates stay where dpkg-query --control-path finds them:
+        # ucf, run by later packages' scripts, loads its own from there.
+        for n in chosen:
+            tpl = control_file(deb_file(a, n, pkgs[n]), "templates")
+            if tpl:
+                f = pkgs[n]
+                base = f"{n}:{f['Architecture']}" if f.get("Multi-Arch") == "same" else n
+                with open(os.path.join(a.out, "var/lib/dpkg/info", base + ".templates"), "wb") as tf:
+                    tf.write(tpl)
     with open(os.path.join(a.out, "usr", "PACKAGES"), "w") as f:
         for n in chosen:
             f.write(f"{n} {pkgs[n]['Version']}\n")

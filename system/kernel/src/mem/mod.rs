@@ -73,6 +73,14 @@ pub fn kernel_range() -> (u64, u64) {
 }
 
 /// Sets up physical and virtual memory and the heap.
+/// The memory in use (not counting the disks' caches, which the system
+/// takes back when it needs them), those caches and the whole, in bytes.
+pub fn usage() -> (u64, u64, u64) {
+    let (free, total) = frame::stats();
+    let cached = crate::dev::block::cached().min(total - free);
+    (total - free - cached, cached, total)
+}
+
 pub fn init(boot: &crate::boot::BootInfo) {
     if boot.kernel_phys != 0 {
         KERNEL_PHYS.store(boot.kernel_phys, core::sync::atomic::Ordering::Relaxed);

@@ -140,6 +140,7 @@ extern "C" fn kmain(boot_phys: u64) -> ! {
         fs::mount_live_system(boot.system_phys, boot.system_size);
     }
     fs::mount_ram(4 << 20);
+    fs::start_reclaim();
     gui::boot_progress(28);
 
     let found = dev::scan().len();

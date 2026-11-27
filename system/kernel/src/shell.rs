@@ -596,8 +596,17 @@ impl Shell {
             "mem" => {
                 let (free, usable) = mem::frame::stats();
                 let (heap_used, heap_size) = mem::heap::stats();
-                println!("physical  {} total, {} used, {} free", Size(usable), Size(usable - free), Size(free));
+                let cached = crate::dev::block::cached();
+                println!("physical  {} total, {} used, {} free", Size(usable), Size(usable - free - cached), Size(free));
+                println!("cache     {} of disk blocks (given back when memory runs low)", Size(cached));
                 println!("heap      {} in use of {} mapped", Size(heap_used as u64), Size(heap_size as u64));
+                let mut procs = crate::user::processes_with_memory();
+                procs.sort_by(|a, b| b.memory.cmp(&a.memory));
+                let (own, shared) = procs.iter().fold((0, 0), |(o, s), p| (o + p.memory, s + p.shared));
+                println!("programs  {} of their own, {} shared (files, shared memory)", Size(own), Size(shared));
+                for p in procs.iter().take(12) {
+                    println!("  {:>5}  {:>10}  {:>10}  {}", p.pid, Size(p.memory).to_string(), Size(p.shared).to_string(), p.label);
+                }
             }
             "ps" | "tasks" => {
                 println!("{DIM}  tid  pid  state      cpu     name{RESET}");
@@ -1612,9 +1621,10 @@ impl Shell {
                 }
                 break;
             }
-            let now = (alloc::string::String::from(j.phase), j.done / (256 * 1024));
+            let now = (alloc::string::String::from(j.phase), if j.permille { j.done / 50 } else { j.done / (256 * 1024) });
             if now != last {
                 match j.total {
+                    Some(_) if j.permille => println!("  {} {} %", j.phase, j.done / 10),
                     Some(t) => println!("  {} {} of {}", j.phase, Size(j.done), Size(t)),
                     None => println!("  {}", j.phase),
                 }
@@ -1629,6 +1639,24 @@ impl Shell {
             println!("usage: uninstall <name>");
             return;
         };
+        // A program of Debian's archive: dpkg takes it away, with what came
+        // with it.
+        if crate::store::installed(name).is_some_and(|p| !p.deb.is_empty()) {
+            crate::store::start_remove(name);
+            loop {
+                let Some(j) = crate::store::job(name) else { break };
+                if let Some(r) = j.result {
+                    crate::store::clear_job(name);
+                    match r {
+                        Ok(()) => println!("removed {BOLD}{name}{RESET}"),
+                        Err(e) => println!("{ERR}{name}: {e}{RESET}"),
+                    }
+                    break;
+                }
+                task::sleep_ms(200);
+            }
+            return;
+        }
         match crate::store::remove(name) {
             Ok(()) => println!("removed {BOLD}{name}{RESET}"),
             Err(fs::Error::NotFound) => println!("{ERR}{name} is not installed{RESET}"),

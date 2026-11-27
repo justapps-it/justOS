@@ -206,8 +206,9 @@ fn expected() -> u64 {
 }
 
 /// A new prefix takes about this much (in percent) of the size of the
-/// Windows programs Wine ships (measured on Wine 10: 1389 MiB for 1302).
-const ESTIMATE_PERCENT: u64 = 108;
+/// Windows programs Wine ships (measured on Wine 10, its DLLs without
+/// their debugging sections: 335 MiB for 283).
+const ESTIMATE_PERCENT: u64 = 118;
 
 /// The work of a preparation, on its own thread.
 fn prepare() {

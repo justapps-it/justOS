@@ -175,11 +175,18 @@ pub fn catalog() -> Vec<Entry> {
         .filter(|(id, _, _)| *id != "viewer")
         .map(|&(id, name, icon)| Entry { name: name.to_string(), icon: icon.to_string(), launch: Launch::App(id) })
         .collect();
+    // Programs of Debian's archive the store installed go by the store's
+    // name ("GIMP", not "GNU Image Manipulation Program"); their .desktop
+    // entries below are left out.
+    let mut from_store = Vec::new();
     for p in crate::store::installed_all() {
         let launch = if p.gui { Launch::Spawn(crate::store::program_path(&p)) } else { Launch::Run(p.open.clone()) };
+        if !p.deb.is_empty() {
+            from_store.push(crate::store::program_path(&p));
+        }
         v.push(Entry { icon: package_icon(&p.id), name: p.name, launch });
     }
-    v.extend(linux_apps());
+    v.extend(linux_apps().into_iter().filter(|e| !matches!(&e.launch, Launch::Spawn(p) if from_store.contains(p))));
     v.extend(winapps::entries());
     v
 }
@@ -223,9 +230,16 @@ pub fn linux_app(text: &str) -> Option<Entry> {
             _ => {}
         }
     }
-    // The program, without its arguments ("firefox-esr %u").
-    let program = exec?.split_whitespace().next()?;
-    let path = if program.starts_with('/') { alloc::format!("sys:{program}") } else { alloc::format!("sys:/usr/bin/{program}") };
+    // The program, without its arguments ("firefox-esr %u") and without
+    // what sets its environment ("env UBUNTU_MENUPROXY=0 audacity %F").
+    let mut words = exec?.split_whitespace().skip_while(|w| *w == "env" || w.contains('='));
+    let program = words.next()?;
+    // A name is looked for where PATH would find it (games in /usr/games).
+    let path = if program.starts_with('/') {
+        alloc::format!("sys:{program}")
+    } else {
+        ["sys:/usr/bin", "sys:/usr/games", "sys:/usr/local/bin"].iter().map(|d| alloc::format!("{d}/{program}")).find(|p| fs::abs(p).is_ok_and(|p| fs::exists(&p)))?
+    };
     if !fs::abs(&path).is_ok_and(|p| fs::exists(&p)) {
         return None;
     }

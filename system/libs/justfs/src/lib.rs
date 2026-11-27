@@ -121,6 +121,13 @@ pub trait BlockDevice {
     fn read_only(&self) -> bool {
         false
     }
+    /// Gives back memory a cache of the device holds, when the system
+    /// runs short of it: blocks the disk has already, the oldest first, so
+    /// that at most `keep` of each kind stay. Returns the bytes let go.
+    fn trim(&mut self, keep: usize) -> u64 {
+        let _ = keep;
+        0
+    }
 }
 
 impl<T: BlockDevice + ?Sized> BlockDevice for alloc::boxed::Box<T> {
@@ -141,6 +148,9 @@ impl<T: BlockDevice + ?Sized> BlockDevice for alloc::boxed::Box<T> {
     }
     fn read_only(&self) -> bool {
         (**self).read_only()
+    }
+    fn trim(&mut self, keep: usize) -> u64 {
+        (**self).trim(keep)
     }
 }
 

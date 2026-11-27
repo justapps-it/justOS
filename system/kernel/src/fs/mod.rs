@@ -364,6 +364,43 @@ fn changed(v: &Volume) -> Result<()> {
     Ok(())
 }
 
+/// Gives back memory the disks' caches hold: what changed is written out
+/// first, then the oldest blocks go until at most `keep` of each set of the
+/// cache stay. Returns the bytes freed.
+pub fn trim_caches(keep: usize) -> u64 {
+    let mut freed = 0;
+    for v in volumes() {
+        if v.disk.is_none() {
+            continue; // a volume in memory: its blocks are the volume
+        }
+        let mut fs = v.fs.lock();
+        if fs.write_back().is_err() {
+            crate::warn!("fs", "{}: cannot write out before trimming", v.name);
+        }
+        freed += fs.device().trim(keep);
+    }
+    freed
+}
+
+/// Watches the free memory: when programs are about to run short of it
+/// (under a sixteenth of it, at least 24 MiB, is left), the disks' caches
+/// give theirs back, half first, all of it if that was not enough.
+pub fn start_reclaim() {
+    crate::task::spawn("mem-reclaim", || loop {
+        crate::task::sleep_ms(250);
+        let (free, total) = crate::mem::frame::stats();
+        let low = (total / 16).max(24 << 20);
+        if free >= low || crate::dev::block::cached() == 0 {
+            continue;
+        }
+        let mut freed = trim_caches(2);
+        if crate::mem::frame::stats().0 < low {
+            freed += trim_caches(0);
+        }
+        crate::info!("mem", "memory low ({} free): the disk caches gave back {}", crate::util::Size(free), crate::util::Size(freed));
+    });
+}
+
 /// Writes out what changed on the volume and has its disk make it durable.
 /// Only the writing holds the volume: a disk takes a while to empty its
 /// cache, and programs like Firefox fsync many times a second.

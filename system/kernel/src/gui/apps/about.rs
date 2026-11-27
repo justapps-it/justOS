@@ -116,7 +116,8 @@ impl App for About {
                     1 => crate::arch::cpu::brand(&mut brand).trim().to_string(),
                     n => format!("{} · {n} core", crate::arch::cpu::brand(&mut brand).trim()),
                 };
-                let (free, total) = crate::mem::frame::stats();
+                let (used, _, total) = crate::mem::usage();
+                let free = total - used;
                 let up = crate::time::uptime_ms() / 1000;
                 let (sw, sh) = crate::dev::display::monitor_size().unwrap_or((0, 0));
                 let screens = crate::dev::display::shown_outputs().len();

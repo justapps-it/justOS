@@ -18,6 +18,12 @@
 use crate::control::{group_text, Dep, Group};
 use crate::index::{native_arch, Index, Pkg};
 use alloc::collections::BTreeMap;
+
+/// Packages chosen only when no other alternative will do: systemd, which
+/// justOS does not run (its kernel is the init), and what needs it to be
+/// the init (a session bus started by : 
+/// starts one without it).
+const AVOID: [&str; 4] = ["systemd", "systemd-sysv", "libpam-systemd", "dbus-user-session"];
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -157,7 +163,11 @@ impl Solver<'_> {
             return Ok(None);
         }
         let mut clash = None;
-        for d in g {
+        // Alternatives that would bring systemd come last (stable: the
+        // others keep their order).
+        let mut alts: Vec<&Dep> = g.iter().collect();
+        alts.sort_by_key(|d| AVOID.contains(&d.name.as_str()));
+        for d in alts {
             for p in self.options(d) {
                 if self.by_name.get(&p.name).is_some_and(|&i| self.chosen[i].version == p.version) {
                     // Chosen already (it meets the group: met() would have

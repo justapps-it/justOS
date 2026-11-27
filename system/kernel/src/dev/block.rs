@@ -405,9 +405,54 @@ struct BlockCache {
 
 struct Entry {
     block: u64,
-    data: alloc::boxed::Box<justfs::Block>,
+    data: Page,
     /// Changed since it was read from or written to the disk.
     dirty: bool,
+}
+
+/// Frames the block caches hold, all volumes together.
+static CACHED: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Memory the disks' caches hold, in bytes: the system takes it back when
+/// programs need it (see `fs::trim_caches`).
+pub fn cached() -> u64 {
+    CACHED.load(core::sync::atomic::Ordering::Relaxed) * crate::mem::PAGE_SIZE
+}
+
+/// A block in a page frame of its own: what the cache lets go is free
+/// memory again, for programs too (the kernel heap never gives back what
+/// it grew by).
+struct Page(u64);
+
+impl Page {
+    fn new() -> Option<Page> {
+        let phys = crate::mem::frame::alloc()?;
+        CACHED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        Some(Page(phys))
+    }
+}
+
+impl core::ops::Deref for Page {
+    type Target = justfs::Block;
+    fn deref(&self) -> &justfs::Block {
+        // SAFETY: the frame is this page's alone, reachable through the
+        // direct map, and as large as a block.
+        unsafe { &*(crate::mem::phys_to_virt(self.0) as *const justfs::Block) }
+    }
+}
+
+impl core::ops::DerefMut for Page {
+    fn deref_mut(&mut self) -> &mut justfs::Block {
+        // SAFETY: as in `deref`; `&mut self` makes it the only reference.
+        unsafe { &mut *(crate::mem::phys_to_virt(self.0) as *mut justfs::Block) }
+    }
+}
+
+impl Drop for Page {
+    fn drop(&mut self) {
+        crate::mem::frame::free(self.0);
+        CACHED.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 const WAYS: usize = 4;
@@ -454,7 +499,8 @@ impl BlockCache {
 
     /// Keeps `data` as `block` (dirty: not on the disk yet). Whatever it
     /// pushes out must be clean ([`dirty_victim`](Self::dirty_victim)).
-    fn put(&mut self, block: u64, data: &justfs::Block, dirty: bool) {
+    /// False when there was no memory for it (and the block is not here).
+    fn put(&mut self, block: u64, data: &justfs::Block, dirty: bool) -> bool {
         let set = self.set(block);
         let mut entry = match set.iter().position(|e| e.block == block) {
             Some(i) => {
@@ -462,10 +508,28 @@ impl BlockCache {
                 Entry { dirty: e.dirty || dirty, ..e }
             }
             None if set.len() == WAYS => Entry { block, dirty, ..set.pop().unwrap() },
-            None => Entry { block, data: alloc::boxed::Box::new([0u8; justfs::BLOCK_SIZE]), dirty },
+            None => match Page::new() {
+                Some(data) => Entry { block, data, dirty },
+                None => return false,
+            },
         };
         entry.data.copy_from_slice(data);
         set.insert(0, entry);
+        true
+    }
+
+    /// Lets go of the oldest blocks that are on the disk already, until at
+    /// most `keep` stay in each set. Returns the bytes freed.
+    fn trim(&mut self, keep: usize) -> u64 {
+        let mut freed = 0;
+        for set in &mut self.sets {
+            while set.len() > keep {
+                let Some(i) = set.iter().rposition(|e| !e.dirty) else { break };
+                set.remove(i);
+                freed += justfs::BLOCK_SIZE as u64;
+            }
+        }
+        freed
     }
 
     /// Where the dirty blocks are (set, way), in block order.
@@ -551,13 +615,17 @@ impl justfs::BlockDevice for DiskBlocks {
             return Err(justfs::Error::Io);
         }
         buf.copy_from_slice(&run[..bs]);
-        self.cache.put(block, buf, false);
+        if !self.cache.put(block, buf, false) {
+            return Ok(()); // no memory to keep it (or what came after)
+        }
         for i in 1..n {
             if self.make_room(block + i).is_err() {
                 break;
             }
             let data: &justfs::Block = run[i as usize * bs..(i as usize + 1) * bs].try_into().unwrap();
-            self.cache.put(block + i, data, false);
+            if !self.cache.put(block + i, data, false) {
+                break;
+            }
         }
         Ok(())
     }
@@ -567,7 +635,12 @@ impl justfs::BlockDevice for DiskBlocks {
             return Err(justfs::Error::Io);
         }
         self.make_room(block)?;
-        self.cache.put(block, buf, true);
+        if !self.cache.put(block, buf, true) {
+            // No memory to keep it until the flush: straight to the disk.
+            if self.disk.write(block * self.sectors_per_block(), &buf[..]) != OK {
+                return Err(justfs::Error::Io);
+            }
+        }
         Ok(())
     }
 
@@ -590,5 +663,9 @@ impl justfs::BlockDevice for DiskBlocks {
 
     fn read_only(&self) -> bool {
         self.disk.readonly
+    }
+
+    fn trim(&mut self, keep: usize) -> u64 {
+        self.cache.trim(keep)
     }
 }

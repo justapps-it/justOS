@@ -627,6 +627,13 @@ fn map(addr: u64, len: u64, prot: u32, flags: u32, backing: Backing, off: u64) -
     }
 }
 
+/// Maps shared memory `shm` (System V's shmat): at `addr` if not 0.
+pub fn map_shared(addr: u64, len: u64, write: bool, shm: Arc<super::shm::Shm>) -> i64 {
+    let prot = PROT_READ | if write { PROT_WRITE } else { 0 };
+    let flags = MAP_SHARED | if addr != 0 { MAP_FIXED } else { 0 };
+    map(addr, mem::align_up(len, PAGE_SIZE), prot, flags, Backing::Shm(shm, true), 0)
+}
+
 pub fn sys_munmap(addr: u64, len: u64) -> i64 {
     if addr % PAGE_SIZE != 0 || len == 0 {
         return -err::EINVAL;

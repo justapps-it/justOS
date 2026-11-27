@@ -284,7 +284,7 @@ fn virtual_dir(text: &str) -> Option<Vec<(String, bool)>> {
     let mut v = entries(&[".", ".."], true);
     if text.trim_end_matches('/') == "/proc" {
         // The processes the caller can see, and the links to itself.
-        v.extend(entries(&["self", "thread-self", "cpuinfo", "meminfo", "mounts"], false));
+        v.extend(entries(&["self", "thread-self", "cpuinfo", "meminfo", "mounts", "version"], false));
         for p in user::processes() {
             let local = super::ns::local(p.pid);
             if local != 0 {
@@ -297,7 +297,7 @@ fn virtual_dir(text: &str) -> Option<Vec<(String, bool)>> {
     match name {
         "" => {
             v.extend(entries(&["fd", "fdinfo", "ns", "task"], true));
-            v.extend(entries(&["cmdline", "comm", "exe", "gid_map", "maps", "mountinfo", "mounts", "setgroups", "stat", "status", "uid_map"], false));
+            v.extend(entries(&["cmdline", "comm", "exe", "gid_map", "maps", "mountinfo", "mounts", "setgroups", "stat", "statm", "status", "uid_map"], false));
         }
         // Only a process's own descriptors are listed.
         "fd" | "fdinfo" if pid == task::current_pid() => {
@@ -373,13 +373,22 @@ fn proc_file(pid: u32, name: &str) -> Option<String> {
         "cmdline" => alloc::format!("{prog}\0"),
         "comm" => alloc::format!("{comm}\n"),
         "stat" => alloc::format!("{me} ({comm}) R {parent} {me} {me} 0 -1 0 0 0 0 0 0 0 0 0 20 0 {threads} 0 0 0 0\n"),
+        "statm" => {
+            let (own, shared) = user::memory_of(pid);
+            let pages = (own + shared) / 4096;
+            alloc::format!("{pages} {pages} {} 0 0 {} 0\n", shared / 4096, own / 4096)
+        }
         "status" => {
+            let (own, shared) = user::memory_of(pid);
             let (uid, gid) = (super::ns::uid(), super::ns::gid());
             let ids = super::ns::ids_of(pid).iter().map(|i| alloc::format!("\t{i}")).collect::<String>();
             alloc::format!(
                 "Name:\t{comm}\nUmask:\t0022\nState:\tR (running)\nTgid:\t{me}\nNgid:\t0\nPid:\t{me}\nPPid:\t{parent}\nTracerPid:\t0\n\
                  Uid:\t{uid}\t{uid}\t{uid}\t{uid}\nGid:\t{gid}\t{gid}\t{gid}\t{gid}\nNStgid:{ids}\nNSpid:{ids}\n\
-                 Threads:\t{threads}\nSeccomp:\t{}\n",
+                 VmRSS:\t{} kB\nRssAnon:\t{} kB\nRssFile:\t{} kB\nThreads:\t{threads}\nSeccomp:\t{}\n",
+                (own + shared) / 1024,
+                own / 1024,
+                shared / 1024,
                 super::seccomp::mode_of(pid)
             )
         }
@@ -425,10 +434,19 @@ fn virtual_file(text: &str) -> Option<Kind> {
         "/etc/group" => data(String::from("root:x:0:\n")),
         "/etc/localtime" => None,
         "/proc/mounts" | "/etc/mtab" => proc_file(task::current_pid(), "mounts").and_then(data),
+        // What uname says (LibreOffice looks here to see that /proc is there).
+        "/proc/version" => data(String::from("Linux version 6.1.0-justos (justOS) #1 SMP justOS\n")),
         "/proc/cpuinfo" => data(String::from("processor\t: 0\nmodel name\t: justOS virtual CPU\ncpu cores\t: 1\n\n")),
         "/proc/meminfo" => {
             let (free, total) = crate::mem::frame::stats();
-            data(alloc::format!("MemTotal: {} kB\nMemFree: {} kB\nMemAvailable: {} kB\n", total / 1024, free / 1024, free / 1024))
+            let cached = crate::dev::block::cached();
+            data(alloc::format!(
+                "MemTotal: {} kB\nMemFree: {} kB\nMemAvailable: {} kB\nBuffers: 0 kB\nCached: {} kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n",
+                total / 1024,
+                free / 1024,
+                (free + cached) / 1024,
+                cached / 1024
+            ))
         }
         _ => None,
     }
@@ -441,6 +459,9 @@ pub fn sys_openat(dirfd: i32, path_ptr: u64, flags: u32, mode: u32) -> i64 {
         Ok(t) => t,
         Err(e) => return e,
     };
+    if text.is_empty() {
+        return -err::ENOENT;
+    }
     if let Some(name) = super::shm::named(&text) {
         return super::shm::open_named(name, flags);
     }
@@ -1047,6 +1068,9 @@ pub fn sys_newfstatat(dirfd: i32, path_ptr: u64, buf: u64, flags: u64) -> i64 {
     if text.is_empty() && flags & AT_EMPTY_PATH != 0 {
         return sys_fstat(dirfd, buf);
     }
+    if text.is_empty() {
+        return -err::ENOENT;
+    }
     if let Some(info) = virtual_stat(&text, flags & AT_SYMLINK_NOFOLLOW == 0) {
         return match info {
             Ok(s) => write_stat(buf, &s),
@@ -1080,6 +1104,8 @@ pub fn sys_statx(dirfd: i32, path_ptr: u64, flags: u64, buf: u64) -> i64 {
             Some(d) => stat_of_desc(&d),
             None => return -err::EBADF,
         }
+    } else if text.is_empty() {
+        return -err::ENOENT;
     } else if let Some(info) = virtual_stat(&text, flags & AT_SYMLINK_NOFOLLOW == 0) {
         info
     } else {
@@ -1123,7 +1149,13 @@ pub fn sys_statx(dirfd: i32, path_ptr: u64, flags: u64, buf: u64) -> i64 {
 /// opens a download, which a text file must not get.
 pub fn sys_faccessat(dirfd: i32, path_ptr: u64, mode: u64) -> i64 {
     const X_OK: u64 = 1;
-    let text = super::path_text_at(dirfd, path_ptr).unwrap_or_default();
+    let text = match super::path_text_at(dirfd, path_ptr) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    if text.is_empty() {
+        return -err::ENOENT;
+    }
     if let Some(info) = virtual_stat(&text, true) {
         return info.map_or_else(|e| e, |_| 0);
     }

@@ -94,6 +94,17 @@ LINUX_PKGS += libpulse0 pulseaudio-utils
 # no package says it needs it, and a curses program from a .deb (sl) would
 # not start without it.
 LINUX_PKGS += debian-archive-keyring ncurses-base
+# What every Debian system has and the scripts of other packages count on
+# (the programs of the store come from Debian's archive): Perl and debconf,
+# with which they ask their questions (none: DEBIAN_FRONTEND=noninteractive),
+# update-rc.d and invoke-rc.d (which start no service: policy-rc.d says no),
+# ischroot and which, and the system's users, PAM, X11's folders, procps
+# and D-Bus. Here they are unpacked without running their scripts, which
+# would make users and start services justOS does not need (its kernel
+# gives /etc/passwd).
+LINUX_PKGS += perl-base debianutils init-system-helpers debconf sensible-utils ucf base-passwd login.defs passwd adduser findutils mawk gzip hostname bash util-linux
+LINUX_PKGS += libpam0g libpam-modules-bin libpam-modules libpam-runtime x11-common procps tzdata media-types netbase
+LINUX_PKGS += dbus-bin dbus-daemon dbus-session-bus-common dbus-system-bus-common dbus-x11
 LINUX_DIST ?= trixie
 # Linux programs speak Italian, like the rest of justOS: debroot.py
 # compiles these glibc locales into the tree and keeps the translations
@@ -116,10 +127,11 @@ comma    := ,
 # With Wine and without, the Linux tree and the system volume's files are
 # kept apart, so that the image and the tests' image (without Wine) do not
 # undo each other's, even when make builds both at once (make -j image
-# test). With Wine the image needs room for the files (1.7 GiB, 1.3 of
-# them Wine's DLLs) and for the C: drive Wine makes at its first start,
-# which copies the DLLs again (1.4 GiB more, measured): 5 GiB leaves about
-# 1.8 GiB for the user's files after that.
+# test). With Wine the image needs room for the files (0.7 GiB, 0.3 of
+# them Wine's DLLs, without their debugging sections: tools/linux/pestrip.py)
+# and for the C: drive Wine makes at its first start, which copies the DLLs
+# again (335 MiB more, measured): 5 GiB leaves about 3.9 GiB for the user's
+# files and the programs of the store after that.
 ifeq ($(WINE),0)
 SIZE     ?= 1G
 LINUX    := $(BUILD)/linux
@@ -218,6 +230,19 @@ root: live-root $(LINUX)/usr/PACKAGES
 	cp -r rootfs/. $(ROOT)/
 	# Windows programs (Wine, when there) take justOS's look too.
 	tools/linux/winelook.py $(ROOT)
+	# Wine's Windows DLLs without the debugging sections Debian builds them
+	# with (812 of their 1302 MiB, copied again into every C: drive).
+	if [ -d $(ROOT)/usr/lib/x86_64-linux-gnu/wine ]; then tools/linux/pestrip.py $(ROOT)/usr/lib/x86_64-linux-gnu/wine; fi
+	# The alternatives the scripts of debianutils and mawk would register.
+	[ -e $(ROOT)/usr/bin/which ] || ln -s which.debianutils $(ROOT)/usr/bin/which
+	[ -e $(ROOT)/usr/bin/awk ] || ln -s mawk $(ROOT)/usr/bin/awk
+	# ldconfig makes the links of new libraries but not its cache (-N):
+	# writing /etc/ld.so.cache aborts on justOS, and the loader finds the
+	# libraries in their multiarch folders without it.
+	if head -c4 $(ROOT)/usr/sbin/ldconfig 2>/dev/null | grep -q ELF; then \
+		mv $(ROOT)/usr/sbin/ldconfig $(ROOT)/usr/sbin/ldconfig.real; \
+		printf '#!/bin/sh\nexec /usr/sbin/ldconfig.real -N "$$@"\n' > $(ROOT)/usr/sbin/ldconfig; \
+		chmod 755 $(ROOT)/usr/sbin/ldconfig; fi
 	# GTK programs load justOS's GTK module (rootfs/etc/gtk-3.0/settings.ini),
 	# built here against the tree's GTK.
 	if [ -e $(GTK_LIB)/libgtk-3.so.0 ]; then mkdir -p $(GTK_LIB)/gtk-3.0/modules && \

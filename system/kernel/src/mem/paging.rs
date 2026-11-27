@@ -326,6 +326,35 @@ pub fn unshare_in(pml4: u64, virt: u64) -> Option<bool> {
     Some(true)
 }
 
+/// Memory the user half of an address space has: its own pages (fork's
+/// copies still shared with a child included) and the pages of shared
+/// memory and mapped files, in bytes.
+pub fn resident(pml4: u64) -> (u64, u64) {
+    fn count(t: u64, level: u32, own: &mut u64, shared: &mut u64) {
+        for &e in table(t).iter() {
+            if e & PRESENT == 0 {
+                continue;
+            }
+            if level > 0 && e & HUGE == 0 {
+                count(e & ADDR_MASK, level - 1, own, shared);
+            } else if level == 0 && e & SHARED != 0 {
+                *shared += 1;
+            } else if level == 0 {
+                *own += 1;
+            }
+        }
+    }
+    let (mut own, mut shared) = (0, 0);
+    let _guard = MAP_LOCK.lock();
+    for i in 0..256 {
+        let e = table(pml4)[i];
+        if e & PRESENT != 0 {
+            count(e & ADDR_MASK, 2, &mut own, &mut shared);
+        }
+    }
+    (own * PAGE_SIZE, shared * PAGE_SIZE)
+}
+
 /// Frees the user half of an address space: page tables and mapped frames
 /// (not the frames of shared pages; a frame fork left to another process
 /// too stays with that one). Waits until no other processor has it loaded.

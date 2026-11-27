@@ -101,6 +101,8 @@ struct Process {
     /// pid of the program justOS started, which the processes it made
     /// inherit; 0 after `setsid` (a daemon, off the terminal).
     job: u32,
+    /// The name a Linux program gave its first thread (PR_SET_NAME).
+    label: Option<String>,
     /// A Linux program (or one a Linux program forked): the sandbox asks
     /// for its devices under the name the desktop gives it.
     linux: bool,
@@ -317,6 +319,7 @@ fn start(image: Vec<u8>, name: String, args: &str, cwd: Path, kind: Kind, exe: &
             shared_vm: false,
             orphan: false,
             job: pid,
+            label: None,
             linux: kind == Kind::Linux,
         },
     );
@@ -390,6 +393,7 @@ pub(crate) fn fork(child: TrapFrame, fs: u64, share_vm: bool, share_fs: bool) ->
             shared_vm: share_vm,
             orphan: false,
             job,
+            label: None,
             // Only Linux programs fork.
             linux: true,
         },
@@ -470,6 +474,7 @@ pub(crate) fn exec_address_space(name: &str, exe: &Path) -> Result<(), Error> {
             return Err(Error::Unknown);
         };
         p.name = String::from(name);
+        p.label = None;
         p.exe = exe.clone();
         (core::mem::replace(&mut p.cr3, new), core::mem::replace(&mut p.shared_vm, false))
     };
@@ -503,6 +508,18 @@ pub(crate) fn parent_pid() -> u32 {
 
 /// What /proc shows of a running process: its name, its parent (as
 /// [`parent_pid`] says) and how many threads it has.
+/// A Linux program named its thread `tid`: when that is the process's
+/// first thread, that is the name the activity monitor shows ("notepad.exe"
+/// for Wine's processes instead of "wine64"). The program's own name stays
+/// what the system goes by.
+pub(crate) fn rename_if_first(tid: Tid, name: &str) {
+    if let Some(p) = PROCS.lock().get_mut(&task::current_pid()) {
+        if p.tid == tid && !name.is_empty() {
+            p.label = Some(String::from(name));
+        }
+    }
+}
+
 pub(crate) fn proc_info(pid: u32) -> Option<(String, u32, usize)> {
     PROCS.lock().get(&pid).filter(|p| p.state == State::Running).map(|p| (p.name.clone(), p.parent.unwrap_or(1), p.threads.len()))
 }
@@ -1782,15 +1799,44 @@ pub fn fault(frame: &mut TrapFrame, what: &str) {
 pub struct ProcInfo {
     pub pid: u32,
     pub name: String,
-    /// Memory it asked for (heap), in bytes.
+    /// The name to show: the one the program gave itself, or `name`.
+    pub label: String,
+    /// Memory of its own, in bytes (what ending it gives back).
     pub memory: u64,
+    /// Pages it shares with others: mapped files, shared memory.
+    pub shared: u64,
 }
 
+/// The running programs, without their memory (counting it walks their
+/// page tables: [`processes_with_memory`]).
 pub fn processes() -> Vec<ProcInfo> {
     PROCS
         .lock()
         .iter()
         .filter(|(_, p)| p.state == State::Running)
-        .map(|(&pid, p)| ProcInfo { pid, name: p.name.clone(), memory: p.heap_next - sys::USER_HEAP_BASE })
+        .map(|(&pid, p)| ProcInfo { pid, name: p.name.clone(), label: p.label.clone().unwrap_or_else(|| p.name.clone()), memory: 0, shared: 0 })
+        .collect()
+}
+
+/// The memory of process `pid`: its own and what it shares, in bytes.
+pub fn memory_of(pid: u32) -> (u64, u64) {
+    let cr3 = PROCS.lock().get(&pid).filter(|p| !p.shared_vm).map_or(0, |p| p.cr3);
+    if cr3 == 0 { (0, 0) } else { crate::mem::paging::resident(cr3) }
+}
+
+/// The running programs and the memory each has.
+pub fn processes_with_memory() -> Vec<ProcInfo> {
+    PROCS
+        .lock()
+        .iter()
+        .filter(|(_, p)| p.state == State::Running)
+        .map(|(&pid, p)| (pid, p.name.clone(), p.label.clone(), p.cr3, p.shared_vm))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|(pid, name, label, cr3, shared_vm)| {
+            // A vfork child runs in its parent's memory: none of it is its own.
+            let (memory, shared) = if shared_vm || cr3 == 0 { (0, 0) } else { crate::mem::paging::resident(cr3) };
+            ProcInfo { pid, label: label.unwrap_or_else(|| name.clone()), name, memory, shared }
+        })
         .collect()
 }

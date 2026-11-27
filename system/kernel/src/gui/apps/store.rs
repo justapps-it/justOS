@@ -19,8 +19,10 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 const SIDEBAR: i32 = 210;
-const SECTIONS: [(&str, &str); 9] = [
+const SECTIONS: [(&str, &str); 11] = [
     ("Scopri", "g-grid"),
+    ("Ufficio", "text-editor"),
+    ("Multimedia", "music"),
     ("Giochi", "games"),
     ("Creatività", "photos"),
     ("Sviluppatori", "code"),
@@ -30,7 +32,8 @@ const SECTIONS: [(&str, &str); 9] = [
     ("Installate", "download"),
     ("Aggiornamenti", "refresh"),
 ];
-const UPDATES: usize = 8;
+const UPDATES: usize = 10;
+const INSTALLED: usize = 9;
 const CARD_H: i32 = 86;
 
 /// An update not installed yet for the app `id`.
@@ -118,13 +121,15 @@ impl Item {
         let cat = self.category();
         match s {
             0 => true,
-            1 => cat == "Giochi",
-            2 => cat == "Creatività",
-            3 => cat == "Sviluppatori",
-            4 => cat == "Strumenti",
-            5 => cat == "Internet",
-            6 => self.platform() == Platform::Windows,
-            7 => self.installed().is_some(),
+            1 => cat == "Ufficio",
+            2 => cat == "Multimedia",
+            3 => cat == "Giochi",
+            4 => cat == "Creatività",
+            5 => cat == "Sviluppatori",
+            6 => cat == "Strumenti",
+            7 => cat == "Internet",
+            8 => self.platform() == Platform::Windows,
+            INSTALLED => self.installed().is_some(),
             _ => false,
         }
     }
@@ -166,8 +171,11 @@ pub struct Store {
 }
 
 fn load_items() -> Vec<Item> {
-    let mut v: Vec<Item> = store::available().into_iter().map(Item::Local).collect();
-    v.extend(store::catalog().into_iter().map(Item::Remote));
+    // The big programs of Debian's archive first, then justOS's own.
+    let (big, other): (Vec<_>, Vec<_>) = store::catalog().into_iter().partition(|a| !a.deb.is_empty());
+    let mut v: Vec<Item> = big.into_iter().map(Item::Remote).collect();
+    v.extend(store::available().into_iter().map(Item::Local));
+    v.extend(other.into_iter().map(Item::Remote));
     v
 }
 
@@ -205,7 +213,7 @@ impl Store {
     }
 
     fn featured(&self) -> Option<usize> {
-        self.items.iter().position(|i| matches!(i, Item::Remote(a) if a.featured && a.id == "ripgrep")).or_else(|| self.items.iter().position(|i| matches!(i, Item::Remote(a) if a.featured)))
+        self.items.iter().position(|i| matches!(i, Item::Remote(a) if a.featured && a.id == "gimp")).or_else(|| self.items.iter().position(|i| matches!(i, Item::Remote(a) if a.featured)))
     }
 
     fn content(area: Rect) -> Rect {
@@ -472,6 +480,12 @@ impl Store {
 
     fn remove(&mut self, it: &Item) -> Action {
         let name = it.name().to_string();
+        if it.installed().is_some_and(|p| !p.deb.is_empty()) {
+            // dpkg takes a while: in the background, with the ring.
+            store::start_remove(it.id());
+            self.watching.push(it.id().to_string());
+            return Action::Redraw;
+        }
         match store::remove(it.id()) {
             Ok(()) => Action::Notify(format!("{name} rimossa"), String::from("Puoi installarla di nuovo quando vuoi."), "store"),
             Err(e) => Action::Notify(name, format!("Non si è potuta rimuovere: {e}"), "store"),
@@ -585,7 +599,10 @@ impl Store {
         ui::icon_button(c, back, "g-back", self.hover == Some(back));
         Self::draw_icon(c, it, 128, ct.x + 20, ct.y + 58);
         text::draw(c, Font::Title, ct.x + 170, ct.y + 60, &text::fit(Font::Title, it.name(), ct.w - 190), ui::text());
-        text::draw(c, Font::Body, ct.x + 170, ct.y + 102, &text::fit(Font::Body, &format!("{} · {}", it.developer(), it.category()), ct.w - 300), ui::text_dim());
+        text::draw(c, Font::Body, ct.x + 170, ct.y + 102, &text::fit(Font::Body, &match it {
+                Item::Remote(a) if !a.size.is_empty() => format!("{} · {} · {}", it.developer(), it.category(), a.size),
+                _ => format!("{} · {}", it.developer(), it.category()),
+            }, ct.w - 300), ui::text_dim());
         platform_chip(c, ct.x + 170, ct.y + 124, it.platform());
         let [get, remove] = Self::page_btns(area);
         self.draw_button(c, get, it);
@@ -597,6 +614,7 @@ impl Store {
         }
         if let Some(j) = store::job(it.id()).filter(|j| j.result.is_none()) {
             let what = match j.total {
+                Some(_) if j.permille => format!("{} · {} %", j.phase, j.done / 10),
                 Some(t) => format!("{} · {} di {}", j.phase, Size(j.done), Size(t)),
                 None if j.done > 0 => format!("{} · {}", j.phase, Size(j.done)),
                 None => String::from(j.phase),
@@ -825,7 +843,7 @@ impl App for Store {
             text::draw(c, Font::Heading, ct.x + 14, b.bottom() + 14, "Tutte le app", ui::text());
         }
         if shown.is_empty() && self.search.is_empty() {
-            let msg = if self.section == 7 { "Nessuna app installata dal Negozio" } else { "Nessuna app" };
+            let msg = if self.section == INSTALLED { "Nessuna app installata dal Negozio" } else { "Nessuna app" };
             text::draw_centered(c, Font::Body, ct.x + ct.w / 2, self.grid_top(area) + 30, msg, ui::text_faint());
         }
         for (k, &i) in shown.iter().enumerate() {
@@ -1040,12 +1058,21 @@ impl App for Store {
             }
         }
         for (id, r) in done {
+            let removing = store::job(&id).is_some_and(|j| j.removing);
             store::clear_job(&id);
             self.watching.retain(|w| *w != id);
-            let name = store::installed(&id).map(|p| p.name).unwrap_or_else(|| id.clone());
-            match r {
-                Ok(()) => crate::gui::notify(&format!("{name} installata"), "La trovi tra le applicazioni; si usa nel Terminale.", "store"),
-                Err(e) => crate::gui::notify(&name, &format!("Installazione non riuscita: {e}"), "store"),
+            let installed = store::installed(&id);
+            let name = installed
+                .as_ref()
+                .map(|p| p.name.clone())
+                .or_else(|| self.items.iter().find(|i| i.id() == id).map(|i| i.name().to_string()))
+                .unwrap_or_else(|| id.clone());
+            let how = if installed.as_ref().is_some_and(|p| p.gui) { "La trovi tra le applicazioni." } else { "Si usa nel Terminale." };
+            match (r, removing) {
+                (Ok(()), false) => crate::gui::notify(&format!("{name} installata"), how, "store"),
+                (Ok(()), true) => crate::gui::notify(&format!("{name} rimossa"), "Puoi installarla di nuovo quando vuoi.", "store"),
+                (Err(e), false) => crate::gui::notify(&name, &format!("Installazione non riuscita: {e}"), "store"),
+                (Err(e), true) => crate::gui::notify(&name, &format!("Non si è potuta rimuovere: {e}"), "store"),
             }
         }
         true

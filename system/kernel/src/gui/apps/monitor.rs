@@ -69,14 +69,14 @@ impl Monitor {
         let first = self.last.is_empty();
         self.last = seen;
         self.last_at = now;
-        let procs = crate::user::processes();
+        let procs = crate::user::processes_with_memory();
         let selected_pid = self.selected.and_then(|i| self.rows.get(i)).and_then(|r| r.pid);
         let mut rows: Vec<Row> = groups
             .into_iter()
             .map(|(pid, (name, used, n))| {
                 let p = procs.iter().find(|p| p.pid == pid);
                 Row {
-                    name: p.map_or(name, |p| p.name.clone()),
+                    name: p.map_or(name, |p| p.label.clone()),
                     cpu: if first { 0 } else { (used * 1000 / span).min(1000) as u32 },
                     threads: n,
                     memory: p.map(|p| p.memory),
@@ -90,8 +90,8 @@ impl Monitor {
         if !first {
             push(&mut self.cpu_history, (busy * 1000 / span).min(1000) as u32);
         }
-        let (free, total) = crate::mem::frame::stats();
-        push(&mut self.mem_history, (total.saturating_sub(free) * 1000 / total.max(1)) as u32);
+        let (used, _, total) = crate::mem::usage();
+        push(&mut self.mem_history, (used * 1000 / total.max(1)) as u32);
     }
 
     fn tabs(area: Rect) -> Rect {
@@ -209,10 +209,11 @@ impl App for Monitor {
             text::draw(c, Font::Small, side.x + 16, side.y + 98, &format!("Acceso da {} h {:02} min", up / 3600, up / 60 % 60), ui::text_dim());
         } else {
             draw_graph(c, g, &self.mem_history, ui::ACCENT);
-            let (free, total) = crate::mem::frame::stats();
+            let (used, cached, total) = crate::mem::usage();
             text::draw(c, Font::Small, side.x + 16, side.y + 14, "In uso", ui::text_dim());
-            text::draw(c, Font::Title, side.x + 16, side.y + 32, &format!("{}", Size(total.saturating_sub(free))), ui::text());
-            text::draw(c, Font::Small, side.x + 16, side.y + 78, &format!("Libera: {}", Size(free)), ui::text_dim());
+            text::draw(c, Font::Title, side.x + 16, side.y + 32, &format!("{}", Size(used)), ui::text());
+            let free = format!("Libera: {} · cache {}", Size(total - used - cached), Size(cached));
+            text::draw(c, Font::Small, side.x + 16, side.y + 78, &text::fit(Font::Small, &free, side.w - 32), ui::text_dim());
             text::draw(c, Font::Small, side.x + 16, side.y + 98, &format!("Totale: {}", Size(total)), ui::text_dim());
         }
     }

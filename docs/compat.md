@@ -520,15 +520,16 @@ essere fissato nel dock. I `.msp` e i `.msix`/`.appx` non sono supportati e
 lo dicono. Non testati: MSI a 32 bit, percorsi non ASCII, installer con
 finestre proprie.
 
-**Quanto spazio.** I file di Wine sono la gran parte dell'immagine: dei
-1,7 GiB occupati da un'immagine appena costruita, 1,3 GiB sono le DLL di
-Wine (a 64 e a 32 bit). Il disco `C:` che Wine prepara al primo avvio le
-copia in `system32` e `syswow64`: altri 1,4 GiB, 3,1 GiB in tutto. Per
-questo l'immagine è da 5 GiB: dopo restano circa 1,8 GiB per i file e i
-programmi dell'utente. `make SIZE=8G` la fa più grande. Preparare il disco
-`C:` già quando si costruisce l'immagine risparmierebbe i due minuti del
-primo avvio, ma servirebbe Wine sulla macchina che costruisce e l'immagine
-porterebbe 1,4 GiB in più: per ora non si fa.
+**Quanto spazio.** Debian costruisce le DLL di Wine con le informazioni di
+debug dentro: 1302 MiB, di cui 1019 servono solo a un debugger. Quando si
+costruisce l'immagine `tools/linux/pestrip.py` toglie quelle sezioni, che
+sono sempre le ultime del file, e lascia uguale tutto il resto, compreso il
+segno «Wine builtin DLL» con cui Wine riconosce le proprie (`strip` e
+`objcopy` lo riscriverebbero). Le DLL restano 283 MiB. Il disco `C:` che Wine
+prepara al primo avvio le copia in `system32` e `syswow64`: 335 MiB scritti
+invece di 1,4 GiB, e la preparazione dura meno. L'immagine resta da 5 GiB:
+dopo restano circa 3,9 GiB per i file dell'utente e i programmi dello
+store. `make SIZE=8G` la fa più grande.
 
 Le finestre passano per il driver Wayland di Wine e diventano **finestre di
 justOS**. Wine disegna da sé la cornice di Windows, perché Wayland non gliene

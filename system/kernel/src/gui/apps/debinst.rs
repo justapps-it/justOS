@@ -95,15 +95,40 @@ const SCRIPT: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 export PATH
 DEBIAN_FRONTEND=noninteractive
 export DEBIAN_FRONTEND
+UCF_FORCE_CONFFNEW=YES
+export UCF_FORCE_CONFFNEW
 LC_ALL=C.UTF-8
 export LC_ALL
+# What the scripts of the system's own packages would do when a package
+# adds settings schemas, icons, MIME types, fonts or image loaders (their
+# triggers): those came with the system unpacked, without their scripts.
+caches() {
+set +f
+unset IFS
+L=/usr/lib/x86_64-linux-gnu
+[ -d /usr/share/glib-2.0/schemas ] && $L/glib-2.0/glib-compile-schemas /usr/share/glib-2.0/schemas
+[ -d $L/gio/modules ] && $L/glib-2.0/gio-querymodules $L/gio/modules
+for d in /usr/share/icons/*/; do [ -f \"$d/index.theme\" ] && gtk-update-icon-cache -q -f -t \"$d\"; done
+[ -x /usr/bin/update-mime-database ] && update-mime-database /usr/share/mime
+[ -x /usr/bin/update-desktop-database ] && update-desktop-database -q /usr/share/applications
+[ -x $L/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders ] && $L/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
+[ -x /usr/bin/fc-cache ] && fc-cache
+ldconfig
+return 0
+}
 case \"$MODE\" in
 info) exec dpkg-deb -f \"$DEB\" > \"$OUT.control\" 2> \"$OUT.log\" ;;
 install) IFS='
 '
 set -f
-exec dpkg --force-confold -i $(cat \"$DEB\") > \"$OUT.log\" 2>&1 ;;
-remove) exec dpkg --purge \"$PKG\" > \"$OUT.log\" 2>&1 ;;
+dpkg --force-confold -i $(cat \"$DEB\") > \"$OUT.log\" 2>&1
+r=$?
+caches > /dev/null 2>&1
+exit $r ;;
+remove) dpkg --purge \"$PKG\" > \"$OUT.log\" 2>&1
+r=$?
+caches > /dev/null 2>&1
+exit $r ;;
 undo) exec dpkg --purge --force-remove-reinstreq --force-depends $PKG > \"$OUT.log\" 2>&1 ;;
 esac
 exit 2
@@ -165,7 +190,7 @@ fn start_as(mode: &str, deb: &str, pkg: &str, out: String) -> Result<Step, Strin
         return Err(String::from("non riesco a preparare la cartella di lavoro"));
     }
     let dash = fs::abs("sys:/usr/bin/dash").ok().filter(fs::exists).ok_or_else(|| String::from("dpkg non c'è in questo sistema"))?;
-    let env = alloc::vec![format!("MODE={mode}"), format!("DEB={deb}"), format!("PKG={pkg}"), format!("OUT={WORK_LINUX}/{out}")];
+    let env = alloc::vec![format!("MODE={mode}"), String::from("DEBIAN_FRONTEND=noninteractive"), format!("DEB={deb}"), format!("PKG={pkg}"), format!("OUT={WORK_LINUX}/{out}")];
     let cwd = fs::abs("sys:/home").unwrap_or_else(|_| fs::Path::root("sys"));
     let pid = crate::user::spawn_env(&dash, &format!("{WORK_LINUX}/run.sh"), cwd, env).map_err(|e| format!("dpkg non parte: {}", e.as_str()))?;
     Ok(Step { pid, out })
@@ -383,6 +408,10 @@ fn fetch_all(p: &Prepared, report: Report<'_>, share: u32) -> Result<Vec<(String
     let total = p.plan.download_size().max(1);
     let mut done = 0u64;
     let mut out = Vec::new();
+    // The first package ever is downloaded before dpkg has run once.
+    if !downloads.is_empty() && !make_work() {
+        return Err(String::from("non riesco a creare la cartella dei pacchetti"));
+    }
     for (n, pkg) in downloads.iter().enumerate() {
         let doing = format!("Scarico {} ({} di {})…", pkg.name, n + 1, downloads.len());
         report((done * share as u64 / total) as u32, &doing);
@@ -431,6 +460,10 @@ fn dpkg_batch(files: &[String], report: Report<'_>, from: u32, to: u32) -> Resul
     step.clean();
     if code != 0 {
         crate::println!("debinst: dpkg -i ended with {code}: {}", last_lines(&log, 4));
+        // The errors in full, for the system log.
+        for l in log.lines().filter(|l| l.contains("rror") || l.contains("not found") || l.contains("warning") || l.contains("depends on")).take(40) {
+            crate::debug!("debinst", "{l}");
+        }
         return Err(explain(&log));
     }
     Ok(log)
@@ -652,6 +685,17 @@ fn command_of(name: &str) -> Option<String> {
 
 /// The program a package brought: its first .desktop file (in the package's
 /// file list) that the launcher lists.
+/// The program a `.desktop` file of /usr/share/applications starts, and
+/// its icon (for the store's programs of Debian's archive).
+pub fn desktop_program(file: &str) -> Option<(String, String)> {
+    let text = read_text(&format!("sys:/usr/share/applications/{file}"))?;
+    let e = super::linux_app(&text)?;
+    match e.launch {
+        super::Launch::Spawn(path) => Some((path, e.icon)),
+        _ => None,
+    }
+}
+
 fn program_of(name: &str) -> Option<Program> {
     let list = file_list(name);
     for line in list.lines() {
